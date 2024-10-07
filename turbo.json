@@ -13,6 +13,9 @@
     "dev": {
       "cache": false,
       "persistent": true
+    },
+    "pre-commit": {
+      "dependsOn": ["^pre-commit"]
     }
   }
 }

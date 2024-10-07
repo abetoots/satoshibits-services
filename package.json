@@ -6,12 +6,15 @@
     "build": "turbo build",
     "dev": "turbo dev",
     "lint": "turbo lint",
-    "format": "prettier --write \"**/*.{ts,tsx,md}\""
+    "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+    "prepare": "husky",
+    "pre-commit": "turbo pre-commit"
   },
   "devDependencies": {
     "@ianvs/prettier-plugin-sort-imports": "^4.3.1",
     "commitizen": "^4.3.1",
     "cz-conventional-changelog": "^3.3.0",
+    "husky": "^9.1.6",
     "prettier": "^3.2.5",
     "turbo": "^2.1.3",
     "typescript": "^5.4.5"
