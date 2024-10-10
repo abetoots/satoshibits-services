@@ -4,6 +4,14 @@ on:
   push:
     branches:
       - main
+
+permissions:
+  id-token: write
+  contents: write
+  packages: write
+  pull-requests: write
+  issues: read
+
 env:
   PNPM_CACHE_FOLDER: ${{ github.workspace }}/.pnpm-store
 
@@ -17,12 +25,6 @@ concurrency:
 
 jobs:
   release:
-    permissions:
-      id-token: write
-      contents: write
-      packages: write
-      pull-requests: write
-      issues: read
     name: 🚀 Build and release
     runs-on: ubuntu-latest
     steps:
