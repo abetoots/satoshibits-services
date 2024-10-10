@@ -9,9 +9,11 @@
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "prepare": "husky",
     "pre-commit": "turbo pre-commit",
-    "test": "turbo test"
+    "test": "turbo test",
+    "ci:release": "turbo run build lint test && pnpm exec changesets version && pnpm exec changesets publish"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.27.9",
     "@ianvs/prettier-plugin-sort-imports": "^4.3.1",
     "commitizen": "^4.3.1",
     "cz-conventional-changelog": "^3.3.0",
