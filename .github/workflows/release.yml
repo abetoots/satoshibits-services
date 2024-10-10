@@ -17,6 +17,12 @@ concurrency:
 
 jobs:
   release:
+    permissions:
+      id-token: write
+      contents: write
+      packages: write
+      pull-requests: write
+      issues: read
     name: 🚀 Build and release
     runs-on: ubuntu-latest
     steps:
@@ -53,3 +59,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_AUTH_TOKEN: ${{ secrets.NPM_AUTH_TOKEN }}
+# TODO Add step for publishing to JSR
