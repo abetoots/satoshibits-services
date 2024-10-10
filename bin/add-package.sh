@@ -5,14 +5,15 @@
 BIN_DIR=$(dirname "$0")
 source $BIN_DIR/utils.sh
 
-# # Script that adds a package to packages workspace. This script should:
-# # 1. Take the package name as an argument.
-# # 2. Create a new directory with the package name in the packages directory.
-# # 3. Create a package.json file with the package name and version 1.0.0.
-# # 4. Create an index.mts file with a simple console.log statement.
-# # 5. Create a jsr.json file.
-# # 6. Create a tsconfig.json file.
-# # 7. Create an eslint.config.mjs file.
+# Script that adds a package to packages workspace. This script should:
+# 1. Take the package name as an argument.
+# 2. Create a new directory with the package name in the packages directory.
+# 3. Create a package.json file with the package name and version 1.0.0.
+# 4. Create an index.mts file with a simple console.log statement.
+# 5. Create a jsr.json file.
+# 6. Create a tsconfig.json file.
+# 7. Create an eslint.config.mjs file.
+# 8. Create a vitest.config.mts file.
 
 # Inputs
 read -p "Enter package name: " package_name
@@ -52,6 +53,7 @@ function create_and_install_package_json() {
         "lint" : "eslint .",
         "prepublishOnly": "npm run build",
         "pre-commit": "pnpm exec lint-staged -c ./.lintstagedrc.mjs",
+        "test": "vitest --run"
     },
     "files": [
         "./dist/**/*"
@@ -76,7 +78,7 @@ function create_and_install_package_json() {
 }
 EOF
 
-pnpm i --filter "$NAMESPACE/$package_name" 2>&1 | dim_text # Install and dim the output
+pnpm i vitest -D --filter "$NAMESPACE/$package_name" 2>&1 | dim_text # Install and dim the output
 }
 
 function create_index_mts() {
@@ -137,6 +139,23 @@ export default [
 EOF
 }
 
+function create_test_related_files() {
+    cat >"$package_dir/vitest.config.mts" <<EOF
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    globals: true,
+    include: [
+      "**/__tests__/**/*.(c|m)?[jt]s",
+      "**/?(*.)+(spec|test).(c|m)?[jt]s",
+    ],
+  },
+});
+
+EOF
+}
+
 function create_misc_files() {
     cat > "$package_dir/.linstagedrc.mjs" <<EOF
 export default {
@@ -180,5 +199,6 @@ create_index_mts
 create_jsr_json
 create_tsconfig_json
 create_eslint_config_mjs
+create_test_related_files
 create_misc_files
 create_and_install_package_json

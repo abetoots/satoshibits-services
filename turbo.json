@@ -16,6 +16,9 @@
     },
     "pre-commit": {
       "dependsOn": ["^pre-commit"]
+    },
+    "test": {
+      "dependsOn": ["^test"]
     }
   }
 }

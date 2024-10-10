@@ -8,7 +8,8 @@
     "lint": "turbo lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "prepare": "husky",
-    "pre-commit": "turbo pre-commit"
+    "pre-commit": "turbo pre-commit",
+    "test": "turbo test"
   },
   "devDependencies": {
     "@ianvs/prettier-plugin-sort-imports": "^4.3.1",
@@ -21,6 +22,6 @@
   },
   "packageManager": "pnpm@8.15.6",
   "engines": {
-    "node": ">=18"
+    "node": ">=20.11.0"
   }
 }
