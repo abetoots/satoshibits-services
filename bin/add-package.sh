@@ -42,13 +42,14 @@ function create_and_install_package_json() {
     cat >"$package_dir/package.json" <<EOF
 {
     "name": "$NAMESPACE/$package_name",
-    "version": "1.0.0",
+    "version": "0.0.0",
     "main": "./dist/index.mjs",
     "types": "./dist/index.d.mts",
     "type": "module",
     "private": false,
     "scripts": {
         "build": "rm -rf dist && tsc",
+        "lint" : "eslint .",
         "prepublishOnly": "npm run build",
         "pre-commit": "pnpm exec lint-staged -c ./.lintstagedrc.mjs",
     },
