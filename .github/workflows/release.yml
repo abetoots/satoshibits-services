@@ -5,12 +5,7 @@ on:
     branches:
       - main
 
-permissions:
-  id-token: write
-  contents: write
-  packages: write
-  pull-requests: write
-  issues: read
+permissions: write-all
 
 env:
   PNPM_CACHE_FOLDER: ${{ github.workspace }}/.pnpm-store
