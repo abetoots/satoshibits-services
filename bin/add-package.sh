@@ -73,7 +73,8 @@ function create_and_install_package_json() {
         "@repo/typescript-config": "workspace:^",
         "@satoshibits/eslint-config": "workspace:^",
         "@types/node": "^22.7.4",
-        "lint-staged": "^15.2.10"
+        "lint-staged": "^15.2.10",
+        "typescript": "^5.6.2"
     }
 }
 EOF
@@ -105,11 +106,11 @@ function create_tsconfig_json() {
     cat >"$package_dir/tsconfig.json" <<EOF
 {
   "extends": "@repo/typescript-config/base.json",
+  "include": ["**/*.ts", "**/*.mts"],
   "compilerOptions": {
     "lib": ["ESNext"],
     "outDir": "dist"
-  },
-  "exclude": ["dist", "node_modules"]
+  }
 }
 EOF
 }
@@ -129,7 +130,12 @@ export default [
       parserOptions: {
         projectService: {
           //see https://github.com/typescript-eslint/typescript-eslint/issues/9739
-          allowDefaultProject: ["*.js", "*.mjs", ".lintstagedrc.mjs"],
+            allowDefaultProject: [
+            "*.js",
+            ".mjs",
+            ".lintstagedrc.mjs",
+            "eslint.config.mjs",
+          ],
         },
         tsconfigRootDir: import.meta.dirname,
       },
@@ -168,6 +174,8 @@ export default {
 };
 EOF
 
+chmod +x "$package_dir/.linstagedrc.mjs"
+
     cat >"$package_dir/tsc-lintstaged.sh" <<EOF
 #!/bin/bash -e
 #Remember to add execution permission to the file 
@@ -189,7 +197,7 @@ cat >> \$TMP <<HEREDOC
   ]
 }
 HEREDOC
-FILES_WITH_ERRORS=\$(tsc --project \$TMP --noEmit --skipLibCheck | cut -d '(' -f 1); for file in "\$@"; do grep -v "\$file"<<<"\$FILES_WITH_ERRORS" >/dev/null; done
+FILES_WITH_ERRORS=\$(pnpm exec tsc --project \$TMP --noEmit --skipLibCheck | cut -d '(' -f 1); for file in "\$@"; do grep -v "\$file"<<<"\$FILES_WITH_ERRORS" >/dev/null; done
 EOF
 }
 
