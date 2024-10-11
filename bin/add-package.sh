@@ -84,7 +84,7 @@ pnpm i vitest -D --filter "$NAMESPACE/$package_name" 2>&1 | dim_text # Install a
 }
 
 function create_index_mts() {
-    cat >"$package_dir/index.mts" <<EOF
+    cat >"$package_dir/src/index.mts" <<EOF
 console.log("Hello, $package_name!");
 EOF
 }
@@ -107,11 +107,12 @@ function create_tsconfig_json() {
     cat >"$package_dir/tsconfig.json" <<EOF
 {
   "extends": "@repo/typescript-config/base.json",
-  "include": ["**/*.ts", "**/*.mts"],
+  "include": ["src/**/*.ts", "src/**/*.mts"],
   "compilerOptions": {
     "lib": ["ESNext"],
     "outDir": "dist"
-  }
+  },
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.mts"]
 }
 EOF
 }
