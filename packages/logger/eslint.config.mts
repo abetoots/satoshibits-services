@@ -12,12 +12,7 @@ export default [
       parserOptions: {
         projectService: {
           //see https://github.com/typescript-eslint/typescript-eslint/issues/9739
-          allowDefaultProject: [
-            "*.js",
-            ".mjs",
-            ".lintstagedrc.mjs",
-            "eslint.config.mjs",
-          ],
+          allowDefaultProject: ["*.js", ".mjs", ".lintstagedrc.mjs"],
         },
         tsconfigRootDir: import.meta.dirname,
       },
