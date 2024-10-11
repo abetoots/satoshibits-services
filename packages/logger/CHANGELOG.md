@@ -1,5 +1,11 @@
 # @satoshibits/logger
 
+## 1.0.4
+
+### Patch Changes
+
+- 348701e: reference separate tsconfig for non source ts files
+
 ## 1.0.3
 
 ### Patch Changes
