@@ -1,8 +1,9 @@
 {
   "extends": "@repo/typescript-config/base.json",
-  "include": ["**/*.ts", "**/*.mts"],
+  "include": ["src/**/*.ts", "src/**/*.mts"],
   "compilerOptions": {
     "lib": ["ESNext"],
     "outDir": "dist"
-  }
+  },
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.mts"]
 }
