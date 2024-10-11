@@ -11,7 +11,7 @@
     "prepare": "husky",
     "pre-commit": "turbo pre-commit",
     "test": "turbo test",
-    "ci:release": "turbo run build lint test && pnpm exec changesets version && pnpm exec changesets publish"
+    "ci:release": "turbo run build lint test && pnpm exec changeset version && pnpm exec changeset publish"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.9",
