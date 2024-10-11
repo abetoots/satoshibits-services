@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "commit:cz": "cz",
+    "commit:publish": "pnpm exec changeset && git add ./.changeset && pnpm run commit:cz",
     "build": "turbo build",
     "dev": "turbo dev",
     "lint": "turbo lint",
