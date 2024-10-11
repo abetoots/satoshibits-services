@@ -1,81 +1,32 @@
-# Turborepo starter
+# `satoshibits-services`
 
-This is an official starter Turborepo.
+[![code style: prettier](https://img.shields.io/badge/code_style-prettier-ff69b4.svg)](https://github.com/prettier/prettier) [![Commitizen friendly](https://img.shields.io/badge/commitizen-friendly-brightgreen.svg)](http://commitizen.github.io/cz-cli/) [![license](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/wtchnm/Vitamin/blob/main/LICENSE)
 
-## Using this example
+This is a monorepo for managing and publishing packages. Each package is in ESM format and automatically includes TypeScript, Vitest, Eslint, Prettier, and lint-staged.
 
-Run the following command:
+## Getting started
 
-```sh
-npx create-turbo@latest
-```
+To add a new package: run `./bin/add-package.sh`. Make sure to add execution permissions when running into permission errors `chmod +x add-package.sh`.
 
-## What's inside?
+View your created package in `packages/{package_name}`.
 
-This Turborepo includes the following packages/apps:
+## Features
 
-### Apps and Packages
+- [TypeScript](https://www.typescriptlang.org).
+- Unit testing with [Vitest](https://vitest.dev).
+- [ESLint](https://eslint.org) and [Prettier](https://prettier.io)
+- Better commit messages with [commitizen](https://github.com/commitizen/cz-cli)
+- Safer commits with git hooks managed by [Husky](https://github.com/typicode/husky) running pre-commit scripts to run linting and type-checking against staged files only using [lint-staged](https://github.com/okonet/lint-staged).
+- Intuitive versioning and publishing using [changesets](https://github.com/changesets/changesets)
 
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `eslint-config-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
+## Working within the monorepo
 
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
+- When introducing changes that do not require any packages to be published:
 
-### Utilities
+  1. Git add your changes.
+  2. `pnpm run commit:cz`
 
-This Turborepo has some additional tools already setup for you:
+- When introducing changes that should trigger a package to be published:
 
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
-
-### Build
-
-To build all apps and packages, run the following command:
-
-```
-cd my-turborepo
-pnpm build
-```
-
-### Develop
-
-To develop all apps and packages, run the following command:
-
-```
-cd my-turborepo
-pnpm dev
-```
-
-### Remote Caching
-
-Turborepo can use a technique known as [Remote Caching](https://turbo.build/repo/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
-
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup), then enter the following commands:
-
-```
-cd my-turborepo
-npx turbo login
-```
-
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
-
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
-
-```
-npx turbo link
-```
-
-## Useful Links
-
-Learn more about the power of Turborepo:
-
-- [Tasks](https://turbo.build/repo/docs/core-concepts/monorepos/running-tasks)
-- [Caching](https://turbo.build/repo/docs/core-concepts/caching)
-- [Remote Caching](https://turbo.build/repo/docs/core-concepts/remote-caching)
-- [Filtering](https://turbo.build/repo/docs/core-concepts/monorepos/filtering)
-- [Configuration Options](https://turbo.build/repo/docs/reference/configuration)
-- [CLI Usage](https://turbo.build/repo/docs/reference/command-line-reference)
+  1. Git add your changes. Group your changes to the relevant package.
+  2. `pnpm run commit:publish`
