@@ -9,6 +9,14 @@ permissions: write-all
 
 env:
   PNPM_CACHE_FOLDER: ${{ github.workspace }}/.pnpm-store
+  # changesets/action presumes the .npmrc is in $HOME so it doesn't respect the project's .npmrc
+  # actions/setup-node sets up a .npmrc in $HOME and sets it from env.NODE_AUTH_TOKEN
+  # See:
+  # - https://github.com/changesets/action/issues/58
+  # - https://github.com/changesets/action/issues/147
+  # - https://github.com/actions/setup-node/blob/78148dae5052c4942d5b0f92719061df122a3b1c/src/authutil.ts#L41
+
+  NODE_AUTH_TOKEN: ${{ secrets.NPM_AUTH_TOKEN }}
 
 # Ensure that only a single job or workflow using the same concurrency group will run at a time
 # This negates the need for styfle/cancel-workflow-action
@@ -55,5 +63,4 @@ jobs:
           publish: pnpm run ci:release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_AUTH_TOKEN: ${{ secrets.NPM_AUTH_TOKEN }}
 # TODO Add step for publishing to JSR
