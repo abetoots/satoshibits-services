@@ -1,5 +1,11 @@
 # @satoshibits/logger
 
+## 1.0.3
+
+### Patch Changes
+
+- ac9f152: move source files to src to prevent config files being built
+
 ## 1.0.2
 
 ### Patch Changes
