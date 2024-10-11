@@ -112,7 +112,8 @@ function create_tsconfig_json() {
     "lib": ["ESNext"],
     "outDir": "dist"
   },
-  "references": [{ "path": "./tsconfig.node.json" }]
+  "references": [{ "path": "./tsconfig.node.json" }],
+  "excludes": ["*.test.ts", "*.spec.ts", "*.test.mts", "*.spec.mts"]
 }
 EOF
 
