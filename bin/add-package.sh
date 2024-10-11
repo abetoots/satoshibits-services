@@ -107,12 +107,26 @@ function create_tsconfig_json() {
     cat >"$package_dir/tsconfig.json" <<EOF
 {
   "extends": "@repo/typescript-config/base.json",
-  "include": ["src/**/*.ts", "src/**/*.mts"],
+  "include": ["src"],
   "compilerOptions": {
     "lib": ["ESNext"],
     "outDir": "dist"
   },
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.mts"]
+  "references": [{ "path": "./tsconfig.node.json" }]
+}
+EOF
+
+cat > "$package_dir/tsconfig.node.json" <<EOF
+{
+  "compilerOptions": {
+    "composite": true,
+    "skipLibCheck": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strictNullChecks": true,
+    "types": ["vitest", "node"]
+  },
+  "include": ["vitest.config.mts", "eslint.config.mts"]
 }
 EOF
 }
