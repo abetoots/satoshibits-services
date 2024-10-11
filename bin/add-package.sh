@@ -50,7 +50,7 @@ function create_and_install_package_json() {
     "private": false,
     "scripts": {
         "build": "rm -rf dist && tsc",
-        "lint" : "eslint .",
+        "lint": "pnpm exec eslint --flag unstable_ts_config .",
         "prepublishOnly": "npm run build",
         "pre-commit": "pnpm exec lint-staged -c ./.lintstagedrc.mjs",
         "test": "vitest --run"
@@ -73,8 +73,9 @@ function create_and_install_package_json() {
         "@repo/typescript-config": "workspace:^",
         "@satoshibits/eslint-config": "workspace:^",
         "@types/node": "^22.7.4",
+        "jiti": "^2.3.3",
         "lint-staged": "^15.2.10",
-        "typescript": "^5.6.2"
+        "typescript": "^5.6.2",
     }
 }
 EOF
@@ -116,7 +117,7 @@ EOF
 }
 
 function create_eslint_config_mjs() {
-    cat >"$package_dir/eslint.config.mjs" <<EOF
+    cat >"$package_dir/eslint.config.mts" <<EOF
 import { includeIgnoreFile } from "@eslint/compat";
 import satoshiConfig from "@satoshibits/eslint-config";
 import path from "path";

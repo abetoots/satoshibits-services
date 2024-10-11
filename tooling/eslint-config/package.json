@@ -1,15 +1,10 @@
 {
   "name": "@satoshibits/eslint-config",
   "version": "2.0.5",
-  "main": "./dist/index.mjs",
-  "types": "./dist/index.d.mts",
+  "main": "./index.mts",
   "private": false,
-  "scripts": {
-    "build": "rm -rf dist && tsc",
-    "prepublishOnly": "npm run build"
-  },
   "files": [
-    "./dist/**/*"
+    "index.mts"
   ],
   "keywords": [
     "eslint",
@@ -24,13 +19,13 @@
   "description": "The eslint configuration for satoshibits projects.",
   "peerDependencies": {
     "@eslint/js": "^9.11.1",
-    "@types/eslint__js": ">= 8.42.3",
     "eslint": ">= 9.11.1",
     "eslint-config-prettier": ">= 9.1.0",
     "eslint-import-resolver-typescript": ">= 3.6.3",
     "eslint-plugin-import-x": ">= 4.3.1",
     "typescript": ">= 5.6.2",
-    "typescript-eslint": ">= 8.8.0"
+    "typescript-eslint": ">= 8.8.0",
+    "@typescript-eslint/utils": ">= 8.8.0"
   },
   "packageManager": "pnpm@9.7.1",
   "repository": {
@@ -42,15 +37,7 @@
   },
   "homepage": "https://github.com/abetoots/eslint-config#readme",
   "devDependencies": {
-    "@eslint/js": "^9.11.1",
     "@types/eslint__js": "^8.42.3",
-    "@repo/typescript-config": "workspace:^",
-    "@typescript-eslint/utils": "^8.8.0",
-    "eslint": "^9.11.1",
-    "eslint-config-prettier": "^9.1.0",
-    "eslint-import-resolver-typescript": "^3.6.3",
-    "eslint-plugin-import-x": "^4.3.1",
-    "typescript": "^5.6.2",
-    "typescript-eslint": "^8.8.0"
+    "@repo/typescript-config": "workspace:^"
   }
 }
