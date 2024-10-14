@@ -56,7 +56,8 @@ function create_and_install_package_json() {
         "test": "vitest --run"
     },
     "files": [
-        "./dist/**/*"
+        "./dist/**/*",
+        "!./dist/**/*.test.*"
     ],
     "keywords": [
         "$package_name"
@@ -73,9 +74,11 @@ function create_and_install_package_json() {
         "@repo/typescript-config": "workspace:^",
         "@satoshibits/eslint-config": "workspace:^",
         "@types/node": "^22.7.4",
+        "@typescript-eslint/utils": "^8.8.1",
+        "eslint": "^9.12.0",
         "jiti": "^2.3.3",
         "lint-staged": "^15.2.10",
-        "typescript": "^5.6.2"
+        "typescript": "^5.6.3",
     }
 }
 EOF
@@ -113,8 +116,7 @@ function create_tsconfig_json() {
     "lib": ["ESNext"],
     "outDir": "dist"
   },
-  "references": [{ "path": "./tsconfig.node.json" }],
-  "exclude": ["**/*.test.ts", "**/*.test.mts", "**/*.spec.ts", "**/*.spec.mts"]
+  "references": [{ "path": "./tsconfig.node.json" }]
 }
 EOF
 
@@ -137,29 +139,28 @@ function create_eslint_config_mjs() {
     cat >"$package_dir/eslint.config.mts" <<EOF
 import { includeIgnoreFile } from "@eslint/compat";
 import satoshiConfig from "@satoshibits/eslint-config";
-import path from "path";
+import tseslint from "typescript-eslint";
+import path from "node:path";
+
+import type { FlatConfig } from "@typescript-eslint/utils/ts-eslint";
+
 const gitignorePath = path.resolve(import.meta.dirname, "../../.gitignore");
-/** @type {import('eslint').Linter.Config} */
-export default [
+
+export default tseslint.config(
   includeIgnoreFile(gitignorePath),
   ...satoshiConfig,
   {
     languageOptions: {
       parserOptions: {
         projectService: {
-          //see https://github.com/typescript-eslint/typescript-eslint/issues/9739
-            allowDefaultProject: [
-            "*.js",
-            ".mjs",
-            ".lintstagedrc.mjs",
-            "eslint.config.mjs",
-          ],
+          allowDefaultProject: [".lintstagedrc.mjs"],
         },
         tsconfigRootDir: import.meta.dirname,
       },
     },
   },
-];
+) satisfies FlatConfig.ConfigArray;
+
 EOF
 }
 
@@ -184,7 +185,10 @@ export default {
     // Note: Using project will defeat the purpose of lint-staged
     //since it will type check files specified in tsconfig.json, not just the staged ones
     //see: https://github.com/lint-staged/lint-staged/issues/825
-    "*.{js,ts,mts,mjs}": ["eslint --fix", "./tsc-lintstaged.sh"],
+    "*.{js,ts,mts,mjs}": [
+        "eslint --fix --flag unstable_ts_config",
+        "./tsc-lintstaged.sh",
+    ],
 };
 EOF
 
