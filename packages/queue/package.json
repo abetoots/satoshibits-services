@@ -1,0 +1,44 @@
+{
+  "name": "@satoshibits/queue",
+  "version": "0.0.0",
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "type": "module",
+  "private": false,
+  "scripts": {
+    "build": "rm -rf dist && tsc",
+    "lint": "pnpm exec eslint --flag unstable_ts_config .",
+    "prepublishOnly": "npm run build",
+    "pre-commit": "pnpm exec lint-staged -c ./.lintstagedrc.mjs",
+    "test": "vitest --run"
+  },
+  "files": [
+    "./dist/**/*"
+  ],
+  "keywords": [
+    "queue"
+  ],
+  "author": {
+    "name": "Abe M. Caymo",
+    "email": "caymo.abesuni@gmail.com",
+    "url": "https://github.com/abetoots"
+  },
+  "license": "ISC",
+  "description": "A queue handler for managing background jobs using worker threads.",
+  "devDependencies": {
+    "@eslint/compat": "^1.2.0",
+    "@repo/typescript-config": "workspace:^",
+    "@satoshibits/eslint-config": "workspace:^",
+    "@types/node": "^22.7.4",
+    "jiti": "^2.3.3",
+    "lint-staged": "^15.2.10",
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.2"
+  },
+  "dependencies": {
+    "bree": "^9.2.4"
+  },
+  "peerDependencies": {
+    "tsx": ">= 4.19.0"
+  }
+}

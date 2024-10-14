@@ -1,0 +1,9 @@
+{
+  "$schema": "https://jsr.io/schema/config-file.v1.json",
+  "name": "@satoshibits/queue",
+  "description": "A queue handler for managing background jobs using worker threads.",
+  "version": "1.0.0",
+  "exports": "./index.mts",
+  "license": "ISC"
+}
+
