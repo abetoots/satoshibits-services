@@ -75,7 +75,7 @@ function create_and_install_package_json() {
         "@types/node": "^22.7.4",
         "jiti": "^2.3.3",
         "lint-staged": "^15.2.10",
-        "typescript": "^5.6.2",
+        "typescript": "^5.6.2"
     }
 }
 EOF
