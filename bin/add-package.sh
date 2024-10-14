@@ -114,7 +114,7 @@ function create_tsconfig_json() {
     "outDir": "dist"
   },
   "references": [{ "path": "./tsconfig.node.json" }],
-  "exclude": ["*.test.ts", "*.spec.ts", "*.test.mts", "*.spec.mts"]
+  "exclude": ["**/*.test.ts", "**/*.test.mts", "**/*.spec.ts", "**/*.spec.mts"]
 }
 EOF
 
