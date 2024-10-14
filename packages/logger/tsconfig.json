@@ -5,6 +5,5 @@
     "lib": ["ESNext"],
     "outDir": "dist"
   },
-  "references": [{ "path": "./tsconfig.node.json" }],
-  "exclude": ["**/*.test.ts", "**/*.test.mts", "**/*.spec.ts", "**/*.spec.mts"]
+  "references": [{ "path": "./tsconfig.node.json" }]
 }
