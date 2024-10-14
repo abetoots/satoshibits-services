@@ -114,7 +114,7 @@ function create_tsconfig_json() {
     "outDir": "dist"
   },
   "references": [{ "path": "./tsconfig.node.json" }],
-  "excludes": ["*.test.ts", "*.spec.ts", "*.test.mts", "*.spec.mts"]
+  "exclude": ["*.test.ts", "*.spec.ts", "*.test.mts", "*.spec.mts"]
 }
 EOF
 
@@ -192,8 +192,6 @@ export default {
 };
 EOF
 
-chmod +x "$package_dir/.lintstagedrc.mjs"
-
     cat >"$package_dir/tsc-lintstaged.sh" <<EOF
 #!/bin/bash -e
 #Remember to add execution permission to the file 
@@ -217,6 +215,9 @@ cat >> \$TMP <<HEREDOC
 HEREDOC
 FILES_WITH_ERRORS=\$(pnpm exec tsc --project \$TMP --noEmit --skipLibCheck | cut -d '(' -f 1); for file in "\$@"; do grep -v "\$file"<<<"\$FILES_WITH_ERRORS" >/dev/null; done
 EOF
+
+chmod +x "$package_dir/tsc-lintstaged.sh"
+
 }
 
 # Main script logic
