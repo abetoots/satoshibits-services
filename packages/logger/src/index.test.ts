@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { parentPort } from "worker_threads";
+import { parentPort } from "node:worker_threads";
 
 import { loggerFactory } from "./index";
 

@@ -1,5 +1,5 @@
 import Axe from "axe";
-import { isMainThread, parentPort } from "worker_threads";
+import { isMainThread, parentPort } from "node:worker_threads";
 
 export type LoggerLevels =
   | "info"
