@@ -12,7 +12,8 @@
     "test": "vitest --run"
   },
   "files": [
-    "./dist/**/*"
+    "./dist/**/*",
+    "!./dist/**/*.test.*"
   ],
   "keywords": [
     "logger"
