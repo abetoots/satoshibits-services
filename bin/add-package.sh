@@ -96,8 +96,8 @@ function create_jsr_json() {
   "\$schema": "https://jsr.io/schema/config-file.v1.json",
   "name": "@satoshibits/$package_name",
   "description": "$package_description",
-  "version": "1.0.0",
-  "exports": "./index.mts",
+  "version": "0.0.0",
+  "exports": "./src/index.mts",
   "license": "ISC"
 }
 
