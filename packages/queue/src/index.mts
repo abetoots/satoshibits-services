@@ -17,7 +17,7 @@ export interface QueueHandlerOptions {
   validateJob: (jobType: string) => boolean;
   rootPath: string;
   jobsPath?: string;
-  onUnhandledError?: (e: any) => void;
+  onUnhandledError?: (e: unknown) => void;
 }
 
 /**

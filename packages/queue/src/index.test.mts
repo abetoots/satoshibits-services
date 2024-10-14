@@ -1,4 +1,4 @@
-import Bree, { JobOptions } from "bree";
+import Bree from "bree";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { QueueHandler } from "./index.mjs";
@@ -19,10 +19,15 @@ describe("QueueHandler", () => {
       onUnhandledError: vi.fn(),
     });
     const bree = queueHandler.getBree();
-    vi.spyOn(bree, "add").mockImplementation(async (options) => {
-      bree.config.jobs.push(options as Bree.Job);
+    vi.spyOn(bree, "add").mockImplementation((options) => {
+      return new Promise((resolve) => {
+        bree.config.jobs.push(options as Bree.Job);
+        resolve();
+      });
     });
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     vi.spyOn(bree, "start").mockImplementation(async () => {});
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     vi.spyOn(bree, "run").mockImplementation(async () => {});
   });
 

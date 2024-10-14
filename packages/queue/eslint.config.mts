@@ -1,25 +1,23 @@
 import { includeIgnoreFile } from "@eslint/compat";
 import satoshiConfig from "@satoshibits/eslint-config";
-import path from "path";
+import tseslint from "typescript-eslint";
+import path from "node:path";
+
+import type { FlatConfig } from "@typescript-eslint/utils/ts-eslint";
+
 const gitignorePath = path.resolve(import.meta.dirname, "../../.gitignore");
-/** @type {import('eslint').Linter.Config} */
-export default [
+
+export default tseslint.config(
   includeIgnoreFile(gitignorePath),
   ...satoshiConfig,
   {
     languageOptions: {
       parserOptions: {
         projectService: {
-          //see https://github.com/typescript-eslint/typescript-eslint/issues/9739
-            allowDefaultProject: [
-            "*.js",
-            ".mjs",
-            ".lintstagedrc.mjs",
-            "eslint.config.mjs",
-          ],
+          allowDefaultProject: [".lintstagedrc.mjs"],
         },
         tsconfigRootDir: import.meta.dirname,
       },
     },
   },
-];
+) satisfies FlatConfig.ConfigArray;
