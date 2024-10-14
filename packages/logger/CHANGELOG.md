@@ -1,5 +1,11 @@
 # @satoshibits/logger
 
+## 1.0.5
+
+### Patch Changes
+
+- 60042fc: exclude test files
+
 ## 1.0.4
 
 ### Patch Changes
