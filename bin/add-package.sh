@@ -84,6 +84,7 @@ pnpm i vitest -D --filter "$NAMESPACE/$package_name" 2>&1 | dim_text # Install a
 }
 
 function create_index_mts() {
+    mkdir "$package_dir/src"
     cat >"$package_dir/src/index.mts" <<EOF
 console.log("Hello, $package_name!");
 EOF
