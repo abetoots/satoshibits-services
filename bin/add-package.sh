@@ -181,7 +181,7 @@ EOF
 }
 
 function create_misc_files() {
-    cat > "$package_dir/.linstagedrc.mjs" <<EOF
+    cat > "$package_dir/.lintstagedrc.mjs" <<EOF
 export default {
     // Lint staged passes the filenames as an argument to the command
     // If you want to pass --project to tsc, use the arrow function syntax
@@ -192,7 +192,7 @@ export default {
 };
 EOF
 
-chmod +x "$package_dir/.linstagedrc.mjs"
+chmod +x "$package_dir/.lintstagedrc.mjs"
 
     cat >"$package_dir/tsc-lintstaged.sh" <<EOF
 #!/bin/bash -e
