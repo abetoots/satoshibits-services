@@ -1,5 +1,11 @@
 # @satoshibits/queue
 
+## 1.0.2
+
+### Patch Changes
+
+- b67e8c3: ensures path aliases work inside typescript scripts when imported by bree during development
+
 ## 1.0.1
 
 ### Patch Changes
