@@ -1,5 +1,6 @@
 import Bree from "bree";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { debuglog } from "node:util";
 import { Worker } from "node:worker_threads";
 
@@ -43,28 +44,31 @@ export class QueueHandler {
     //See: https://github.com/privatenumber/tsx/issues/354 for a workaround
     //See: https://github.com/nodejs/node/issues/47747 for another workaround
 
-    //We need to monkey patch the Bree constructor to use the tsx cli
-    //when creating a new worker.
+    //We need to monkey patch the Bree constructor to use a proxy file that registers
+    //the tsx loader before requiring the actual job file. This is a workaround until
+    //Node fixes the issue.
     //See https://github.com/breejs/ts-worker/blob/main/src/index.js to learn how to extend Bree.
-    //NOTE: You can only do relative imports in the worker script. If you want
-    //the paths in tsconfig to work, you need to register tsconfig-paths as well.
-    //See: https://github.com/breejs/ts-worker/blob/main/src/worker.js
+
     if (process.env.NODE_ENV === "development") {
+      const devLoaderPath = fileURLToPath(
+        import.meta.resolve("./dev-loader.mjs"),
+      );
       const oldCreateWorker = Bree.prototype.createWorker;
       Bree.prototype.createWorker = function (filename, options) {
-        if (filename.endsWith(".ts")) {
+        if (filename.endsWith(".ts") || filename.endsWith(".mts")) {
           const filePath = filename;
           debug("filePath", filePath);
-          return new Worker(
-            `import("tsx/esm/api").then(({ register }) => {
-              register();
-              import("${filePath}");
-            })`,
-            {
-              ...options,
-              eval: true,
+          const workerData: object =
+            typeof options?.workerData === "object"
+              ? (options.workerData as object)
+              : {};
+          return new Worker(devLoaderPath, {
+            ...options,
+            workerData: {
+              ...workerData,
+              filePath,
             },
-          );
+          });
         }
         return oldCreateWorker(filename, options);
       };

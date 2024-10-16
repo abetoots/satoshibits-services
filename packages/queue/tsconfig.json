@@ -3,7 +3,9 @@
   "include": ["src"],
   "compilerOptions": {
     "lib": ["ESNext"],
-    "outDir": "dist"
+    "outDir": "dist",
+    "allowJs": true,
+    "checkJs": true
   },
   "references": [{ "path": "./tsconfig.node.json" }]
 }
