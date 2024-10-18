@@ -78,7 +78,7 @@ function create_and_install_package_json() {
         "eslint": "^9.12.0",
         "jiti": "^2.3.3",
         "lint-staged": "^15.2.10",
-        "typescript": "^5.6.3",
+        "typescript": "^5.6.3"
     }
 }
 EOF
