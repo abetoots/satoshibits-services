@@ -1,0 +1,41 @@
+{
+    "name": "@satoshibits/task-orchestrator",
+    "version": "0.0.0",
+    "main": "./dist/index.mjs",
+    "types": "./dist/index.d.mts",
+    "type": "module",
+    "private": false,
+    "scripts": {
+        "build": "rm -rf dist && tsc",
+        "lint": "pnpm exec eslint --flag unstable_ts_config .",
+        "prepublishOnly": "npm run build",
+        "pre-commit": "pnpm exec lint-staged -c ./.lintstagedrc.mjs",
+        "test": "vitest --run"
+    },
+    "files": [
+        "./dist/**/*",
+        "!./dist/**/*.test.*"
+    ],
+    "keywords": [
+        "task-orchestrator"
+    ],
+    "author": {
+        "name": "Abe M. Caymo",
+        "email": "caymo.abesuni@gmail.com",
+        "url": "https://github.com/abetoots"
+    },
+    "license": "ISC",
+    "description": "A service to help with running tasks concurrently or in parallel or both through mechanisms like batching and pooling.",
+    "devDependencies": {
+        "@eslint/compat": "^1.2.0",
+        "@repo/typescript-config": "workspace:^",
+        "@satoshibits/eslint-config": "workspace:^",
+        "@types/node": "^22.7.4",
+        "@typescript-eslint/utils": "^8.8.1",
+        "eslint": "^9.12.0",
+        "jiti": "^2.3.3",
+        "lint-staged": "^15.2.10",
+        "typescript": "^5.6.3",
+        "vitest": "^2.1.2"
+    }
+}

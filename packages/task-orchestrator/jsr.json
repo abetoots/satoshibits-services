@@ -1,0 +1,9 @@
+{
+  "$schema": "https://jsr.io/schema/config-file.v1.json",
+  "name": "@satoshibits/task-orchestrator",
+  "description": "A service to help with running tasks concurrently or in parallel or both through mechanisms like batching and pooling.",
+  "version": "0.0.0",
+  "exports": "./src/index.mts",
+  "license": "ISC"
+}
+
