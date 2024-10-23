@@ -46,6 +46,7 @@ function create_and_install_package_json() {
     "version": "0.0.0",
     "main": "./dist/index.mjs",
     "types": "./dist/index.d.mts",
+    "exports": "./dist/index.mjs",
     "type": "module",
     "private": false,
     "scripts": {

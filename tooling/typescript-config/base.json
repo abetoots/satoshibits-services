@@ -2,16 +2,23 @@
   "$schema": "https://json.schemastore.org/tsconfig",
   "display": "Default",
   "compilerOptions": {
+    // [ Basics ]
+    "strict": true,
+
+    // [ Build ]
     "declaration": true,
     "declarationMap": true,
+    "sourceMap": true,
+
+    // [ Module Resolution ]
     "esModuleInterop": true,
-    "isolatedModules": true,
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "noUncheckedIndexedAccess": true,
     "resolveJsonModule": true,
-    "skipLibCheck": true,
-    "strict": true,
-    "target": "ESNext"
+
+    // [ Additional Checks ]
+    "noUncheckedIndexedAccess": true,
+
+    // [ Advanced ]
+    "isolatedModules": true,
+    "skipLibCheck": true
   }
 }
