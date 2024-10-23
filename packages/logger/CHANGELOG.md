@@ -1,5 +1,11 @@
 # @satoshibits/logger
 
+## 1.0.6
+
+### Patch Changes
+
+- 1dc2316: refactor: use ESM format and include declaration
+
 ## 1.0.5
 
 ### Patch Changes
