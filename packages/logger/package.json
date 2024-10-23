@@ -1,8 +1,8 @@
 {
   "name": "@satoshibits/logger",
   "version": "1.0.5",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "types": "./dist/index.d.mts",
+  "exports": "./dist/index.mjs",
   "private": false,
   "scripts": {
     "build": "rm -rf dist && tsc",
@@ -13,7 +13,8 @@
   },
   "files": [
     "./dist/**/*",
-    "!./dist/**/*.test.*"
+    "!./dist/**/*.test.*",
+    "src/_typings/axe.d.mts"
   ],
   "keywords": [
     "logger"

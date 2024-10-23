@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { parentPort } from "node:worker_threads";
 
-import { loggerFactory } from "./index";
+import { loggerFactory } from "./index.mjs";
 
 vi.mock("worker_threads", () => ({
   isMainThread: false,
@@ -9,8 +9,9 @@ vi.mock("worker_threads", () => ({
 }));
 
 it("should create a logger", () => {
-  const { logger } = loggerFactory({});
+  const { logger, axeLogger } = loggerFactory({});
   expect(logger).toBeDefined();
+  expect(axeLogger).toBeDefined();
 });
 
 it("should error if using methods that do not conform to standard", () => {

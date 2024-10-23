@@ -86,7 +86,7 @@ export const loggerFactory = (options: LoggerFactoryOptions) => {
     },
   };
 
-  return { logger, axeLogger } as { logger: BaseLogger; axeLogger: Axe.Logger };
+  return { logger, axeLogger };
 };
 
 export default loggerFactory;
