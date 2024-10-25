@@ -1,5 +1,11 @@
 # @satoshibits/queue
 
+## 1.0.3
+
+### Patch Changes
+
+- d513cf1: make job types generic
+
 ## 1.0.2
 
 ### Patch Changes
