@@ -6,10 +6,10 @@ import { Worker } from "node:worker_threads";
 
 const debug = debuglog("satoshibits:queue");
 
-export interface BaseJob {
+export interface BaseJob<TType extends string = string> {
   id: string;
-  /** The queued item type */
-  type: string;
+  /** The job type. */
+  type: TType;
   groupId: string;
   processEnvironment?: string;
 }
@@ -24,7 +24,7 @@ export interface QueueHandlerOptions {
 /**
  * Represents a queue handler for managing jobs.
  */
-export class QueueHandler {
+export class QueueHandler<TJobTypes extends string = string> {
   private bree: Bree;
   private extension: string;
   private jobsPath: string;
@@ -129,7 +129,10 @@ export class QueueHandler {
    * @param job - The job to be added.
    * @param options - The options for the job.
    */
-  async addJob(job: BaseJob, options: Omit<Bree.JobOptions, "name">) {
+  async addJob(
+    job: BaseJob<TJobTypes>,
+    options: Omit<Bree.JobOptions, "name">,
+  ) {
     if (!this.validateJob(job.type)) {
       debug(`addJob: failed due to ${job.type} is not valid.`);
       return;
@@ -152,7 +155,7 @@ export class QueueHandler {
    *
    * @param job
    */
-  async startJob(job: BaseJob) {
+  async startJob(job: BaseJob<TJobTypes>) {
     if (!this.validateJob(job.type)) {
       debug(`startJob: failed due to ${job.type} is not valid.`);
       return;

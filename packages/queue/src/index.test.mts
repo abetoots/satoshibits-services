@@ -7,7 +7,7 @@ vi.mock("node:path");
 vi.mock("node:worker_threads");
 
 describe("QueueHandler", () => {
-  let queueHandler: QueueHandler;
+  let queueHandler: QueueHandler<"test" | "invalid">;
   const validateFunction = (jobType: string) =>
     jobType === "test" ? true : false;
   const validationMock = vi.fn(validateFunction);
@@ -37,7 +37,7 @@ describe("QueueHandler", () => {
   });
 
   it("should add a job correctly when job is valid", async () => {
-    const job = { id: "1", type: "test", groupId: "group1" };
+    const job = { id: "1", type: "test" as const, groupId: "group1" };
     const options = { timeout: 0 };
 
     const result = await queueHandler.addJob(job, options);
@@ -48,7 +48,7 @@ describe("QueueHandler", () => {
   });
 
   it("should not add a job when job is invalid", async () => {
-    const job = { id: "1", type: "invalid", groupId: "group1" };
+    const job = { id: "1", type: "invalid" as const, groupId: "group1" };
     const options = { timeout: 0 };
 
     const result = await queueHandler.addJob(job, options);
@@ -58,7 +58,7 @@ describe("QueueHandler", () => {
   });
 
   it("should not error when adding a job that already exists", async () => {
-    const job = { id: "1", type: "test", groupId: "group1" };
+    const job = { id: "1", type: "test" as const, groupId: "group1" };
     const options = { timeout: 0 };
 
     const result1 = await queueHandler.addJob(job, options);
@@ -69,7 +69,7 @@ describe("QueueHandler", () => {
   });
 
   it("should be able to start a valid job that has been added", async () => {
-    const job = { id: "1", type: "test", groupId: "group1" };
+    const job = { id: "1", type: "test" as const, groupId: "group1" };
     const options = { timeout: 0 };
 
     await queueHandler.addJob(job, options);
@@ -79,7 +79,7 @@ describe("QueueHandler", () => {
   });
 
   it("should error when starting a job that does not exist", async () => {
-    const job = { id: "1", type: "test", groupId: "group1" };
+    const job = { id: "1", type: "test" as const, groupId: "group1" };
 
     await expect(queueHandler.startJob(job)).rejects.toThrow(
       `Job test_1_group1 not found. Please add the job first.`,
