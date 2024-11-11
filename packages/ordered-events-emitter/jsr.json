@@ -1,0 +1,9 @@
+{
+  "$schema": "https://jsr.io/schema/config-file.v1.json",
+  "name": "@satoshibits/ordered-events-emitter",
+  "description": "A class that emits events and calls listeners sequentially in the order of their priority. This does not extend the EventEmitter class.",
+  "version": "0.0.0",
+  "exports": "./src/index.mts",
+  "license": "ISC"
+}
+

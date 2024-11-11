@@ -1,0 +1,47 @@
+{
+  "name": "@satoshibits/ordered-events-emitter",
+  "version": "1.0.3",
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": "./dist/index.mjs",
+  "type": "module",
+  "private": false,
+  "scripts": {
+    "build": "rm -rf dist && tsc",
+    "lint": "pnpm exec eslint --flag unstable_ts_config .",
+    "prepublishOnly": "npm run build",
+    "pre-commit": "pnpm exec lint-staged -c ./.lintstagedrc.mjs",
+    "test": "vitest --run"
+  },
+  "files": [
+    "./dist/**/*",
+    "!./dist/**/*.test.*"
+  ],
+  "keywords": [
+    "ordered-events-emitter"
+  ],
+  "author": {
+    "name": "Abe M. Caymo",
+    "email": "caymo.abesuni@gmail.com",
+    "url": "https://github.com/abetoots"
+  },
+  "license": "ISC",
+  "description": "A class that emits events and calls listeners sequentially in the order of their priority. This does not extend the EventEmitter class.",
+  "devDependencies": {
+    "@eslint/compat": "^1.2.0",
+    "@repo/typescript-config": "workspace:^",
+    "@satoshibits/eslint-config": "workspace:^",
+    "@types/lodash.clonedeep": "^4.5.9",
+    "@types/node": "^22.7.4",
+    "@typescript-eslint/utils": "^8.8.1",
+    "eslint": "^9.12.0",
+    "jest-extended": "^4.0.2",
+    "jiti": "^2.3.3",
+    "lint-staged": "^15.2.10",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.2"
+  },
+  "dependencies": {
+    "lodash.clonedeep": "^4.5.0"
+  }
+}
