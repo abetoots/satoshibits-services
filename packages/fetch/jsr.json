@@ -1,0 +1,9 @@
+{
+  "$schema": "https://jsr.io/schema/config-file.v1.json",
+  "name": "@satoshibits/fetch",
+  "description": "A fetch API wrapper with error handling capabilities.",
+  "version": "0.0.0",
+  "exports": "./src/index.mts",
+  "license": "ISC"
+}
+

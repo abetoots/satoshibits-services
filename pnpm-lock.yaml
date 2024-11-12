@@ -33,6 +33,39 @@ importers:
         specifier: ^5.4.5
         version: 5.6.2
 
+  packages/fetch:
+    devDependencies:
+      '@eslint/compat':
+        specifier: ^1.2.0
+        version: 1.2.0(eslint@9.12.0(jiti@2.3.3))
+      '@repo/typescript-config':
+        specifier: workspace:^
+        version: link:../../tooling/typescript-config
+      '@satoshibits/eslint-config':
+        specifier: workspace:^
+        version: link:../../tooling/eslint-config
+      '@types/node':
+        specifier: ^22.7.4
+        version: 22.7.4
+      '@typescript-eslint/utils':
+        specifier: ^8.8.1
+        version: 8.8.1(eslint@9.12.0(jiti@2.3.3))(typescript@5.6.3)
+      eslint:
+        specifier: ^9.12.0
+        version: 9.12.0(jiti@2.3.3)
+      jiti:
+        specifier: ^2.3.3
+        version: 2.3.3
+      lint-staged:
+        specifier: ^15.2.10
+        version: 15.2.10
+      typescript:
+        specifier: ^5.6.3
+        version: 5.6.3
+      vitest:
+        specifier: ^2.1.2
+        version: 2.1.2(@types/node@22.7.4)
+
   packages/logger:
     dependencies:
       axe:
@@ -1112,6 +1145,7 @@ packages:
 
   boolean@3.2.0:
     resolution: {integrity: sha512-d0II/GO9uf9lfUHH2BQsjxzRJZBdsjgsBiW4BvhWk/3qoKwQFjIDVN19PfX8F2D/r9PCMTtLWjYVCFrpeYUzsw==}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
 
   brace-expansion@1.1.11:
     resolution: {integrity: sha512-iCuPHDFgrHX7H2vEI/5xpz07zSHB00TpugqhmYtVmMO6518mCuRMoOYFldEBl0g187ufozdaHgWKcYFb61qGiA==}
