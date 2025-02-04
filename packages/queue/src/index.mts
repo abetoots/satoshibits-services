@@ -176,7 +176,9 @@ export class QueueHandler<TJobTypes extends string = string> {
     if (!alreadyStarted) {
       debug(`Job ${name} not found. Starting...`);
       await this.bree.start(name); // abides by timeout,date,interval provided
+      return { type: "started" };
     }
+    return { type: "already-started" };
 
     //provide your own logic here
     //if you want to deliberately run a job type
