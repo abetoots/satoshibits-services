@@ -1,5 +1,11 @@
 # @satoshibits/queue
 
+## 1.0.4
+
+### Patch Changes
+
+- e49d174: prevent starting if already started
+
 ## 1.0.3
 
 ### Patch Changes
