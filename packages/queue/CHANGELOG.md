@@ -1,5 +1,11 @@
 # @satoshibits/queue
 
+## 1.0.5
+
+### Patch Changes
+
+- 039677e: prevent accidentally starting immediately
+
 ## 1.0.4
 
 ### Patch Changes
