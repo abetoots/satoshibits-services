@@ -108,8 +108,8 @@ export class QueueHandler<TJobTypes extends string = string> {
    * @param options - The options used to search for the job.
    * @returns An object containing the found job, its name, and the associated worker.
    */
-  findJob(options: BaseJob) {
-    let name = options.type;
+  findJob(options: BaseJob<TJobTypes>) {
+    let name: string = options.type;
     if (options.id.trim()) {
       name = `${name}_${options.id}`;
     }
@@ -118,7 +118,11 @@ export class QueueHandler<TJobTypes extends string = string> {
     }
     const worker = this.bree.workers.get(name);
     const breeJob = this.bree.config.jobs.find((j) => j.name === name);
-    return { breeJob, name, worker };
+    const alreadyStarted =
+      this.bree.timeouts.has(name) ||
+      this.bree.intervals.has(name) ||
+      this.bree.workers.has(name);
+    return { breeJob, name, worker, alreadyStarted };
   }
 
   /**
@@ -144,7 +148,10 @@ export class QueueHandler<TJobTypes extends string = string> {
     await this.bree.add({
       name,
       ...options,
-      path: path.join(this.jobsPath, `${job.type}.${this.extension}`),
+      path: path.join(
+        typeof options.path === "string" ? options.path : this.jobsPath,
+        `${job.type}.${this.extension}`,
+      ),
     });
 
     return { type: "added", job };
@@ -160,13 +167,13 @@ export class QueueHandler<TJobTypes extends string = string> {
       debug(`startJob: failed due to ${job.type} is not valid.`);
       return;
     }
-    const { breeJob, worker, name } = this.findJob(job);
+    const { breeJob, name, alreadyStarted } = this.findJob(job);
 
     if (!breeJob) {
       throw new Error(`Job ${name} not found. Please add the job first.`);
     }
 
-    if (!worker) {
+    if (!alreadyStarted) {
       debug(`Job ${name} not found. Starting...`);
       await this.bree.start(name); // abides by timeout,date,interval provided
       return { type: "scheduled" };
