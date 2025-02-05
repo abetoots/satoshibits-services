@@ -1,5 +1,11 @@
 # @satoshibits/queue
 
+## 1.0.6
+
+### Patch Changes
+
+- e8dbeef: fix failing test
+
 ## 1.0.5
 
 ### Patch Changes
