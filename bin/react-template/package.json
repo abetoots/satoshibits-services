@@ -22,9 +22,7 @@
     "./dist/**/*",
     "!./dist/**/*.test.*"
   ],
-  "keywords": [
-    "test"
-  ],
+  "keywords": [],
   "author": {
     "name": "Abe M. Caymo",
     "email": "caymo.abesuni@gmail.com",
