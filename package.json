@@ -11,20 +11,23 @@
     "prepare": "husky",
     "pre-commit": "turbo pre-commit",
     "test": "turbo test",
-    "ci:release": "turbo run build lint test && pnpm exec changeset version && pnpm exec changeset publish"
+    "ci:release": "turbo run build lint test && pnpm exec changeset version && pnpm exec changeset publish",
+    "package:add": "node ./bin/add-package.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.9",
     "@ianvs/prettier-plugin-sort-imports": "^4.3.1",
+    "@inquirer/prompts": "^7.3.2",
     "commitizen": "^4.3.1",
     "cz-conventional-changelog": "^3.3.0",
+    "execa": "^9.5.2",
     "husky": "^9.1.6",
     "prettier": "^3.2.5",
     "turbo": "^2.1.3",
     "typescript": "^5.4.5"
   },
-  "packageManager": "pnpm@9.12.1+sha512.e5a7e52a4183a02d5931057f7a0dbff9d5e9ce3161e33fa68ae392125b79282a8a8a470a51dfc8a0ed86221442eb2fb57019b0990ed24fab519bf0e1bc5ccfc4",
   "engines": {
     "node": ">=20.11.0"
-  }
+  },
+  "packageManager": "pnpm@10.4.1+sha512.c753b6c3ad7afa13af388fa6d808035a008e30ea9993f58c6663e2bc5ff21679aa834db094987129aa4d488b86df57f7b634981b2f827cdcacc698cc0cfb88af"
 }
