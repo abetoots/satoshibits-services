@@ -19,9 +19,7 @@ declare module "axe" {
     BaseLevels
   >;
 
-  type LoggerMethods = {
-    [K in BaseLevels]: LoggerMethod;
-  };
+  type LoggerMethods = Record<BaseLevels, LoggerMethod>;
 
   export type BaseLevels =
     | "trace"

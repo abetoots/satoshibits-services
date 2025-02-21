@@ -19,13 +19,10 @@ export type LoggerMeta = Record<
   | string[]
 >;
 
-export type BaseLogger = {
-  [Property in LoggerLevels]: (
-    message: LoggerMessage,
-    meta?: LoggerMeta,
-  ) => void;
-};
-
+export type BaseLogger = Record<
+  LoggerLevels,
+  (message: LoggerMessage, meta?: LoggerMeta) => void
+>;
 export interface WorkerLoggerPostMessageType {
   level: LoggerLevels;
   message: LoggerMessage;
