@@ -97,6 +97,10 @@ fi
 # Variables
 package_dir="$BASE_DIR/packages/$package_name"
 
+if [$package_type == "react"]; then
+    package_dir="$BASE_DIR/react-packages/$package_name"
+fi
+
 
 # Functions
 function create_package_dir() {
