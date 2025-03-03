@@ -12,6 +12,23 @@ const conf: TSESLint.FlatConfig.ConfigArray = tseslint.config(
   ...tseslint.configs.stylisticTypeChecked,
   eslintPluginImportX.flatConfigs.recommended,
   eslintPluginImportX.flatConfigs.typescript,
+  {
+    //emulate the TypeScript style of exempting names starting with _ from the no-unused-vars rule.
+    rules: {
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {
+          args: "all",
+          argsIgnorePattern: "^_",
+          caughtErrors: "all",
+          caughtErrorsIgnorePattern: "^_",
+          destructuredArrayIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          ignoreRestSiblings: true,
+        },
+      ],
+    },
+  },
   //Turns off all rules that are unnecessary or might conflict with Prettier.
   //Note that this config only turns rules off,
   //so it only makes sense using it together with some other config.
