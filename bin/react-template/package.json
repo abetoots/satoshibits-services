@@ -10,6 +10,7 @@
   "type": "module",
   "private": false,
   "scripts": {
+    "dev": "vite dev",
     "build": "tsc && vite build",
     "build:styles": "pnpm exec tailwindcss -i ./src/index.css -o ./dist/style.css",
     "lint": "pnpm exec eslint .",
