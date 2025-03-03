@@ -8,7 +8,7 @@
   "private": false,
   "scripts": {
     "build": "rm -rf dist && tsc",
-    "lint": "pnpm exec eslint --flag unstable_ts_config .",
+    "lint": "pnpm exec eslint .",
     "prepublishOnly": "npm run build",
     "pre-commit": "pnpm exec lint-staged -c ./.lintstagedrc.mjs",
     "test": "vitest --run"
