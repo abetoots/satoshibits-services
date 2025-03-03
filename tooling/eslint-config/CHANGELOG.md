@@ -1,5 +1,11 @@
 # @satoshibits/eslint-config
 
+## 2.0.7
+
+### Patch Changes
+
+- 78982e6: edit no-unused-vars rule
+
 ## 2.0.6
 
 ### Patch Changes
