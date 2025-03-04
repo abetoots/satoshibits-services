@@ -18,4 +18,26 @@ cat >> $TMP <<HEREDOC
   ]
 }
 HEREDOC
-FILES_WITH_ERRORS=$(pnpm exec tsc --project $TMP --noEmit --skipLibCheck | cut -d '(' -f 1); for file in "$@"; do grep -v "$file"<<<"$FILES_WITH_ERRORS" >/dev/null; done
+# pnpm exec tsc --project $TMP --noEmit --skipLibCheck
+# Run tsc and capture output
+TSC_OUTPUT=$(pnpm exec tsc --project $TMP --noEmit --skipLibCheck 2>&1 || true)
+
+# Print tsc output for debugging
+echo "$TSC_OUTPUT"
+
+# Extract file paths with errors
+FILES_WITH_ERRORS=$(echo "$TSC_OUTPUT" | grep -o '^[^(]*' | sed 's/:[0-9]*:[0-9]* - .*$//' | sort -u)
+
+# Compare with input files
+for file in "$@"; do
+    # Get basename of file (remove directory path)
+    BASENAME=$(basename "$file")
+    # Check if any error file ends with the basename
+    if echo "$FILES_WITH_ERRORS" | grep -q "[/]*$BASENAME$"; then
+        echo "Error in file: $file"
+        exit 1
+    fi
+done
+
+# If we get here, no errors were found in the staged files
+echo "No errors in staged files"
