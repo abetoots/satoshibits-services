@@ -6,7 +6,7 @@ import tseslint from "typescript-eslint";
 import type { TSESLint } from "@typescript-eslint/utils";
 
 //plugins define new eslint rules, and configs set whether or not (and how) the rules should be applied.
-const conf: TSESLint.FlatConfig.ConfigArray = tseslint.config(
+const configs: TSESLint.FlatConfig.ConfigArray = [
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   ...tseslint.configs.stylisticTypeChecked,
@@ -33,6 +33,6 @@ const conf: TSESLint.FlatConfig.ConfigArray = tseslint.config(
   //Note that this config only turns rules off,
   //so it only makes sense using it together with some other config.
   eslintConfigPrettier,
-);
+];
 
-export default conf;
+export default configs;

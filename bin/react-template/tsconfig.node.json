@@ -8,10 +8,5 @@
     "types": ["vitest", "node", "vite"],
     "resolveJsonModule": true
   },
-  "include": [
-    "vitest.config.mts",
-    "eslint.config.mts",
-    "vite.config.mts",
-    "postcss.config.js"
-  ]
+  "include": ["vitest.config.mts", "eslint.config.mts", "vite.config.mts"]
 }

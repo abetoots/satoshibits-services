@@ -1,13 +1,12 @@
 import { includeIgnoreFile } from "@eslint/compat";
 import satoshiConfig from "@satoshibits/eslint-config";
-import tseslint from "typescript-eslint";
 import path from "node:path";
 
-import type { FlatConfig } from "@typescript-eslint/utils/ts-eslint";
+import type { TSESLint } from "@typescript-eslint/utils";
 
 const gitignorePath = path.resolve(import.meta.dirname, "../../.gitignore");
 
-export default tseslint.config(
+const configs: TSESLint.FlatConfig.ConfigArray = [
   includeIgnoreFile(gitignorePath),
   ...satoshiConfig,
   {
@@ -20,4 +19,6 @@ export default tseslint.config(
       },
     },
   },
-) satisfies FlatConfig.ConfigArray;
+];
+
+export default configs;
