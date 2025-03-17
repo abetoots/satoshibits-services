@@ -1,0 +1,120 @@
+{
+  "name": "@satoshibits/react-json-schema-builder",
+  "version": "0.0.0",
+  "main": "./dist/index.cjs.js",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.es.js"
+      },
+      "require": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.cjs.js"
+      }
+    },
+    "./index.css": {
+      "import": "./dist/style.css",
+      "require": "./dist/style.css"
+    }
+  },
+  "type": "module",
+  "private": false,
+  "scripts": {
+    "dev": "vite dev",
+    "build": "tsc && vite build && pnpm run build:styles",
+    "build:styles": "pnpx @tailwindcss/cli -i ./src/index.css -o ./dist/style.css",
+    "lint": "pnpm exec eslint .",
+    "prepublishOnly": "npm run build",
+    "pre-commit": "pnpm exec lint-staged -c ./.lintstagedrc.mjs --concurrent false",
+    "test": "vitest --run",
+    "coverage": "vitest run --coverage"
+  },
+  "files": [
+    "./dist/**/*",
+    "!./dist/**/*.test.*"
+  ],
+  "keywords": [
+    "react-json-schema-builder",
+    "json schema builder",
+    "json schema editor",
+    "json schema generator",
+    "json schema ui",
+    "json schema gui for react"
+  ],
+  "author": {
+    "name": "Abe M. Caymo",
+    "email": "caymo.abesuni@gmail.com",
+    "url": "https://github.com/abetoots"
+  },
+  "license": "Apache-2.0",
+  "description": "React GUI editor for building user-generated JSON schema.",
+  "peerDependencies": {
+    "@hookform/resolvers": ">= 4.1.3",
+    "ajv": ">= 8.15.0",
+    "react": ">= 18.0.0",
+    "react-dom": ">= 18.0.0",
+    "react-hook-form": ">= 7.53.0",
+    "zod": ">= 3.0.0"
+  },
+  "devDependencies": {
+    "@eslint/compat": "^1.2.0",
+    "@eslint/js": "^9.22.0",
+    "@faker-js/faker": "^9.5.1",
+    "@repo/typescript-config": "workspace:^",
+    "@satoshibits/eslint-config": "workspace:^",
+    "@tailwindcss/cli": "^4.0.14",
+    "@tailwindcss/vite": "^4.0.9",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.2.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/json-schema": "^7.0.15",
+    "@types/node": "^22.7.4",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@types/react-json-editor-ajrm": "^2.5.6",
+    "@typescript-eslint/utils": "^8.26.1",
+    "@vitejs/plugin-react-swc": "^3.8.0",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^9.22.0",
+    "eslint-config-prettier": "^10.1.1",
+    "eslint-import-resolver-typescript": "^3.6.3",
+    "eslint-plugin-import-x": "^4.3.1",
+    "eslint-plugin-react": "^7.37.4",
+    "happy-dom": "^17.1.1",
+    "install": "^0.13.0",
+    "jiti": "^2.4.2",
+    "json-schema": "^0.4.0",
+    "lint-staged": "^15.2.10",
+    "postcss": "^8.5.3",
+    "react-json-editor-ajrm": "^2.5.14",
+    "tailwindcss": "^4.0.9",
+    "tailwindcss-animate": "^1.0.7",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.26.1",
+    "vite": "^6.1.0",
+    "vite-plugin-dts": "^4.5.0",
+    "vite-tsconfig-paths": "^5.1.4",
+    "vitest": "^3.0.5"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^4.1.3",
+    "@radix-ui/react-alert-dialog": "^1.1.6",
+    "@radix-ui/react-dialog": "^1.1.6",
+    "@radix-ui/react-label": "^2.1.2",
+    "@radix-ui/react-select": "^2.1.6",
+    "@radix-ui/react-separator": "^1.1.2",
+    "@radix-ui/react-slot": "^1.1.2",
+    "@radix-ui/react-switch": "^1.1.3",
+    "ajv": "^8.17.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.477.0",
+    "react-hook-form": "^7.54.2",
+    "remeda": "^2.20.2",
+    "tailwind-merge": "^3.0.2",
+    "use-debounce": "^10.0.4",
+    "zod": "^3.24.2"
+  }
+}

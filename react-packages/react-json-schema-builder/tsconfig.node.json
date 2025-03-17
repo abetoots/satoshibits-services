@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "skipLibCheck": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strictNullChecks": true,
+    "types": ["vitest", "node", "vite"],
+    "resolveJsonModule": true
+  },
+  "include": ["eslint.config.mts", "vite.config.mts"]
+}

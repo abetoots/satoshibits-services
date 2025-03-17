@@ -1,0 +1,13 @@
+{
+  "extends": "@repo/typescript-config/web.json",
+  "include": ["src"],
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./src/*"],
+      "@/packages/*": ["./src/packages/*"]
+    },
+    /* Types */
+    "types": ["vitest/globals", "@testing-library/jest-dom"]
+  },
+  "references": [{ "path": "./tsconfig.node.json" }]
+}
