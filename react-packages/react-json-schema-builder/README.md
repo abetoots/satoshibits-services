@@ -12,6 +12,7 @@ A powerful React component for visually building and editing [JSON Schema](https
 - 🎨 Customizable property rendering
 - 🧠 Built-in schema validation
 - 🌲 Navigation through nested object structures
+- ✨ Customizable UI elements (navigation, property list, add button)
 
 ## Installation
 
@@ -28,12 +29,16 @@ pnpm add @satoshibits/react-json-schema-builder
 Here's a simple example of how to use the SchemaBuilder component:
 
 ```tsx
-import { SchemaBuilder  SchemaProvider, PluginsProvider } from "@satoshibits/react-json-schema-builder";
+import {
+  SchemaBuilder,
+  SchemaProvider,
+  PluginsProvider,
+} from "@satoshibits/react-json-schema-builder";
 import { useState } from "react";
 import type { JSONSchema7 } from "json-schema";
 
 // Import the styles
-import "@satoshibits/react-json-schema-builder/index.css"
+import "@satoshibits/react-json-schema-builder/index.css";
 
 // Import plugins for constraint support
 import numberPlugin from "@satoshibits/react-json-schema-builder/plugins/number";
@@ -42,25 +47,29 @@ import arrayPlugin from "@satoshibits/react-json-schema-builder/plugins/array";
 import objectPlugin from "@satoshibits/react-json-schema-builder/plugins/object";
 
 function SchemaEditorApp() {
-  const [schema, setSchema] = useState<JSONSchema7>({
-    type: "object",
-    properties: {
-      name: {
-        type: "string",
-        title: "Name",
-        description: "The user's full name",
+  const [currentSchema, setCurrentSchema] = useState<JSONSchema7>();
+
+  const initialSchema = useMemo(() => {
+    return {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          title: "Name",
+          description: "The user's full name",
+        },
+        age: {
+          type: "integer",
+          title: "Age",
+          description: "The user's age in years",
+        },
       },
-      age: {
-        type: "integer",
-        title: "Age",
-        description: "The user's age in years",
-      },
-    },
-    required: ["name"],
-  });
+      required: ["name"],
+    } satisfies JSONSchema7;
+  }, []);
 
   const handleSchemaChange = (newSchema: JSONSchema7) => {
-    setSchema(newSchema);
+    setCurrentSchema(newSchema);
     console.log("Schema updated:", newSchema);
   };
 
@@ -72,11 +81,11 @@ function SchemaEditorApp() {
         <SchemaProvider>
           <PluginsProvider>
             <SchemaBuilder
-              schema={schema}
+              initialSchema={initialSchema}
               onSchemaChange={handleSchemaChange}
               plugins={[numberPlugin, stringPlugin, arrayPlugin, objectPlugin]}
             />
-          </PluginsProver>
+          </PluginsProvider>
         </SchemaProvider>
       </div>
 
@@ -97,25 +106,40 @@ export default SchemaEditorApp;
 
 ### `SchemaBuilder` Component Props
 
-| Prop                      | Type                                          | Description                                                      |
-| ------------------------- | --------------------------------------------- | ---------------------------------------------------------------- |
-| `schema`                  | `JSONSchema7`                                 | The JSON Schema to edit. Should be an object schema.             |
-| `plugins`                 | `BaseJSONSchemaPlugin[]`                      | Array of constraint plugins to support different property types. |
-| `propertyComponent`       | `React.ComponentType<PropertyComponentProps>` | Optional custom component to render properties.                  |
-| `onSchemaChange`          | `(schema: JSONSchema7) => void`               | Called whenever the schema changes.                              |
-| `onPropertyAddSuccess`    | `(props: PropertyAddSuccess) => void`         | Called when a property is successfully added.                    |
-| `onPropertyAddError`      | `(props: PropertyAddError) => void`           | Called when there's an error adding a property.                  |
-| `onPropertyChangeError`   | `(prop: Error) => void`                       | Called when there's an error changing a property.                |
-| `onPropertyChangeSuccess` | `() => void`                                  | Called when a property is successfully changed.                  |
+| Prop                         | Type                                          | Description                                                      |
+| ---------------------------- | --------------------------------------------- | ---------------------------------------------------------------- |
+| `schema`                     | `JSONSchema7`                                 | The JSON Schema to edit. Should be an object schema.             |
+| `plugins`                    | `BaseJSONSchemaPlugin[]`                      | Array of constraint plugins to support different property types. |
+| `propertyComponent`          | `React.ComponentType<PropertyComponentProps>` | Optional custom component to render properties.                  |
+| `onSchemaChange`             | `(schema: JSONSchema7) => void`               | Called whenever the schema changes.                              |
+| `onPropertyAddSuccess`       | `(props: PropertyAddSuccess) => void`         | Called when a property is successfully added.                    |
+| `onPropertyAddError`         | `(props: PropertyAddError) => void`           | Called when there's an error adding a property.                  |
+| `onPropertyChangeError`      | `(prop: Error) => void`                       | Called when there's an error changing a property.                |
+| `onPropertyChangeSuccess`    | `() => void`                                  | Called when a property is successfully changed.                  |
+| `backButtonClassName`        | `string`                                      | Class name for the navigation bar's back button.                 |
+| `propertiesListClassName`    | `string`                                      | Class name for the properties list container.                    |
+| `addPropertyButtonClassName` | `string`                                      | Class name for the Add Property button.                          |
+| `navigationComponent`        | `React.ComponentType<NavigationProps>`        | Custom component for the navigation bar.                         |
+| `addPropertyButtonComponent` | `React.ComponentType<AddPropertyButtonProps>` | Custom component for the Add Property button.                    |
 
-### Plugins
+### Navigation and Add Button Props
 
-The SchemaBuilder supports different types of constraints for properties through plugins:
+When providing custom navigation or add button components, they will receive these props:
 
-- `numberPlugin`: Adds constraints like minimum, maximum, and multipleOf for number properties
-- `stringPlugin`: Adds constraints like minLength, maxLength, pattern for string properties
-- `arrayPlugin`: Adds constraints like minItems, maxItems, uniqueItems for array properties
-- `objectPlugin`: Adds constraints like minProperties, maxProperties for object properties
+```tsx
+// For custom navigation
+interface NavigationProps {
+  currentPath: string[];
+  onNavigateUp: () => void;
+  onNavigateTo: (newPath: string[]) => void;
+  isRootPath: boolean;
+}
+
+// For custom add property button
+interface AddPropertyButtonProps {
+  onClick: () => void;
+}
+```
 
 ### PropertyComponentProps Interface
 
@@ -136,7 +160,77 @@ interface PropertyComponentProps {
 }
 ```
 
+### Plugins
+
+The SchemaBuilder supports different types of constraints for properties through plugins:
+
+- `numberPlugin`: Adds constraints like minimum, maximum, and multipleOf for number properties
+- `stringPlugin`: Adds constraints like minLength, maxLength, pattern for string properties
+- `arrayPlugin`: Adds constraints like minItems, maxItems, uniqueItems for array properties
+- `objectPlugin`: Adds constraints like minProperties, maxProperties for object properties
+
 ## Advanced Usage
+
+### Customizing UI Elements
+
+You can customize the appearance or completely replace key UI elements:
+
+```tsx
+import { SchemaBuilder } from "@satoshibits/react-json-schema-builder";
+import type {
+  NavigationProps,
+  AddPropertyButtonProps,
+} from "@satoshibits/react-json-schema-builder";
+
+// Custom navigation component
+const CustomNavigation = ({
+  currentPath,
+  onNavigateUp,
+  onNavigateTo,
+  isRootPath,
+}: NavigationProps) => (
+  <div className="my-custom-nav">
+    <button onClick={onNavigateUp} disabled={isRootPath}>
+      Go Back
+    </button>
+    <div className="breadcrumbs">
+      <span onClick={() => onNavigateTo([])}>Root</span>
+      {currentPath.map((path, index) => (
+        <span
+          key={index}
+          onClick={() => onNavigateTo(currentPath.slice(0, index + 1))}
+        >
+          / {path}
+        </span>
+      ))}
+    </div>
+  </div>
+);
+
+// Custom add property button
+const CustomAddButton = ({ onClick }: AddPropertyButtonProps) => (
+  <button className="my-add-button" onClick={onClick}>
+    Add New Property
+  </button>
+);
+
+// Using custom components and class names
+function CustomizedSchemaBuilder() {
+  return (
+    <SchemaBuilder
+      schema={initialSchema}
+      onSchemaChange={handleSchemaChange}
+      // Custom class names
+      backButtonClassName="my-back-button"
+      propertiesListClassName="my-properties-container"
+      addPropertyButtonClassName="my-add-btn"
+      // Custom components
+      navigationComponent={CustomNavigation}
+      addPropertyButtonComponent={CustomAddButton}
+    />
+  );
+}
+```
 
 ### Custom Property Component
 
@@ -254,6 +348,17 @@ With the appropriate plugins, you can configure various constraints:
 - **Number/Integer**: minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf
 - **Array**: minItems, maxItems, uniqueItems
 - **Object**: required properties, minProperties, maxProperties
+
+### UI Customization
+
+Customize the appearance of key UI elements:
+
+- Change styles of the navigation back button with `backButtonClassName`
+- Customize the properties container with `propertiesListClassName`
+- Style the Add Property button with `addPropertyButtonClassName`
+- Replace the entire navigation UI with a custom component via `navigationComponent`
+- Replace the Add Property button with a custom component via `addPropertyButtonComponent`
+- Customize how properties are rendered with the `propertyComponent` prop
 
 ## License
 

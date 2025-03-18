@@ -41,6 +41,7 @@ import { validateSchema } from "./utils";
 import Ajv from "ajv";
 import { DebouncedInput } from "@/components/depounced-input";
 import { AddPropertyDialog, type AddPropertyDialogProps } from "./add-dialog";
+import { cn } from "@/lib/utils";
 
 // PropertyComponent type definition for custom property components
 export interface PropertyComponentProps {
@@ -56,9 +57,22 @@ export interface PropertyComponentProps {
   onNavigate?: (key: string) => void;
 }
 
+// NavigationProps for custom navigation component
+export interface NavigationProps {
+  currentPath: string[];
+  onNavigateUp: () => void;
+  onNavigateTo: (newPath: string[]) => void;
+  isRootPath: boolean;
+}
+
+// AddPropertyButtonProps for custom add property button
+export interface AddPropertyButtonProps {
+  onClick: () => void;
+}
+
 interface SchemaBuilderProps {
   /** The schema to edit */
-  schema?: JSONSchema7;
+  initialSchema?: JSONSchema7;
   /** Constraint plugins to use */
   plugins?: BaseJSONSchemaPlugin[];
   /** Custom component to render properties */
@@ -73,6 +87,16 @@ interface SchemaBuilderProps {
   onPropertyChangeError?: (prop: Error) => void;
   /** Called when a property is successfully changed */
   onPropertyChangeSuccess?: () => void;
+  /** Class name for the navigation bar back button */
+  backButtonClassName?: string;
+  /** Class name for the properties list container */
+  propertiesListClassName?: string;
+  /** Class name for the add property button */
+  addPropertyButtonClassName?: string;
+  /** Custom navigation component */
+  navigationComponent?: React.ComponentType<NavigationProps>;
+  /** Custom add property button component */
+  addPropertyButtonComponent?: React.ComponentType<AddPropertyButtonProps>;
 }
 
 export const SchemaBuilder = (props: SchemaBuilderProps) => {
@@ -111,11 +135,11 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
 
   // Set schema from props
   useEffect(() => {
-    if (props.schema) {
+    if (props.initialSchema) {
       try {
         // Validate the schema before setting it
-        validateSchema(props.schema);
-        setSchema(clone(props.schema));
+        validateSchema(props.initialSchema);
+        setSchema(clone(props.initialSchema));
         setSchemaValidationError(null);
       } catch (error) {
         if (error instanceof Error) {
@@ -127,7 +151,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
         }
       }
     }
-  }, [props.schema]);
+  }, [props.initialSchema]);
 
   // Notify schema changes
   useEffect(() => {
@@ -486,23 +510,29 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
     return null;
   };
 
-  return (
-    <div>
-      {/* Schema validation error */}
-      {schemaValidationError && (
-        <Alert variant="destructive">
-          <AlertTitle>Schema Error</AlertTitle>
-          <AlertDescription>{schemaValidationError}</AlertDescription>
-        </Alert>
-      )}
+  // Render navigation component
+  const renderNavigation = () => {
+    const NavigationComponent = props.navigationComponent;
 
-      {/* Navigation bar */}
+    if (NavigationComponent) {
+      return (
+        <NavigationComponent
+          currentPath={path}
+          onNavigateUp={handleNavigateUp}
+          onNavigateTo={setPath}
+          isRootPath={path.length === 0}
+        />
+      );
+    }
+
+    return (
       <div className="flex items-center space-x-4">
         <Button
           variant="outline"
           size="sm"
           onClick={handleNavigateUp}
           disabled={path.length === 0}
+          className={cn(props.backButtonClassName)}
         >
           Back
         </Button>
@@ -529,9 +559,51 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
           </BreadcrumbList>
         </Breadcrumb>
       </div>
+    );
+  };
+
+  // Render add property button
+  const renderAddPropertyButton = () => {
+    const AddPropertyButtonComponent = props.addPropertyButtonComponent;
+
+    if (AddPropertyButtonComponent) {
+      return (
+        <AddPropertyButtonComponent
+          onClick={() => setShowPropertyDialog(true)}
+        />
+      );
+    }
+
+    return (
+      <Button
+        className={cn("self-center", props.addPropertyButtonClassName)}
+        onClick={() => {
+          setShowPropertyDialog(true);
+        }}
+      >
+        <Plus className="h-4 w-4 mr-2" />
+        Add Property
+      </Button>
+    );
+  };
+
+  return (
+    <div>
+      {/* Schema validation error */}
+      {schemaValidationError && (
+        <Alert variant="destructive">
+          <AlertTitle>Schema Error</AlertTitle>
+          <AlertDescription>{schemaValidationError}</AlertDescription>
+        </Alert>
+      )}
+
+      {/* Navigation bar */}
+      {renderNavigation()}
 
       {/* Properties list */}
-      <div className="mt-6 overflow-x-hidden min-w-dvw">
+      <div
+        className={cn("mt-6 overflow-x-hidden", props.propertiesListClassName)}
+      >
         {Object.entries(currentSchema.properties ?? {}).map(
           ([key, property]) => {
             if (typeof property === "boolean") {
@@ -545,15 +617,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
       </div>
 
       {/* Add property button */}
-      <Button
-        className="self-center"
-        onClick={() => {
-          setShowPropertyDialog(true);
-        }}
-      >
-        <Plus className="h-4 w-4 mr-2" />
-        Add Property
-      </Button>
+      {renderAddPropertyButton()}
 
       {/* Add property dialog */}
       <AddPropertyDialog

@@ -27,7 +27,7 @@ const Dev = () => {
   return (
     <div className="bg-yellow-50/50 p-4">
       <SchemaBuilder
-        schema={testSchema}
+        initialSchema={testSchema}
         plugins={[numberPlugin, stringPlugin, arrayPlugin]}
         onSchemaChange={(schema) => {
           setSchema(schema);
