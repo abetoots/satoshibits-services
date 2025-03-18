@@ -51,7 +51,7 @@ describe("SchemaBuilder", () => {
     it("renders with provided schema to the builder", () => {
       render(
         <TestWrapper initialSchema={createTestSchema()}>
-          <SchemaBuilder schema={createTestSchema()} />
+          <SchemaBuilder initialSchema={createTestSchema()} />
         </TestWrapper>,
       );
 
@@ -89,7 +89,7 @@ describe("SchemaBuilder", () => {
 
       render(
         <TestWrapper>
-          <SchemaBuilder schema={invalidSchema} />
+          <SchemaBuilder initialSchema={invalidSchema} />
         </TestWrapper>,
       );
 
@@ -103,7 +103,7 @@ describe("SchemaBuilder", () => {
 
       render(
         <TestWrapper>
-          <SchemaBuilder schema={createTestSchema()} />
+          <SchemaBuilder initialSchema={createTestSchema()} />
         </TestWrapper>,
       );
 
@@ -132,7 +132,7 @@ describe("SchemaBuilder", () => {
 
       render(
         <TestWrapper initialSchema={createTestSchema()}>
-          <SchemaBuilder schema={createTestSchema()} />
+          <SchemaBuilder initialSchema={createTestSchema()} />
         </TestWrapper>,
       );
 
@@ -164,7 +164,7 @@ describe("SchemaBuilder", () => {
 
       render(
         <TestWrapper initialSchema={createTestSchema()}>
-          <SchemaBuilder schema={createTestSchema()} />
+          <SchemaBuilder initialSchema={createTestSchema()} />
         </TestWrapper>,
       );
 
@@ -345,7 +345,7 @@ describe("SchemaBuilder", () => {
         render(
           <TestWrapper>
             <SchemaBuilder
-              schema={createTestSchema()}
+              initialSchema={createTestSchema()}
               onSchemaChange={onSchemaChange}
             />
           </TestWrapper>,
@@ -384,7 +384,7 @@ describe("SchemaBuilder", () => {
         render(
           <TestWrapper>
             <SchemaBuilder
-              schema={createTestSchema()}
+              initialSchema={createTestSchema()}
               onSchemaChange={onSchemaChange}
             />
           </TestWrapper>,
@@ -422,7 +422,7 @@ describe("SchemaBuilder", () => {
         render(
           <TestWrapper>
             <SchemaBuilder
-              schema={createTestSchema()}
+              initialSchema={createTestSchema()}
               onSchemaChange={onSchemaChange}
             />
           </TestWrapper>,
@@ -467,7 +467,7 @@ describe("SchemaBuilder", () => {
         render(
           <TestWrapper>
             <SchemaBuilder
-              schema={createTestSchema()}
+              initialSchema={createTestSchema()}
               onSchemaChange={onSchemaChange}
             />
           </TestWrapper>,
@@ -540,7 +540,7 @@ describe("SchemaBuilder", () => {
         render(
           <TestWrapper>
             <SchemaBuilder
-              schema={schemaWithConstraints}
+              initialSchema={schemaWithConstraints}
               plugins={[numberPlugin]}
               onSchemaChange={onSchemaChange}
             />
@@ -601,7 +601,7 @@ describe("SchemaBuilder", () => {
         render(
           <TestWrapper>
             <SchemaBuilder
-              schema={createTestSchema()}
+              initialSchema={createTestSchema()}
               onSchemaChange={onSchemaChange}
             />
           </TestWrapper>,
@@ -645,7 +645,7 @@ describe("SchemaBuilder", () => {
         render(
           <TestWrapper>
             <SchemaBuilder
-              schema={createTestSchema()}
+              initialSchema={createTestSchema()}
               onSchemaChange={onSchemaChange}
             />
           </TestWrapper>,
@@ -677,7 +677,7 @@ describe("SchemaBuilder", () => {
       render(
         <TestWrapper>
           <SchemaBuilder
-            schema={createTestSchema()}
+            initialSchema={createTestSchema()}
             onSchemaChange={onSchemaChange}
           />
         </TestWrapper>,
@@ -720,7 +720,7 @@ describe("SchemaBuilder", () => {
       render(
         <TestWrapper>
           <SchemaBuilder
-            schema={createTestSchema()}
+            initialSchema={createTestSchema()}
             onSchemaChange={onSchemaChange}
           />
         </TestWrapper>,
@@ -768,7 +768,7 @@ describe("SchemaBuilder", () => {
       render(
         <TestWrapper>
           <SchemaBuilder
-            schema={createTestSchema()}
+            initialSchema={createTestSchema()}
             onSchemaChange={onSchemaChange}
             onPropertyAddSuccess={onPropertyAddSuccess}
           />
@@ -1234,7 +1234,7 @@ describe("SchemaBuilder", () => {
       render(
         <TestWrapper initialSchema={createTestSchema()}>
           <SchemaBuilder
-            schema={createTestSchema()}
+            initialSchema={createTestSchema()}
             propertyComponent={CustomPropertyComponent}
           />
         </TestWrapper>,
@@ -1253,7 +1253,7 @@ describe("SchemaBuilder", () => {
       render(
         <TestWrapper initialSchema={createTestSchema()}>
           <SchemaBuilder
-            schema={createTestSchema()}
+            initialSchema={createTestSchema()}
             propertyComponent={customPropSpy}
           />
         </TestWrapper>,
