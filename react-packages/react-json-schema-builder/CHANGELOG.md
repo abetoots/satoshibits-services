@@ -1,5 +1,11 @@
 # @satoshibits/react-json-schema-builder
 
+## 1.0.2
+
+### Patch Changes
+
+- cd01d9e: fix rollup options and lib name
+
 ## 1.0.1
 
 ### Patch Changes

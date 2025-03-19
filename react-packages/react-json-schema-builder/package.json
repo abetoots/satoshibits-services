@@ -1,6 +1,6 @@
 {
   "name": "@satoshibits/react-json-schema-builder",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "main": "./dist/index.cjs.js",
   "types": "./dist/index.d.mts",
   "exports": {
