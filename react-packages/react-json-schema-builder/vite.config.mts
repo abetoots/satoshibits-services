@@ -20,12 +20,13 @@ export default defineConfig({
   build: {
     lib: {
       entry: componentPackagePath,
-      name: "CHANGE-ME",
+      name: "ReactJsonSchemaBuilder",
       formats: ["es", "cjs"],
       fileName: (format) => `index.${format}.js`,
     },
     rollupOptions: {
-      external: [...Object.keys(peerDependencies)],
+      //https://stackoverflow.com/questions/66194269/typeerror-cannot-read-propertyreactcurrentdispatcherof-undefined
+      external: [...Object.keys(peerDependencies), "react/jsx-runtime"],
       output: { preserveModules: true, exports: "named" },
     },
     sourcemap: true,
