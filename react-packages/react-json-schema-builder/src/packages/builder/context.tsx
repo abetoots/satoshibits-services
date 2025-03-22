@@ -384,6 +384,13 @@ function useSchema() {
     return Boolean(schema?.required?.includes(key));
   };
 
+  /**
+   * Programatically get the current schema value
+   */
+  const getValue = () => {
+    return schema;
+  };
+
   return {
     ...context,
     getCurrentSchema,
@@ -394,6 +401,7 @@ function useSchema() {
     navigateToCorrectNesting,
     handleDeleteProperty,
     isPropertyRequired,
+    getValue,
   };
 }
 
