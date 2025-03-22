@@ -1,5 +1,11 @@
 # @satoshibits/react-json-schema-builder
 
+## 1.1.0
+
+### Minor Changes
+
+- b0f94f8: add duplicate feature to useSchema
+
 ## 1.0.3
 
 ### Patch Changes
