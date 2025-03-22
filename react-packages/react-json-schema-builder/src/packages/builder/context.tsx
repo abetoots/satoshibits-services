@@ -65,7 +65,11 @@ export interface PropertyChangeSuccess {
   property: JSONSchema7Definition;
 }
 
-function useSchema() {
+function useSchema({
+  onSchemaChange,
+}: {
+  onSchemaChange?: (schema: JSONSchema7) => void;
+} = {}) {
   const context = useContext(SchemaContext);
 
   if (context === undefined) {
@@ -186,6 +190,7 @@ function useSchema() {
     }
 
     setSchema(newSchema);
+    onSchemaChange?.(newSchema);
   };
 
   const handlePropertyChange = (
@@ -254,6 +259,7 @@ function useSchema() {
     }
 
     setSchema(newSchema);
+    onSchemaChange?.(newSchema);
 
     if (isUpdated) {
       return { status: "success", property: current.properties![key]! };
@@ -311,6 +317,7 @@ function useSchema() {
     }
 
     setSchema(newSchema);
+    onSchemaChange?.(newSchema);
 
     return {
       status: "success" as const,
@@ -337,6 +344,7 @@ function useSchema() {
     }
 
     setSchema(newSchema);
+    onSchemaChange?.(newSchema);
   };
 
   const handleDuplicateProperty = (key: string) => {

@@ -121,7 +121,6 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
     getCurrentSchema,
     setPath,
     path,
-    schema,
     handleAddProperty,
     handlePropertyChange,
     handleKeyChange,
@@ -129,7 +128,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
     setSchema,
     isPropertyRequired,
     handleDuplicateProperty,
-  } = useSchema();
+  } = useSchema({ onSchemaChange: props.onSchemaChange });
 
   // Get constraints context
   const { getConstraintDefinitionsForType } = useConstraints();
@@ -153,13 +152,6 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
       }
     }
   }, [props.initialSchema]);
-
-  // Notify schema changes
-  useEffect(() => {
-    if (!schemaValidationError && props.onSchemaChange) {
-      props.onSchemaChange(schema);
-    }
-  }, [schema, schemaValidationError, props.onSchemaChange]);
 
   const currentSchema = getCurrentSchema();
 
