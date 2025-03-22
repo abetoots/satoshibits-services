@@ -626,5 +626,99 @@ describe("Schema Context", () => {
         expect(res?.propertySchema?.title).toBe("Deep Property");
       });
     });
+
+    describe("handleDuplicateProperty", () => {
+      it("duplicates a property with all its attributes", () => {
+        const schemaWithProperty = createBaseSchema({
+          properties: {
+            originalProp: {
+              type: "string",
+              title: "Original Title",
+              description: "Original description",
+              minLength: 5,
+            },
+          },
+        });
+
+        const { result } = renderHook(() => useSchema(), {
+          wrapper: (props) => (
+            <TestWrapper initialSchema={schemaWithProperty} {...props} />
+          ),
+        });
+
+        act(() => {
+          result.current.handleDuplicateProperty("originalProp");
+        });
+
+        const originalProperty = result.current.schema.properties?.originalProp;
+        const duplicatedProperty =
+          result.current.schema.properties?.originalProp_copy;
+
+        expect(duplicatedProperty).toBeDefined();
+        if (
+          typeof duplicatedProperty === "boolean" ||
+          typeof originalProperty === "boolean"
+        ) {
+          fail("Property is a boolean when it should be an object");
+        }
+
+        // Check that all attributes were duplicated correctly
+        expect(duplicatedProperty?.type).toBe(originalProperty?.type);
+        expect(duplicatedProperty?.title).toBe(originalProperty?.title);
+        expect(duplicatedProperty?.description).toBe(
+          originalProperty?.description,
+        );
+        expect(duplicatedProperty?.minLength).toBe(originalProperty?.minLength);
+      });
+
+      it("preserves required status when duplicating a required property", () => {
+        const schemaWithRequiredProperty = createBaseSchema({
+          properties: {
+            requiredProp: {
+              type: "string",
+            },
+          },
+          required: ["requiredProp"],
+        });
+
+        const { result } = renderHook(() => useSchema(), {
+          wrapper: (props) => (
+            <TestWrapper
+              initialSchema={schemaWithRequiredProperty}
+              {...props}
+            />
+          ),
+        });
+
+        act(() => {
+          result.current.handleDuplicateProperty("requiredProp");
+        });
+
+        // Verify the duplicated property exists
+        expect(
+          result.current.schema.properties?.requiredProp_copy,
+        ).toBeDefined();
+
+        // Verify the required status was preserved
+        expect(result.current.schema.required).toContain("requiredProp_copy");
+      });
+
+      it("returns undefined when property doesn't exist", () => {
+        const emptySchema = createBaseSchema();
+
+        const { result } = renderHook(() => useSchema(), {
+          wrapper: (props) => (
+            <TestWrapper initialSchema={emptySchema} {...props} />
+          ),
+        });
+
+        let response;
+        act(() => {
+          response = result.current.handleDuplicateProperty("nonExistentProp");
+        });
+
+        expect(response).toBeUndefined();
+      });
+    });
   });
 });

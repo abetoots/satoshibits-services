@@ -128,6 +128,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
     handleDeleteProperty,
     setSchema,
     isPropertyRequired,
+    handleDuplicateProperty,
   } = useSchema();
 
   // Get constraints context
@@ -196,27 +197,13 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
     setShowDeleteDialog(false);
   };
 
-  const handleDuplicateProperty = (key: string) => {
-    const currentProperties = getCurrentSchema().properties;
-    if (!currentProperties || typeof currentProperties[key] === "boolean") {
-      return;
-    }
-
-    const propertyToDuplicate = currentProperties[key]!;
-    const newKey = `${key}_copy`;
-    const newProperty = clone(propertyToDuplicate);
-
-    // Add the duplicated property
-    const result = handleAddProperty(
-      newKey,
-      newProperty,
-      isPropertyRequired(key),
-    );
+  const handleDuplicate = (key: string) => {
+    const result = handleDuplicateProperty(key);
 
     // Notify if needed
-    if (result.status === "error") {
+    if (result?.status === "error") {
       props.onPropertyAddError?.(result);
-    } else {
+    } else if (result?.status === "success") {
       props.onPropertyAddSuccess?.(result);
     }
   };
@@ -248,7 +235,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
           onPropertyChange={handlePropertyChange}
           onKeyChange={handleKeyChange}
           onDelete={handleInitiateDelete}
-          onDuplicate={handleDuplicateProperty}
+          onDuplicate={handleDuplicate}
           onNavigate={
             property.type === "object" ||
             (property.type === "array" &&
@@ -370,7 +357,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => handleDuplicateProperty(key)}
+            onClick={() => handleDuplicate(key)}
             aria-label="Duplicate"
             className="block!"
           >

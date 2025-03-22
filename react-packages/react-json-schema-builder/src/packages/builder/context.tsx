@@ -2,7 +2,7 @@ import { createContext, useContext, useState } from "react";
 
 import type { PropsWithChildren, SetStateAction } from "react";
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
-import { clone } from "remeda";
+import { clone, isEmpty } from "remeda";
 import type { OperationError } from "./shared-types";
 
 interface ContextState<T extends JSONSchema7> {
@@ -339,30 +339,23 @@ function useSchema() {
     setSchema(newSchema);
   };
 
-  //   const handleDuplicateProperty = (key: string) => {
-  //     const currentProperties = getCurrentSchema().properties;
-  //     if (!currentProperties || typeof currentProperties[key] === "boolean") {
-  //       return;
-  //     }
+  const handleDuplicateProperty = (key: string) => {
+    const currentProperties = getCurrentSchema().properties;
+    if (
+      !currentProperties ||
+      isEmpty(currentProperties) ||
+      typeof currentProperties[key] === "boolean"
+    ) {
+      return;
+    }
 
-  //     const propertyToDuplicate = currentProperties[key]!;
-  //     const newKey = `${key}_copy`;
-  //     const newProperty = clone(propertyToDuplicate);
+    const propertyToDuplicate = currentProperties[key]!;
+    const newKey = `${key}_copy`;
+    const newProperty = clone(propertyToDuplicate);
 
-  //     // Add the duplicated property
-  //     const result = handleAddProperty(
-  //       newKey,
-  //       newProperty,
-  //       isPropertyRequired(key),
-  //     );
-
-  //     // Notify if needed
-  //     if (result.status === "error") {
-  //       props.onPropertyAddError?.(result);
-  //     } else {
-  //       props.onPropertyAddSuccess?.(result);
-  //     }
-  //   };
+    // Add the duplicated property
+    return handleAddProperty(newKey, newProperty, isPropertyRequired(key));
+  };
 
   const isPropertyRequired = (key: string) => {
     if (path.length) {
@@ -402,6 +395,7 @@ function useSchema() {
     handleDeleteProperty,
     isPropertyRequired,
     getValue,
+    handleDuplicateProperty,
   };
 }
 
