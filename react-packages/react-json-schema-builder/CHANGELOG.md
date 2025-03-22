@@ -1,5 +1,11 @@
 # @satoshibits/react-json-schema-builder
 
+## 1.1.1
+
+### Patch Changes
+
+- aa5f401: onSchemaChange should be called imperatively, not through useEffect
+
 ## 1.1.0
 
 ### Minor Changes
