@@ -576,6 +576,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
 
     return (
       <Button
+        type="button"
         className={cn("self-center", props.addPropertyButtonClassName)}
         onClick={() => {
           setShowPropertyDialog(true);
