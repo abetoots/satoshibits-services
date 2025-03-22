@@ -1,5 +1,12 @@
 # @satoshibits/react-json-schema-builder
 
+## 1.0.3
+
+### Patch Changes
+
+- 06bcd2d: add getValue
+- bb99d24: prevent unintentional submission when inside form
+
 ## 1.0.2
 
 ### Patch Changes
