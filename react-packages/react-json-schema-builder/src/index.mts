@@ -1,3 +1,9 @@
+//export plugins
+import arrayPlugin from "./packages/plugins/array";
+import numberPlugin from "./packages/plugins/number";
+import objectPlugin from "./packages/plugins/object";
+import stringPlugin from "./packages/plugins/string";
+
 export {
   SchemaContext,
   SchemaProvider,
@@ -17,8 +23,4 @@ export type {
   ConstraintRendererProps,
 } from "./packages/constraints/context";
 
-//export plugins
-export * from "./packages/plugins/array";
-export * from "./packages/plugins/number";
-export * from "./packages/plugins/object";
-export * from "./packages/plugins/string";
+export { arrayPlugin, numberPlugin, objectPlugin, stringPlugin };
