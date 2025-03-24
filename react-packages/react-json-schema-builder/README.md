@@ -2,6 +2,8 @@
 
 A powerful React component for visually building and editing [JSON Schema](https://json-schema.org/) definitions.
 
+Demo: https://abetoots.github.io/react-json-schema-builder-demo/
+
 ## Features
 
 - 🧰 Visual interface for building JSON Schema documents
