@@ -1,5 +1,11 @@
 # @satoshibits/react-json-schema-builder
 
+## 1.1.2
+
+### Patch Changes
+
+- c5d6c7b: default to type button to prevent unwanted submissions
+
 ## 1.1.1
 
 ### Patch Changes
