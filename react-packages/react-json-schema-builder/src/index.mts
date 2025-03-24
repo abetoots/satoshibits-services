@@ -24,3 +24,5 @@ export type {
 } from "./packages/constraints/context";
 
 export { arrayPlugin, numberPlugin, objectPlugin, stringPlugin };
+
+export * from "./packages/builder/utils";
