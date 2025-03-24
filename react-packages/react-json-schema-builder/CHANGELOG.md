@@ -1,5 +1,11 @@
 # @satoshibits/react-json-schema-builder
 
+## 1.1.4
+
+### Patch Changes
+
+- a6fe84c: cleanup keys with undefined values
+
 ## 1.1.3
 
 ### Patch Changes
