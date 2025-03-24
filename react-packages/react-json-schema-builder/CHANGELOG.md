@@ -1,5 +1,11 @@
 # @satoshibits/react-json-schema-builder
 
+## 1.1.6
+
+### Patch Changes
+
+- d06af43: export utils as well
+
 ## 1.1.5
 
 ### Patch Changes
