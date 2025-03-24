@@ -1,5 +1,11 @@
 # @satoshibits/react-json-schema-builder
 
+## 1.1.3
+
+### Patch Changes
+
+- 5ff0375: ensure outer forms aren't submitted
+
 ## 1.1.2
 
 ### Patch Changes
