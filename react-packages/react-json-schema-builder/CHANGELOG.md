@@ -1,5 +1,11 @@
 # @satoshibits/react-json-schema-builder
 
+## 1.1.7
+
+### Patch Changes
+
+- 985bf24: add demo and update package urls
+
 ## 1.1.6
 
 ### Patch Changes
