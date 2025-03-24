@@ -1,5 +1,11 @@
 # @satoshibits/react-json-schema-builder
 
+## 1.1.5
+
+### Patch Changes
+
+- e6409de: export plugins as named
+
 ## 1.1.4
 
 ### Patch Changes
