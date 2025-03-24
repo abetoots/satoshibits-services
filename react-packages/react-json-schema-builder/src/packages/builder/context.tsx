@@ -303,6 +303,12 @@ function useSchema({
       delete propertyToAdd.properties;
     }
 
+    // Clean the propertyToAdd object ensuring it doesn't contain
+    //keys with undefined values
+    propertyToAdd = Object.fromEntries(
+      Object.entries(propertyToAdd).filter(([, value]) => value !== undefined),
+    );
+
     // Add the new property
     current.properties[key] = propertyToAdd;
 
