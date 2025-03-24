@@ -335,6 +335,47 @@ describe("SchemaBuilder", () => {
           ).toBeInTheDocument();
         });
       });
+
+      it("prevents form submission from bubbling outside the dialog", async () => {
+        const user = userEvent.setup();
+        const outerFormSubmit = vi.fn();
+
+        // Render with a wrapping form to simulate potential bubbling
+        render(
+          <form onSubmit={outerFormSubmit} data-testid="outer-form">
+            <TestWrapper>
+              <SchemaBuilder />
+            </TestWrapper>
+          </form>,
+        );
+
+        // Open add property dialog
+        await user.click(screen.getByText("Add Property"));
+
+        // Fill in minimum required fields
+        const dialog = screen.getByRole("dialog");
+        await user.type(
+          within(dialog).getByLabelText("Property Key"),
+          "testKey",
+        );
+        await user.type(
+          within(dialog).getByLabelText("Property Title"),
+          "Test Title",
+        );
+        await user.click(
+          within(dialog).getByRole("combobox", { name: /select type/i }),
+        );
+        await user.click(screen.getByRole("option", { name: "string" }));
+
+        // Submit the add property form
+        fireEvent.submit(screen.getByTestId("add-property-form"));
+
+        // Wait to ensure events have been processed
+        await waitFor(() => {
+          // Verify the outer form's submit handler was not called
+          expect(outerFormSubmit).not.toHaveBeenCalled();
+        });
+      });
     });
 
     describe("Updating Properties", () => {

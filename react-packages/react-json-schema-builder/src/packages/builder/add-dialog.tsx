@@ -208,9 +208,14 @@ export function AddPropertyDialog({
         </DialogHeader>
         <Form {...form}>
           <form
-            onSubmit={form.handleSubmit(handleSubmit)}
+            onSubmit={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              void form.handleSubmit(handleSubmit)(e);
+            }}
             className="space-y-4"
             data-testid="add-property-form"
+            id="add-property-form"
           >
             <div className="space-y-2">
               <FormField
@@ -535,7 +540,9 @@ export function AddPropertyDialog({
             ) : null}
 
             <DialogFooter>
-              <Button type="submit">Add Property</Button>
+              <Button type="submit" form="add-property-form">
+                Add Property
+              </Button>
             </DialogFooter>
           </form>
         </Form>
