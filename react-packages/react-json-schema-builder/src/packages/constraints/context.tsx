@@ -14,6 +14,8 @@ export interface ConstraintRendererProps<T = any> {
   // Is this constraint disabled/readonly
   disabled?: boolean;
   error?: OperationError;
+  propertyKey?: string;
+  propertyType?: string | string[];
 }
 
 export interface ConstraintDefinition {

@@ -12,13 +12,14 @@ import { type PropertyComponentProps, SchemaBuilder } from "./schema-builder";
 import { SchemaProvider } from "./context";
 import { PluginsProvider } from "../constraints/context";
 import { JSONSchema7 } from "json-schema";
-import numberPlugin from "../plugins/number";
-import stringPlugin from "../plugins/string";
-import arrayPlugin from "../plugins/array";
-import objectPlugin from "../plugins/object";
 import { type PropsWithChildren } from "react";
 import { fail } from "node:assert";
 import { createTestSchema } from "./utils";
+import { NumberConstraintPlugin } from "@/packages/plugins/number";
+import { StringConstraintPlugin } from "@/packages/plugins/string";
+import { ArrayConstraintPlugin } from "@/packages/plugins/array";
+import { EnumConstraintPlugin } from "@/packages/plugins/enum";
+import { ObjectConstraintPlugin } from "@/index.mjs";
 
 // Wrapper component to provide necessary context
 const TestWrapper = ({
@@ -582,7 +583,7 @@ describe("SchemaBuilder", () => {
           <TestWrapper>
             <SchemaBuilder
               initialSchema={schemaWithConstraints}
-              plugins={[numberPlugin]}
+              plugins={[NumberConstraintPlugin]}
               onSchemaChange={onSchemaChange}
             />
           </TestWrapper>,
@@ -969,7 +970,7 @@ describe("SchemaBuilder", () => {
       render(
         <TestWrapper>
           <SchemaBuilder
-            plugins={[numberPlugin]}
+            plugins={[NumberConstraintPlugin]}
             onSchemaChange={onSchemaChange}
           />
         </TestWrapper>,
@@ -1040,7 +1041,7 @@ describe("SchemaBuilder", () => {
       render(
         <TestWrapper>
           <SchemaBuilder
-            plugins={[stringPlugin]}
+            plugins={[StringConstraintPlugin]}
             onSchemaChange={onSchemaChange}
           />
         </TestWrapper>,
@@ -1100,7 +1101,7 @@ describe("SchemaBuilder", () => {
       render(
         <TestWrapper>
           <SchemaBuilder
-            plugins={[arrayPlugin]}
+            plugins={[ArrayConstraintPlugin]}
             onSchemaChange={onSchemaChange}
           />
         </TestWrapper>,
@@ -1167,7 +1168,7 @@ describe("SchemaBuilder", () => {
       render(
         <TestWrapper>
           <SchemaBuilder
-            plugins={[objectPlugin]}
+            plugins={[ObjectConstraintPlugin]}
             onSchemaChange={onSchemaChange}
           />
         </TestWrapper>,
@@ -1225,7 +1226,13 @@ describe("SchemaBuilder", () => {
       render(
         <TestWrapper>
           <SchemaBuilder
-            plugins={[numberPlugin, stringPlugin, arrayPlugin, objectPlugin]}
+            plugins={[
+              NumberConstraintPlugin,
+              StringConstraintPlugin,
+              ArrayConstraintPlugin,
+              ObjectConstraintPlugin,
+              EnumConstraintPlugin,
+            ]}
             onSchemaChange={onSchemaChange}
           />
         </TestWrapper>,
@@ -1260,6 +1267,296 @@ describe("SchemaBuilder", () => {
       expect(
         screen.getByRole("option", { name: "Multiple Of" }),
       ).toBeInTheDocument();
+      expect(
+        screen.getByRole("option", { name: "Enum Values" }),
+      ).toBeInTheDocument();
+    });
+
+    it("integrates with enum constraint plugin for string properties", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const onSchemaChange = vi.fn();
+
+      render(
+        <TestWrapper>
+          <SchemaBuilder
+            plugins={[EnumConstraintPlugin]}
+            onSchemaChange={onSchemaChange}
+          />
+        </TestWrapper>,
+      );
+
+      // Clear the initial call that happens on mount
+      onSchemaChange.mockClear();
+
+      // Open add property dialog
+      await user.click(screen.getByText("Add Property"));
+      const dialog = screen.getByRole("dialog");
+
+      // Add a string property to test enum constraint
+      const propertyKeyInput = within(dialog).getByLabelText("Property Key");
+      const propertyTitleInput =
+        within(dialog).getByLabelText("Property Title");
+      const typeSelect = within(dialog).getByRole("combobox", {
+        name: /select type/i,
+      });
+
+      await user.type(propertyKeyInput, "status");
+      await user.type(propertyTitleInput, "Status");
+      await user.click(typeSelect);
+      await user.click(screen.getByRole("option", { name: "string" }));
+
+      // Should now show constraint options
+      const constraintSection = screen.getByText("Constraints").closest("div");
+      const constraintSelect = within(constraintSection!).getByRole(
+        "combobox",
+        { name: /select constraint/i },
+      );
+
+      // Add enum constraint
+      await user.click(constraintSelect);
+      await user.click(screen.getByRole("option", { name: "Enum Values" }));
+
+      // Click add constraint button
+      const addConstraintButton = screen.getByRole("button", {
+        name: "Add constraint",
+      });
+      await user.click(addConstraintButton);
+
+      // Enum editor should appear with only string tab visible (filtered by property type)
+      await waitFor(() => {
+        expect(screen.getByText("Enum Values")).toBeInTheDocument();
+        expect(screen.getByRole("tab", { name: "String" })).toBeInTheDocument();
+        expect(
+          screen.queryByRole("tab", { name: "Number" }),
+        ).not.toBeInTheDocument();
+      });
+
+      // Add enum values
+      const stringInput = screen.getByLabelText("String Value");
+      await user.type(stringInput, "pending");
+      await user.click(screen.getByRole("button", { name: "Add enum" }));
+      await user.clear(stringInput);
+      await user.type(stringInput, "active");
+      await user.click(screen.getByRole("button", { name: "Add enum" }));
+      await user.clear(stringInput);
+      await user.type(stringInput, "completed");
+      await user.click(screen.getByRole("button", { name: "Add enum" }));
+
+      // Verify the values appear in the list
+      await waitFor(() => {
+        expect(screen.getByText("pending")).toBeInTheDocument();
+        expect(screen.getByText("active")).toBeInTheDocument();
+        expect(screen.getByText("completed")).toBeInTheDocument();
+      });
+
+      // Submit form
+      const form = screen.getByTestId("add-property-form");
+      fireEvent.submit(form);
+
+      // Verify schema includes constraint
+      await waitFor(() => {
+        expect(onSchemaChange).toHaveBeenCalled();
+      });
+
+      // Check the schema contains the enum values
+      const updatedSchema = onSchemaChange.mock.calls.at(
+        -1,
+      )?.[0] as JSONSchema7;
+      expect(updatedSchema.properties?.status).toBeDefined();
+      const statusProp = updatedSchema.properties?.status;
+      if (
+        typeof statusProp === "object" &&
+        statusProp !== null &&
+        !Array.isArray(statusProp)
+      ) {
+        expect(statusProp.enum).toBeDefined();
+        expect(statusProp.enum).toEqual(["pending", "active", "completed"]);
+      }
+    });
+
+    it("integrates with enum constraint plugin for number properties", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const onSchemaChange = vi.fn();
+
+      render(
+        <TestWrapper>
+          <SchemaBuilder
+            plugins={[EnumConstraintPlugin]}
+            onSchemaChange={onSchemaChange}
+          />
+        </TestWrapper>,
+      );
+
+      onSchemaChange.mockClear();
+
+      // Open add property dialog
+      await user.click(screen.getByText("Add Property"));
+      const dialog = screen.getByRole("dialog");
+
+      // Add a number property
+      const propertyKeyInput = within(dialog).getByLabelText("Property Key");
+      const propertyTitleInput =
+        within(dialog).getByLabelText("Property Title");
+      const typeSelect = within(dialog).getByRole("combobox", {
+        name: /select type/i,
+      });
+
+      await user.type(propertyKeyInput, "priority");
+      await user.type(propertyTitleInput, "Priority Level");
+      await user.click(typeSelect);
+      await user.click(screen.getByRole("option", { name: "number" }));
+
+      // Add enum constraint
+      const constraintSection = screen.getByText("Constraints").closest("div");
+      const constraintSelect = within(constraintSection!).getByRole(
+        "combobox",
+        { name: /select constraint/i },
+      );
+
+      await user.click(constraintSelect);
+      await user.click(screen.getByRole("option", { name: "Enum Values" }));
+
+      // Click add constraint button
+      const addConstraintButton = screen.getByRole("button", {
+        name: "Add constraint",
+      });
+      await user.click(addConstraintButton);
+
+      // Enum editor should appear with only number tab visible
+      await waitFor(() => {
+        expect(screen.getByText("Enum Values")).toBeInTheDocument();
+        expect(screen.getByRole("tab", { name: "Number" })).toBeInTheDocument();
+        expect(
+          screen.queryByRole("tab", { name: "String" }),
+        ).not.toBeInTheDocument();
+      });
+
+      // Add enum number values
+      const numberInput = screen.getByLabelText("Number Value");
+      await user.type(numberInput, "1");
+      await user.click(screen.getByRole("button", { name: "Add enum" }));
+      await user.clear(numberInput);
+      await user.type(numberInput, "2");
+      await user.click(screen.getByRole("button", { name: "Add enum" }));
+      await user.clear(numberInput);
+      await user.type(numberInput, "3");
+      await user.click(screen.getByRole("button", { name: "Add enum" }));
+
+      // Verify values are added
+      await waitFor(() => {
+        expect(screen.getByText("1")).toBeInTheDocument();
+        expect(screen.getByText("2")).toBeInTheDocument();
+        expect(screen.getByText("3")).toBeInTheDocument();
+      });
+
+      // Submit form
+      const form = screen.getByTestId("add-property-form");
+      fireEvent.submit(form);
+
+      // Verify schema includes constraint
+      await waitFor(() => {
+        expect(onSchemaChange).toHaveBeenCalled();
+      });
+
+      // Check the schema contains the enum values
+      const updatedSchema = onSchemaChange.mock.calls.at(
+        -1,
+      )?.[0] as JSONSchema7;
+      expect(updatedSchema.properties?.priority).toBeDefined();
+      const priorityProp = updatedSchema.properties?.priority;
+      if (
+        typeof priorityProp === "object" &&
+        priorityProp !== null &&
+        !Array.isArray(priorityProp)
+      ) {
+        expect(priorityProp.enum).toBeDefined();
+        expect(priorityProp.enum).toEqual([1, 2, 3]);
+      }
+    });
+
+    it("allows removing enum constraint", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const onSchemaChange = vi.fn();
+
+      // Create a schema with a property that has an enum constraint
+      const schemaWithEnum = createTestSchema({
+        properties: {
+          ...createTestSchema().properties,
+          status: {
+            type: "string",
+            title: "Status",
+            enum: ["pending", "active", "completed"],
+          },
+        },
+      });
+
+      render(
+        <TestWrapper>
+          <SchemaBuilder
+            initialSchema={schemaWithEnum}
+            plugins={[EnumConstraintPlugin]}
+            onSchemaChange={onSchemaChange}
+          />
+        </TestWrapper>,
+      );
+
+      // Clear the initial call that happens on mount
+      onSchemaChange.mockClear();
+
+      // Find the status property row
+      const statusRow = screen
+        .getByDisplayValue("status")
+        .closest("div")?.parentElement;
+      expect(statusRow).not.toBeNull();
+
+      // Find and click edit constraint button
+      const editButton = within(statusRow!).getByRole("button", {
+        name: /edit constraints/i,
+      });
+      await user.click(editButton);
+
+      // Dialog should appear
+      const dialog = screen.getByRole("dialog");
+      expect(dialog).toBeInTheDocument();
+
+      // The enum editor should be visible with values
+      await waitFor(() => {
+        expect(within(dialog).getByText("Enum Values")).toBeInTheDocument();
+        expect(within(dialog).getByText("pending")).toBeInTheDocument();
+        expect(within(dialog).getByText("active")).toBeInTheDocument();
+        expect(within(dialog).getByText("completed")).toBeInTheDocument();
+      });
+
+      // Find and click the remove constraint button
+      const removeButton = within(dialog).getByRole("button", {
+        name: /remove constraint/i,
+      });
+      await user.click(removeButton);
+
+      // Save the changes
+      const form = screen.getByTestId("edit-property-form");
+      fireEvent.submit(form);
+
+      // Verify schema update
+      await waitFor(() => {
+        expect(onSchemaChange).toHaveBeenCalled();
+      });
+
+      // Check that the schema was updated with the enum constraint removed
+      const updatedSchema = onSchemaChange.mock.calls.at(
+        -1,
+      )?.[0] as JSONSchema7;
+      const statusProp = updatedSchema.properties?.status;
+      if (
+        typeof statusProp === "object" &&
+        statusProp !== null &&
+        !Array.isArray(statusProp)
+      ) {
+        expect(statusProp.enum).toBeUndefined();
+      }
     });
   });
 

@@ -69,7 +69,7 @@ const ObjectNumberConstraintRenderer = ({
 export const ObjectMinPropertiesRenderer = ObjectNumberConstraintRenderer;
 export const ObjectMaxPropertiesRenderer = ObjectNumberConstraintRenderer;
 
-const plugin: BaseJSONSchemaPlugin = {
+export const ObjectConstraintPlugin: BaseJSONSchemaPlugin = {
   id: "object-constraints",
   hooks: {
     registerConstraints() {
@@ -115,5 +115,3 @@ const plugin: BaseJSONSchemaPlugin = {
     },
   },
 };
-
-export default plugin;

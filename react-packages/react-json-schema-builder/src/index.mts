@@ -1,9 +1,3 @@
-//export plugins
-import arrayPlugin from "./packages/plugins/array";
-import numberPlugin from "./packages/plugins/number";
-import objectPlugin from "./packages/plugins/object";
-import stringPlugin from "./packages/plugins/string";
-
 export {
   SchemaContext,
   SchemaProvider,
@@ -27,4 +21,8 @@ export { EnumEditor } from "./packages/builder/enum-editor";
 export type { EnumEditorProps } from "./packages/builder/enum-editor";
 export * from "./packages/plugins/enum";
 
+export * from "./packages/plugins/string";
+export * from "./packages/plugins/array";
+export * from "./packages/plugins/number";
+export * from "./packages/plugins/object";
 export * from "./packages/builder/utils";

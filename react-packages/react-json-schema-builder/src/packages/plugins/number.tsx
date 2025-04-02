@@ -71,7 +71,7 @@ export const NumberExclusiveMinimumRenderer = NumberConstraintRenderer;
 export const NumberExclusiveMaximumRenderer = NumberConstraintRenderer;
 export const NumberMultipleOfRenderer = NumberConstraintRenderer;
 
-const plugin: BaseJSONSchemaPlugin = {
+export const NumberConstraintPlugin: BaseJSONSchemaPlugin = {
   id: "number-constraints",
   hooks: {
     registerConstraints() {
@@ -158,5 +158,3 @@ const plugin: BaseJSONSchemaPlugin = {
     },
   },
 };
-
-export default plugin;

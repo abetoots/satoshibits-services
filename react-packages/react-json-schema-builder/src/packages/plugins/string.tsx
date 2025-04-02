@@ -211,7 +211,7 @@ export const StringMaxLengthRenderer = StringNumberConstraintRenderer;
 export const StringPatternRenderer = PatternConstraintRenderer;
 export const StringFormatRenderer = FormatConstraintRenderer;
 
-const plugin: BaseJSONSchemaPlugin = {
+export const StringConstraintPlugin: BaseJSONSchemaPlugin = {
   id: "string-constraints",
   hooks: {
     registerConstraints() {
@@ -293,5 +293,3 @@ const plugin: BaseJSONSchemaPlugin = {
     },
   },
 };
-
-export default plugin;

@@ -124,7 +124,7 @@ export const ArrayMinItemsRenderer = ArrayNumberConstraintRenderer;
 export const ArrayMaxItemsRenderer = ArrayNumberConstraintRenderer;
 export const ArrayUniqueItemsRenderer = ArrayBooleanConstraintRenderer;
 
-const plugin: BaseJSONSchemaPlugin = {
+export const ArrayConstraintPlugin: BaseJSONSchemaPlugin = {
   id: "array-constraints",
   hooks: {
     registerConstraints() {
@@ -180,5 +180,3 @@ const plugin: BaseJSONSchemaPlugin = {
     },
   },
 };
-
-export default plugin;
