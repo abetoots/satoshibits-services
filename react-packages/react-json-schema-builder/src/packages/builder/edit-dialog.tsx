@@ -11,7 +11,7 @@ import {
 import { Label } from "@/components/ui/label";
 
 import type { JSONSchema7 } from "json-schema";
-import { clone } from "remeda";
+import { clone, isEmpty } from "remeda";
 import { Constraint, useConstraints } from "@/packages/constraints/context";
 import ConstraintsAdd from "@/packages/constraints/constraint-add";
 import { Separator } from "@/components/ui/separator";
@@ -64,9 +64,16 @@ export function EditPropertyDialog({
     validateConstraintValue,
   } = useConstraints();
 
+  const availableDefinitions = useMemo(() => {
+    return getConstraintDefinitionsForType(
+      typeof propertyToEdit?.type === "string" ? propertyToEdit.type : "",
+    );
+  }, [propertyToEdit.type]);
+
   const handleSubmit = (data: z.infer<typeof EditFormSchema>) => {
     const { constraints } = data;
-    const propertyUpdatesOnly: JSONSchema7 = {
+
+    const propertyUpdatesOnly: Record<string, unknown> = {
       ...constraints?.reduce((acc, constraint) => {
         return {
           ...acc,
@@ -74,7 +81,19 @@ export function EditPropertyDialog({
         } satisfies JSONSchema7;
       }, {}),
     };
-    onSubmit([propertyKey, propertyUpdatesOnly]);
+
+    if (isEmpty(propertyUpdatesOnly)) {
+      //If constraints are empty, we want to clear the constraints
+      //so we clear the original constraint definition names from the property
+      availableDefinitions.forEach((constraintDef) => {
+        if (constraintDef.name in propertyToEdit) {
+          //@ts-expect-error implementation specific
+          propertyUpdatesOnly[constraintDef.name] = undefined;
+        }
+      });
+    }
+
+    onSubmit([propertyKey, { ...propertyToEdit, ...propertyUpdatesOnly }]);
     form.reset();
   };
 
@@ -124,12 +143,6 @@ export function EditPropertyDialog({
     form.setValue("constraints", newConstraints);
   };
 
-  const availableDefinitions = useMemo(() => {
-    return getConstraintDefinitionsForType(
-      typeof propertyToEdit?.type === "string" ? propertyToEdit.type : "",
-    );
-  }, [propertyToEdit.type]);
-
   useEffect(() => {
     //get the current constraints from the property based on the available definitions
     const newConstraints: Constraint[] = [];
@@ -146,7 +159,10 @@ export function EditPropertyDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent
+        id="edit-property-dialog"
+        className="overflow-y-auto max-h-screen"
+      >
         <DialogHeader>
           <DialogTitle>Edit</DialogTitle>
           <DialogDescription>
@@ -188,6 +204,8 @@ export function EditPropertyDialog({
                     <Renderer
                       key={constraint.name}
                       constraintName={constraint.name}
+                      propertyKey={propertyKey}
+                      propertyType={propertyToEdit.type}
                       value={constraint.value}
                       onConstraintChange={(newVal) => {
                         handleConstraintChange(i, newVal);

@@ -154,10 +154,35 @@ function useSchema({
    * Gets the correct property schema of the latest key in the path.
    * If no path is provided, it will return null.
    */
-  const getCurrentProperty = () => {
+  const getCurrentPropertyOfPath = () => {
     const { propertySchema } = navigateToCorrectNesting(schema, path);
 
     return propertySchema;
+  };
+
+  /**
+   * Resolves the property from the current schema's properties.
+   * It will return null if the property is not found or if type is not object.
+   */
+  const getCurrentProperty = (propertyKey: string) => {
+    const currentSchema = getCurrentSchema();
+
+    if (currentSchema.type !== "object") {
+      return null;
+    }
+
+    const currentProperties = currentSchema.properties;
+    if (!currentProperties) {
+      return null;
+    }
+    const currentProperty = currentProperties[propertyKey];
+    if (currentProperty === undefined) {
+      return null;
+    }
+    if (typeof currentProperty === "boolean") {
+      return null;
+    }
+    return currentProperty;
   };
 
   /**
@@ -227,29 +252,46 @@ function useSchema({
       // Ensure the property exists and is not a boolean
       if (typeof originalProperty !== "boolean" && originalProperty) {
         if (typeof updates !== "boolean") {
-          //if updates changes the type of the property,
+          //if updates changes the type of the property or is empty,
           //only the  title, description, and default properties should remain
           //from the original property
-          if (updates.type && updates.type !== originalProperty.type) {
+          if (updates.type !== originalProperty.type) {
             updates = {
               title: originalProperty.title,
               description: originalProperty.description,
               default: originalProperty.default,
+              type: originalProperty.type,
               ...updates,
             };
-          } else if (updates.enum) {
-            //if the property is an enum, only the title and description should remain
-            //from the original property
-            delete updates.type;
-            delete updates.items;
-            delete updates.properties;
+          } else if (typeof updates === "object" && isEmpty(updates)) {
+            // If updates is an empty object, keep the original property's
+            // title, description, type, and default
             updates = {
               title: originalProperty.title,
               description: originalProperty.description,
-              ...updates,
+              default: originalProperty.default,
+              type: originalProperty.type,
             };
           } else {
-            updates = { ...originalProperty, ...updates };
+            // If updates contains properties that are undefined,
+            // then delete them from the updates object and delete
+            // them from the original property. This is our implementation
+            // for "delete" functionality
+            Object.entries(updates).forEach(([key, value]) => {
+              if (value === undefined) {
+                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                //@ts-ignore
+                delete updates[key];
+                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                //@ts-ignore
+                delete originalProperty[key];
+              }
+            });
+
+            updates = {
+              ...originalProperty,
+              ...updates,
+            };
           }
 
           current.properties[key] = updates;
@@ -294,13 +336,6 @@ function useSchema({
         code: "key-exists" as const,
         message: `Property with key ${key} already exists`,
       } satisfies PropertyAddError;
-    }
-
-    if (propertyToAdd.enum) {
-      //ensure that only the enum property is present
-      delete propertyToAdd.type;
-      delete propertyToAdd.items;
-      delete propertyToAdd.properties;
     }
 
     // Clean the propertyToAdd object ensuring it doesn't contain
@@ -401,7 +436,7 @@ function useSchema({
   return {
     ...context,
     getCurrentSchema,
-    getCurrentProperty,
+    getCurrentPropertyOfPath,
     handlePropertyChange,
     handleAddProperty,
     handleKeyChange,
@@ -410,6 +445,7 @@ function useSchema({
     isPropertyRequired,
     getValue,
     handleDuplicateProperty,
+    getCurrentProperty,
   };
 }
 

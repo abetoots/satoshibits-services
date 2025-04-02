@@ -125,6 +125,7 @@ export function AddPropertyDialog({
   const currentProperty = form.watch("property");
   const currentEnum = form.watch("property.enum");
   const currentType = form.watch("property.type");
+  const currentKey = form.watch("key");
 
   const {
     getConstraintDefinitionsForType,
@@ -199,7 +200,10 @@ export function AddPropertyDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="add-property-dialog">
+      <DialogContent
+        data-testid="add-property-dialog"
+        className="overflow-y-auto max-h-screen"
+      >
         <DialogHeader>
           <DialogTitle>Add</DialogTitle>
           <DialogDescription>
@@ -278,11 +282,8 @@ export function AddPropertyDialog({
                               : undefined
                           }
                           onValueChange={(newVal) => {
-                            if (newVal === "enum") {
-                              form.setValue("property.enum", []);
-                            } else {
-                              form.setValue("property.enum", undefined);
-                            }
+                            // If changing to any type, clear any enum values
+                            form.setValue("property.enum", undefined);
 
                             // If changing away from array, clear any array item errors
                             if (field.value === "array" && newVal !== "array") {
@@ -525,6 +526,8 @@ export function AddPropertyDialog({
                     <Renderer
                       key={constraint.name}
                       constraintName={constraint.name}
+                      propertyKey={currentKey}
+                      propertyType={currentType}
                       value={constraint.value}
                       onConstraintChange={(newVal) => {
                         handleConstraintChange(i, newVal);
