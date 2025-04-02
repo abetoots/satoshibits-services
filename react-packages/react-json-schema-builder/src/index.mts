@@ -23,6 +23,8 @@ export type {
   ConstraintRendererProps,
 } from "./packages/constraints/context";
 
-export { arrayPlugin, numberPlugin, objectPlugin, stringPlugin };
+export { EnumEditor } from "./packages/builder/enum-editor";
+export type { EnumEditorProps } from "./packages/builder/enum-editor";
+export * from "./packages/plugins/enum";
 
 export * from "./packages/builder/utils";

@@ -306,7 +306,6 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
               <SelectItem value={"null" satisfies JSONSchema7["type"]}>
                 null
               </SelectItem>
-              <SelectItem value={"enum"}>enum</SelectItem>
             </SelectContent>
           </Select>
         </div>
