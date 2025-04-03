@@ -66,6 +66,7 @@ export const AddFormSchema = z.object({
       .min(1, { message: "Title must be at least 1 character long" }),
     type: zodJsonTypes.or(z.array(zodJsonTypes)),
     description: z.string().optional(),
+    default: z.any().optional(),
     enum: z
       .array(
         z
@@ -454,6 +455,23 @@ export function AddPropertyDialog({
                       <FormLabel>Description</FormLabel>
                       <FormControl>
                         <Input {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  );
+                }}
+              />
+            </div>
+            <div className="space-y-2">
+              <FormField
+                control={form.control}
+                name="property.default"
+                render={({ field }) => {
+                  return (
+                    <FormItem>
+                      <FormLabel>Default Value</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="Enter default value" />
                       </FormControl>
                       <FormMessage />
                     </FormItem>

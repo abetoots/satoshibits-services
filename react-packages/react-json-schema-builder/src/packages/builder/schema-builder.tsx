@@ -22,7 +22,6 @@ import type { JSONSchema7 } from "json-schema";
 import { clone } from "remeda";
 import {
   BaseJSONSchemaPlugin,
-  useConstraints,
   usePluginSystem,
 } from "@/packages/constraints/context";
 import { EditPropertyDialog } from "./edit-dialog";
@@ -129,9 +128,6 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
     isPropertyRequired,
     handleDuplicateProperty,
   } = useSchema({ onSchemaChange: props.onSchemaChange });
-
-  // Get constraints context
-  const { getConstraintDefinitionsForType } = useConstraints();
 
   // Set schema from props
   useEffect(() => {
@@ -438,32 +434,21 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
     );
   };
 
-  // Helper to render the edit constraint button when needed
+  // Helper to render the edit button
   const renderEditButton = (key: string, property: JSONSchema7) => {
     if (typeof property !== "object") return null;
 
-    // Check for constraints
-    const availableConstraints = getConstraintDefinitionsForType(
-      typeof property.type === "string" ? property.type : "",
+    // Should render by default to allow editing default values
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => handleEditProperty(key, property)}
+        aria-label="Edit constraints"
+      >
+        <Bolt size={16} />
+      </Button>
     );
-
-    // Check for enum
-    const hasEnum = Array.isArray(property?.enum);
-
-    if (availableConstraints.length || hasEnum) {
-      return (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => handleEditProperty(key, property)}
-          aria-label="Edit constraints"
-        >
-          <Bolt size={16} />
-        </Button>
-      );
-    }
-
-    return null;
   };
 
   const renderNavigateButton = (key: string, items: JSONSchema7["items"]) => {

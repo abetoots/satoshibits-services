@@ -65,6 +65,63 @@ export interface PropertyChangeSuccess {
   property: JSONSchema7Definition;
 }
 
+/**
+ * Coerces a value to the specified JSON Schema type
+ */
+const coerceValueToType = (
+  value: unknown,
+  type: string | string[] | undefined,
+): unknown => {
+  if (value === undefined || value === null || type === undefined) {
+    return value;
+  }
+
+  // Handle if type is an array of possible types
+  if (Array.isArray(type)) {
+    // Try the first type in the array
+    return type.length > 0 ? coerceValueToType(value, type[0]) : value;
+  }
+
+  // For string default values, try to coerce to the correct type
+  if (typeof value === "string") {
+    const strValue = value.trim();
+
+    switch (type) {
+      case "number": {
+        const num = Number(strValue);
+        return !isNaN(num) ? num : value;
+      }
+      case "integer": {
+        const int = parseInt(strValue, 10);
+        return !isNaN(int) ? int : value;
+      }
+      case "boolean":
+        if (strValue.toLowerCase() === "true") return true;
+        if (strValue.toLowerCase() === "false") return false;
+        return value;
+      case "null":
+        if (strValue.toLowerCase() === "null") return null;
+        return value;
+      case "object":
+        try {
+          return strValue ? JSON.parse(strValue) : value;
+        } catch {
+          return value;
+        }
+      case "array":
+        try {
+          return strValue ? JSON.parse(strValue) : value;
+        } catch {
+          return value;
+        }
+      default:
+        return value;
+    }
+  }
+
+  return value;
+};
+
 function useSchema({
   onSchemaChange,
 }: {
@@ -252,14 +309,32 @@ function useSchema({
       // Ensure the property exists and is not a boolean
       if (typeof originalProperty !== "boolean" && originalProperty) {
         if (typeof updates !== "boolean") {
+          // If updates has a default value, coerce it to the correct type
+          if ("default" in updates && updates.default !== undefined) {
+            const targetType = updates.type ?? originalProperty.type;
+            updates.default = coerceValueToType(
+              updates.default,
+              targetType,
+            ) as JSONSchema7["default"];
+          }
+
           //if updates changes the type of the property or is empty,
           //only the  title, description, and default properties should remain
           //from the original property
           if (updates.type !== originalProperty.type) {
+            // If we're changing the type and there's a default value in original property,
+            // try to coerce it to the new type
+            const defaultValue =
+              "default" in updates
+                ? updates.default
+                : originalProperty.default !== undefined
+                  ? coerceValueToType(originalProperty.default, updates.type)
+                  : undefined;
+
             updates = {
               title: originalProperty.title,
               description: originalProperty.description,
-              default: originalProperty.default,
+              default: defaultValue as JSONSchema7["default"],
               type: originalProperty.type,
               ...updates,
             };
@@ -336,6 +411,14 @@ function useSchema({
         code: "key-exists" as const,
         message: `Property with key ${key} already exists`,
       } satisfies PropertyAddError;
+    }
+
+    // Coerce default value to the correct type if it exists
+    if ("default" in propertyToAdd && propertyToAdd.default !== undefined) {
+      propertyToAdd.default = coerceValueToType(
+        propertyToAdd.default,
+        propertyToAdd.type,
+      ) as JSONSchema7["default"];
     }
 
     // Clean the propertyToAdd object ensuring it doesn't contain

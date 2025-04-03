@@ -301,6 +301,67 @@ describe("SchemaBuilder", () => {
         expect(updatedSchema.required).toContain("email");
       });
 
+      it("adds a new property with a default value", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+        const onSchemaChange = vi.fn();
+
+        render(
+          <TestWrapper>
+            <SchemaBuilder onSchemaChange={onSchemaChange} />
+          </TestWrapper>,
+        );
+
+        // Clear the initial call that happens on mount
+        onSchemaChange.mockClear();
+
+        // Open dialog and fill form
+        await user.click(screen.getByText("Add Property"));
+        const dialog = screen.getByRole("dialog");
+
+        // Fill in basic property details
+        await user.type(within(dialog).getByLabelText("Property Key"), "email");
+        await user.type(
+          within(dialog).getByLabelText("Property Title"),
+          "Email Address",
+        );
+
+        // Select type
+        await user.click(
+          within(dialog).getByRole("combobox", { name: /select type/i }),
+        );
+        await user.click(screen.getByRole("option", { name: "string" }));
+
+        // Set default value
+        await user.type(
+          within(dialog).getByLabelText("Default Value"),
+          "user@example.com",
+        );
+
+        // Submit form
+        act(() => {
+          vi.advanceTimersByTime(500);
+        });
+
+        const form = screen.getByTestId("add-property-form");
+        fireEvent.submit(form);
+
+        // Verify schema updates
+        await waitFor(() => {
+          expect(onSchemaChange).toHaveBeenCalled();
+        });
+
+        const updatedSchema = onSchemaChange.mock.calls.at(
+          -1,
+        )?.[0] as JSONSchema7;
+        const emailProperty = updatedSchema.properties?.email;
+        if (typeof emailProperty === "boolean") {
+          fail("emailProperty is a boolean when it should be an object");
+        }
+        expect(emailProperty?.type).toBe("string");
+        expect(emailProperty?.default).toBe("user@example.com");
+      });
+
       it("validates required fields in add property form", async () => {
         const user = userEvent.setup();
 
@@ -376,6 +437,108 @@ describe("SchemaBuilder", () => {
           // Verify the outer form's submit handler was not called
           expect(outerFormSubmit).not.toHaveBeenCalled();
         });
+      });
+
+      it("coerces default values to match the property type", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+        const onSchemaChange = vi.fn();
+
+        render(
+          <TestWrapper>
+            <SchemaBuilder onSchemaChange={onSchemaChange} />
+          </TestWrapper>,
+        );
+
+        // Clear the initial call that happens on mount
+        onSchemaChange.mockClear();
+
+        // Test cases for different property types
+        const testCases = [
+          {
+            key: "numProp",
+            title: "Number Prop",
+            type: "number",
+            defaultValue: "42",
+            expected: 42,
+          },
+          {
+            key: "intProp",
+            title: "Integer Prop",
+            type: "integer",
+            defaultValue: "42.5",
+            expected: 42,
+          },
+          {
+            key: "boolProp",
+            title: "Boolean Prop",
+            type: "boolean",
+            defaultValue: "true",
+            expected: true,
+          },
+          {
+            key: "strProp",
+            title: "String Prop",
+            type: "string",
+            defaultValue: "hello",
+            expected: "hello",
+          },
+        ];
+
+        for (const testCase of testCases) {
+          // Open dialog and fill form
+          await user.click(screen.getByText("Add Property"));
+          const dialog = screen.getByRole("dialog");
+
+          // Fill in basic property details
+          await user.type(
+            within(dialog).getByLabelText("Property Key"),
+            testCase.key,
+          );
+          await user.type(
+            within(dialog).getByLabelText("Property Title"),
+            testCase.title,
+          );
+
+          // Select type
+          await user.click(
+            within(dialog).getByRole("combobox", { name: /select type/i }),
+          );
+          await user.click(screen.getByRole("option", { name: testCase.type }));
+
+          // Set default value
+          await user.type(
+            within(dialog).getByLabelText("Default Value"),
+            testCase.defaultValue,
+          );
+
+          // Submit form
+          act(() => {
+            vi.advanceTimersByTime(500);
+          });
+
+          const form = screen.getByTestId("add-property-form");
+          fireEvent.submit(form);
+
+          // Verify schema updates with correctly coerced default value
+          await waitFor(() => {
+            expect(onSchemaChange).toHaveBeenCalled();
+          });
+
+          const updatedSchema = onSchemaChange.mock.calls.at(
+            -1,
+          )?.[0] as JSONSchema7;
+          const property = updatedSchema.properties?.[testCase.key];
+          if (typeof property === "boolean") {
+            fail(`${testCase.key} is a boolean when it should be an object`);
+          }
+
+          expect(property?.type).toBe(testCase.type);
+          expect(property?.default).toBe(testCase.expected);
+
+          // Clear for next test case
+          onSchemaChange.mockClear();
+        }
       });
     });
 
@@ -632,6 +795,137 @@ describe("SchemaBuilder", () => {
         const scoreProperty = updatedSchema.properties?.score;
         // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         expect(scoreProperty?.minimum).toBe(0);
+      });
+
+      it("edits a property's default value", async () => {
+        const user = userEvent.setup();
+        const onSchemaChange = vi.fn();
+
+        // Create schema with a property that has a default value
+        const schemaWithDefault = createTestSchema({
+          properties: {
+            ...createTestSchema().properties,
+            email: {
+              type: "string",
+              title: "Email",
+              default: "test@example.com",
+            },
+          },
+        });
+
+        render(
+          <TestWrapper>
+            <SchemaBuilder
+              initialSchema={schemaWithDefault}
+              onSchemaChange={onSchemaChange}
+            />
+          </TestWrapper>,
+        );
+
+        // Clear the initial call that happens on mount
+        onSchemaChange.mockClear();
+
+        // Find the email property row
+        const emailRow = screen
+          .getByDisplayValue("email")
+          .closest("div")?.parentElement;
+
+        expect(emailRow).not.toBeNull();
+
+        // Find and click edit constraint button
+        const editButton = within(emailRow!).getByRole("button", {
+          name: /edit constraints/i,
+        });
+        await user.click(editButton);
+
+        // Dialog should appear
+        const dialog = screen.getByRole("dialog");
+        expect(dialog).toBeInTheDocument();
+
+        // Find the default value input and change it
+        const defaultInput = within(dialog).getByLabelText("Default Value");
+        expect(defaultInput).toHaveValue("test@example.com");
+
+        await user.clear(defaultInput);
+        await user.type(defaultInput, "new@example.com");
+
+        // Save the changes
+        const form = screen.getByTestId("edit-property-form");
+        fireEvent.submit(form);
+
+        // Verify schema update
+        await waitFor(() => {
+          expect(onSchemaChange).toHaveBeenCalled();
+        });
+
+        const updatedSchema = onSchemaChange.mock.calls.at(
+          -1,
+        )?.[0] as JSONSchema7;
+        const emailProperty = updatedSchema.properties?.email;
+        if (typeof emailProperty === "boolean") {
+          fail("emailProperty is a boolean when it should be an object");
+        }
+        expect(emailProperty?.default).toBe("new@example.com");
+      });
+
+      it("coerces default values when editing a property's type", async () => {
+        const user = userEvent.setup();
+        const onSchemaChange = vi.fn();
+
+        // Create schema with a property that has a default value
+        const schemaWithDefault = createTestSchema({
+          properties: {
+            ...createTestSchema().properties,
+            testProp: {
+              type: "string",
+              title: "Test Property",
+              default: "42",
+            },
+          },
+        });
+
+        render(
+          <TestWrapper>
+            <SchemaBuilder
+              initialSchema={schemaWithDefault}
+              onSchemaChange={onSchemaChange}
+            />
+          </TestWrapper>,
+        );
+
+        // Clear the initial call that happens on mount
+        onSchemaChange.mockClear();
+
+        // Find the test property row
+        const testPropRow = screen
+          .getByDisplayValue("testProp")
+          .closest("div")?.parentElement;
+
+        expect(testPropRow).not.toBeNull();
+
+        // Change type from string to number
+        const typeSelect = within(testPropRow!).getByRole("combobox", {
+          name: /select type/i,
+        });
+
+        await user.click(typeSelect);
+        await user.click(screen.getByRole("option", { name: "number" }));
+
+        // Verify schema update with coerced default value
+        await waitFor(() => {
+          expect(onSchemaChange).toHaveBeenCalled();
+        });
+
+        const updatedSchema = onSchemaChange.mock.calls.at(
+          -1,
+        )?.[0] as JSONSchema7;
+        const property = updatedSchema.properties?.testProp;
+        if (typeof property === "boolean") {
+          fail("testProp is a boolean when it should be an object");
+        }
+
+        expect(property?.type).toBe("number");
+        expect(property?.default).toBe(42); // Should be coerced from "42" string to 42 number
       });
     });
 

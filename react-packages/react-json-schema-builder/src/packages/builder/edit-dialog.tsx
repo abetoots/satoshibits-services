@@ -9,9 +9,10 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 
 import type { JSONSchema7 } from "json-schema";
-import { clone, isEmpty } from "remeda";
+import { clone } from "remeda";
 import { Constraint, useConstraints } from "@/packages/constraints/context";
 import ConstraintsAdd from "@/packages/constraints/constraint-add";
 import { Separator } from "@/components/ui/separator";
@@ -20,7 +21,14 @@ import { AddFormSchema } from "./add-dialog";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { OperationError } from "./shared-types";
-import { Form } from "@/components/ui/form";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
 import { useSchema } from "./context";
 
 export interface EditPropertyDialogProps {
@@ -71,29 +79,32 @@ export function EditPropertyDialog({
   }, [propertyToEdit.type]);
 
   const handleSubmit = (data: z.infer<typeof EditFormSchema>) => {
-    const { constraints } = data;
+    const { constraints, property } = data;
 
-    const propertyUpdatesOnly: Record<string, unknown> = {
-      ...constraints?.reduce((acc, constraint) => {
-        return {
-          ...acc,
-          [constraint.name]: constraint.value,
-        } satisfies JSONSchema7;
-      }, {}),
+    const constraintUpdatesOnly: Record<string, unknown> = {
+      //We only want to update the constraints that are present in the form.
+      //If no constraints updates are present, we want to clear the constraints
+      //by setting them to undefined
+      ...availableDefinitions.reduce((acc, constraintDef) => {
+        const constraint = constraints?.find(
+          (c) => c.name === constraintDef.name,
+        );
+        if (constraint) {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
+          acc[constraintDef.name] = constraint.value as any;
+        } else {
+          //If the constraint is not in the form data, we want to set it to undefined
+          //to clear it from the property
+          acc[constraintDef.name] = undefined;
+        }
+        return acc;
+      }, {} as JSONSchema7),
     };
 
-    if (isEmpty(propertyUpdatesOnly)) {
-      //If constraints are empty, we want to clear the constraints
-      //so we clear the original constraint definition names from the property
-      availableDefinitions.forEach((constraintDef) => {
-        if (constraintDef.name in propertyToEdit) {
-          //@ts-expect-error implementation specific
-          propertyUpdatesOnly[constraintDef.name] = undefined;
-        }
-      });
-    }
-
-    onSubmit([propertyKey, { ...propertyToEdit, ...propertyUpdatesOnly }]);
+    onSubmit([
+      propertyKey,
+      { ...propertyToEdit, ...property, ...constraintUpdatesOnly },
+    ]);
     form.reset();
   };
 
@@ -155,7 +166,12 @@ export function EditPropertyDialog({
       }
     }
     form.setValue("constraints", newConstraints);
-  }, [availableDefinitions]);
+
+    // Set default value if it exists
+    if (propertyToEdit.default !== undefined) {
+      form.setValue("property.default", propertyToEdit.default);
+    }
+  }, [availableDefinitions, propertyToEdit]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -175,6 +191,30 @@ export function EditPropertyDialog({
             className="space-y-4"
             data-testid="edit-property-form"
           >
+            <div className="space-y-2">
+              <FormField
+                control={form.control}
+                name="property.default"
+                render={({ field }) => {
+                  return (
+                    <FormItem>
+                      <FormLabel>Default Value</FormLabel>
+                      <FormControl>
+                        <Input
+                          {...field}
+                          placeholder="Enter default value"
+                          value={
+                            field.value !== undefined ? String(field.value) : ""
+                          }
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  );
+                }}
+              />
+            </div>
+
             {availableDefinitions.length ? (
               <div className="space-y-2">
                 <Label>Constraints</Label>
