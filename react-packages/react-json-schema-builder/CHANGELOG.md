@@ -1,5 +1,16 @@
 # @satoshibits/react-json-schema-builder
 
+## 1.2.0
+
+### Minor Changes
+
+- cb429a5: add enum constraint plugin and editor
+
+### Patch Changes
+
+- f4474c6: fix property change logic
+- 558292c: add more unit tests for each plugin and fix exports and imports
+
 ## 1.1.7
 
 ### Patch Changes
