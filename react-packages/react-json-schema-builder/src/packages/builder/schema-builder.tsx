@@ -54,6 +54,7 @@ export interface PropertyComponentProps {
   onDelete: (key: string) => void;
   onDuplicate?: (key: string) => void;
   onNavigate?: (key: string) => void;
+  disabled?: boolean;
 }
 
 // NavigationProps for custom navigation component
@@ -96,6 +97,10 @@ interface SchemaBuilderProps {
   navigationComponent?: React.ComponentType<NavigationProps>;
   /** Custom add property button component */
   addPropertyButtonComponent?: React.ComponentType<AddPropertyButtonProps>;
+  /** Array of property keys that should be disabled (read-only) */
+  disabledProperties?: string[];
+  /** Whether all properties should be disabled (read-only) */
+  disabled?: boolean;
 }
 
 export const SchemaBuilder = (props: SchemaBuilderProps) => {
@@ -151,6 +156,11 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
 
   const currentSchema = getCurrentSchema();
 
+  // Check if a property is disabled
+  const isPropertyDisabled = (key: string): boolean => {
+    return props.disabled === true || !!props.disabledProperties?.includes(key);
+  };
+
   // Navigation handlers
   const handleNavigateToProperty = (name: string) => {
     setPath([...path, name]);
@@ -162,12 +172,18 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
 
   // Property management handlers
   const handleEditProperty = (key: string, property: JSONSchema7) => {
+    // Don't allow editing if property is disabled
+    if (isPropertyDisabled(key)) return;
+
     setEditingKey(key);
     setEditingProperty(property);
     setShowEditDialog(true);
   };
 
   const handleInitiateDelete = (key: string) => {
+    // Don't allow deletion if property is disabled
+    if (isPropertyDisabled(key)) return;
+
     setDeleteKey(key);
     setShowDeleteDialog(true);
   };
@@ -186,6 +202,9 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
   };
 
   const handleDuplicate = (key: string) => {
+    // Don't allow duplication if property is disabled
+    if (isPropertyDisabled(key)) return;
+
     const result = handleDuplicateProperty(key);
 
     // Notify if needed
@@ -211,6 +230,8 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
   const PropertyComponent = props.propertyComponent;
 
   const renderProperty = (key: string, property: JSONSchema7) => {
+    const isDisabled = isPropertyDisabled(key);
+
     if (PropertyComponent) {
       return (
         <PropertyComponent
@@ -232,6 +253,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
               ? handleNavigateToProperty
               : undefined
           }
+          disabled={isDisabled}
         />
       );
     }
@@ -240,7 +262,10 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
     return (
       <div
         key={key}
-        className="flex flex-col md:grid grid-cols-(--my-autofit-grid) gap-4 md:items-center border p-2 rounded-md mb-2 overflow-y-auto"
+        className={cn(
+          "flex flex-col md:grid grid-cols-(--my-autofit-grid) gap-4 md:items-center border p-2 rounded-md mb-2 overflow-y-auto",
+          isDisabled ? "opacity-70 " : "",
+        )}
       >
         <div className="">
           <DebouncedInput
@@ -249,6 +274,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
             placeholder="Property Key"
             aria-label={`Property key for ${key}`}
             delay={500}
+            disabled={isDisabled}
           />
         </div>
 
@@ -259,6 +285,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
               handlePropertyChange(key, { isRequired: checked })
             }
             aria-label="Required"
+            disabled={isDisabled}
           />
           <Label htmlFor={`required-${key}`}>Required</Label>
         </div>
@@ -276,6 +303,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
               })
             }
             aria-label="Type"
+            disabled={isDisabled}
           >
             <SelectTrigger className="w-full" aria-label="Select type">
               <SelectValue />
@@ -313,6 +341,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
               handlePropertyChange(key, { title: newVal })
             }
             placeholder="Title"
+            disabled={isDisabled}
           />
         </div>
 
@@ -325,6 +354,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
               handlePropertyChange(key, { description: newVal })
             }
             placeholder="Description"
+            disabled={isDisabled}
           />
         </div>
 
@@ -336,6 +366,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
             onClick={() => handleInitiateDelete(key)}
             aria-label="Delete"
             className="block!"
+            disabled={isDisabled}
           >
             <Trash2 size={16} className="text-destructive" />
           </Button>
@@ -347,6 +378,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
             onClick={() => handleDuplicate(key)}
             aria-label="Duplicate"
             className="block!"
+            disabled={isDisabled}
           >
             <Copy size={16} />
           </Button>
@@ -370,6 +402,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
       return null;
     }
 
+    const isDisabled = isPropertyDisabled(key);
     const items = property.items;
     const itemType =
       !Array.isArray(items) &&
@@ -396,6 +429,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
 
             handlePropertyChange(key, { items: newItems });
           }}
+          disabled={isDisabled}
         >
           <SelectTrigger
             className="w-[200px]"
@@ -438,6 +472,8 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
   const renderEditButton = (key: string, property: JSONSchema7) => {
     if (typeof property !== "object") return null;
 
+    const isDisabled = isPropertyDisabled(key);
+
     // Should render by default to allow editing default values
     return (
       <Button
@@ -445,6 +481,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
         size="sm"
         onClick={() => handleEditProperty(key, property)}
         aria-label="Edit constraints"
+        disabled={isDisabled}
       >
         <Bolt size={16} />
       </Button>
@@ -544,6 +581,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
         onClick={() => {
           setShowPropertyDialog(true);
         }}
+        disabled={props.disabled}
       >
         <Plus className="h-4 w-4 mr-2" />
         Add Property

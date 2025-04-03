@@ -1904,4 +1904,138 @@ describe("SchemaBuilder", () => {
       /* eslint-enable @typescript-eslint/no-unsafe-member-access */
     });
   });
+
+  describe("Disabled Properties", () => {
+    it("disables individual properties when disabledProperties array is provided", async () => {
+      const user = userEvent.setup();
+      const onSchemaChange = vi.fn();
+
+      render(
+        <TestWrapper>
+          <SchemaBuilder
+            initialSchema={createTestSchema()}
+            onSchemaChange={onSchemaChange}
+            disabledProperties={["name", "age"]}
+          />
+        </TestWrapper>,
+      );
+
+      // Find the name property row
+      const nameRow = screen
+        .getByDisplayValue("name")
+        .closest("div")?.parentElement;
+      expect(nameRow).not.toBeNull();
+
+      // Find the age property row
+      const ageRow = screen
+        .getByDisplayValue("age")
+        .closest("div")?.parentElement;
+      expect(ageRow).not.toBeNull();
+
+      // Find the address property row (not disabled)
+      const addressRow = screen
+        .getByDisplayValue("address")
+        .closest("div")?.parentElement;
+      expect(addressRow).not.toBeNull();
+
+      // Verify inputs are disabled in the disabled rows
+      const nameInput = within(nameRow!).getByDisplayValue("name");
+      expect(nameInput).toBeDisabled();
+
+      const ageInput = within(ageRow!).getByDisplayValue("age");
+      expect(ageInput).toBeDisabled();
+
+      // Verify inputs are not disabled in non-disabled rows
+      const addressInput = within(addressRow!).getByDisplayValue("address");
+      expect(addressInput).not.toBeDisabled();
+
+      // Try to edit a disabled property and verify the change doesn't happen
+      onSchemaChange.mockClear();
+      await user.type(nameInput, "fullName");
+
+      // Change shouldn't be applied since the field is disabled
+      expect(onSchemaChange).not.toHaveBeenCalled();
+
+      // Try to click delete button on disabled property
+      const deleteButton = within(nameRow!).getByRole("button", {
+        name: /delete/i,
+      });
+      expect(deleteButton).toBeDisabled();
+      await user.click(deleteButton);
+
+      // Verify delete dialog doesn't appear
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("disables all properties when disabled prop is true", async () => {
+      const user = userEvent.setup();
+      const onSchemaChange = vi.fn();
+
+      render(
+        <TestWrapper>
+          <SchemaBuilder
+            initialSchema={createTestSchema()}
+            onSchemaChange={onSchemaChange}
+            disabled={true}
+          />
+        </TestWrapper>,
+      );
+
+      // Verify all property inputs are disabled
+      const inputs = screen.getAllByRole("textbox");
+      for (const input of inputs) {
+        expect(input).toBeDisabled();
+      }
+
+      // Verify all select elements are disabled
+      const selects = screen.getAllByRole("combobox");
+      for (const select of selects) {
+        expect(select).toBeDisabled();
+      }
+
+      // Verify add property button is disabled
+      const addButton = screen.getByRole("button", { name: /add property/i });
+      expect(addButton).toBeDisabled();
+
+      await user.click(addButton);
+
+      // Verify dialog doesn't appear since button is disabled
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("passes disabled prop to custom property component", () => {
+      // Define spying component
+      const customPropSpy = vi.fn().mockImplementation(() => <div>Custom</div>);
+
+      render(
+        <TestWrapper initialSchema={createTestSchema()}>
+          <SchemaBuilder
+            initialSchema={createTestSchema()}
+            propertyComponent={customPropSpy}
+            disabledProperties={["name"]}
+          />
+        </TestWrapper>,
+      );
+
+      // Find the call for the "name" property
+      const nameCall = customPropSpy.mock.calls.find(
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+        (call) => call[0].property.key === "name",
+      );
+
+      expect(nameCall).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      expect(nameCall![0].disabled).toBe(true);
+
+      // Find the call for a non-disabled property (e.g., "address")
+      const addressCall = customPropSpy.mock.calls.find(
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+        (call) => call[0].property.key === "address",
+      );
+
+      expect(addressCall).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      expect(addressCall![0].disabled).toBe(false);
+    });
+  });
 });

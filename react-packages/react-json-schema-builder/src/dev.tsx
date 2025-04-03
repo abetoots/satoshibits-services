@@ -44,6 +44,7 @@ const Dev = () => {
         onPropertyAddSuccess={(property) => {
           console.log("onPropertyAddSuccess", property);
         }}
+        disabledProperties={["name"]}
       />
 
       <div className="mt-6">

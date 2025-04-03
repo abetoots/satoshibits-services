@@ -15,6 +15,7 @@ Demo: https://abetoots.github.io/react-json-schema-builder-demo/
 - 🧠 Built-in schema validation
 - 🌲 Navigation through nested object structures
 - ✨ Customizable UI elements (navigation, property list, add button)
+- 🔒 Support for read-only properties and disabled mode
 
 ## Installation
 
@@ -130,6 +131,8 @@ export default SchemaEditorApp;
 | `addPropertyButtonClassName` | `string`                                      | Class name for the Add Property button.                          |
 | `navigationComponent`        | `React.ComponentType<NavigationProps>`        | Custom component for the navigation bar.                         |
 | `addPropertyButtonComponent` | `React.ComponentType<AddPropertyButtonProps>` | Custom component for the Add Property button.                    |
+| `disabledProperties`         | `string[]`                                    | Array of property keys that should be disabled (read-only).      |
+| `disabled`                   | `boolean`                                     | Whether all properties should be disabled (read-only).           |
 
 ### Navigation and Add Button Props
 
@@ -166,6 +169,7 @@ interface PropertyComponentProps {
   onDelete: (key: string) => void;
   onDuplicate?: (key: string) => void;
   onNavigate?: (key: string) => void;
+  disabled?: boolean;
 }
 ```
 
@@ -259,6 +263,7 @@ const CustomPropertyComponent = ({
   onDelete,
   onDuplicate,
   onNavigate,
+  disabled,
 }: PropertyComponentProps) => {
   return (
     <div className="my-custom-property">
@@ -268,17 +273,30 @@ const CustomPropertyComponent = ({
         </h3>
         <div>
           {onNavigate && (
-            <button onClick={() => onNavigate(property.key)}>Navigate</button>
+            <button
+              onClick={() => onNavigate(property.key)}
+              disabled={disabled}
+            >
+              Navigate
+            </button>
           )}
           {onDuplicate && (
-            <button onClick={() => onDuplicate(property.key)}>Duplicate</button>
+            <button
+              onClick={() => onDuplicate(property.key)}
+              disabled={disabled}
+            >
+              Duplicate
+            </button>
           )}
-          <button onClick={() => onDelete(property.key)}>Delete</button>
+          <button onClick={() => onDelete(property.key)} disabled={disabled}>
+            Delete
+          </button>
         </div>
       </div>
       <input
         value={property.key}
         onChange={(e) => onKeyChange(property.key, e.target.value)}
+        disabled={disabled}
       />
       <input
         value={property.schema.title as string}
@@ -286,6 +304,7 @@ const CustomPropertyComponent = ({
           onPropertyChange(property.key, { title: e.target.value })
         }
         placeholder="Title"
+        disabled={disabled}
       />
       {/* Add more custom inputs as needed */}
     </div>
@@ -326,6 +345,29 @@ function App() {
     </SchemaProvider>
   );
 }
+```
+
+### Read-only Properties
+
+You can make specific properties read-only using the `disabledProperties` prop:
+
+```tsx
+<SchemaBuilder
+  initialSchema={schema}
+  onSchemaChange={handleSchemaChange}
+  // These properties will be non-editable
+  disabledProperties={["id", "createdAt", "updatedAt"]}
+/>
+```
+
+Or make the entire schema builder read-only:
+
+```tsx
+<SchemaBuilder
+  initialSchema={schema}
+  onSchemaChange={handleSchemaChange}
+  disabled={true}
+/>
 ```
 
 ## Features in Detail
@@ -369,6 +411,8 @@ Customize the appearance of key UI elements:
 - Replace the entire navigation UI with a custom component via `navigationComponent`
 - Replace the Add Property button with a custom component via `addPropertyButtonComponent`
 - Customize how properties are rendered with the `propertyComponent` prop
+- Make specific properties read-only with `disabledProperties` array
+- Make the entire schema builder read-only with `disabled` prop
 
 ## License
 
