@@ -244,7 +244,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
     return (
       <div
         key={key}
-        className="flex flex-col md:grid grid-cols-(--my-autofit-grid) gap-4 md:items-center border p-2 rounded-md mb-2"
+        className="flex flex-col md:grid grid-cols-(--my-autofit-grid) gap-4 md:items-center border p-2 rounded-md mb-2 overflow-y-auto"
       >
         <div className="">
           <DebouncedInput
