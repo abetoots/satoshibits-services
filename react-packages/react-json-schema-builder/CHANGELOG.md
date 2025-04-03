@@ -1,5 +1,15 @@
 # @satoshibits/react-json-schema-builder
 
+## 1.3.0
+
+### Minor Changes
+
+- 0819aa6: enable adding default values
+
+### Patch Changes
+
+- 8272a6e: fix rows not overflowing properly
+
 ## 1.2.0
 
 ### Minor Changes
