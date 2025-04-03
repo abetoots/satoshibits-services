@@ -43,10 +43,11 @@ import type { JSONSchema7 } from "json-schema";
 import "@satoshibits/react-json-schema-builder/index.css";
 
 // Import plugins for constraint support
-import numberPlugin from "@satoshibits/react-json-schema-builder/plugins/number";
-import stringPlugin from "@satoshibits/react-json-schema-builder/plugins/string";
-import arrayPlugin from "@satoshibits/react-json-schema-builder/plugins/array";
-import objectPlugin from "@satoshibits/react-json-schema-builder/plugins/object";
+import { NumberConstraintPlugin } from "@satoshibits/react-json-schema-builder/plugins/number";
+import { StringConstraintPlugin } from "@satoshibits/react-json-schema-builder/plugins/string";
+import { ArrayConstraintPlugin } from "@satoshibits/react-json-schema-builder/plugins/array";
+import { ObjectConstraintPlugin } from "@satoshibits/react-json-schema-builder/plugins/object";
+import { EnumConstraintPlugin } from "@satoshibits/react-json-schema-builder/plugins/enum";
 
 function SchemaEditorApp() {
   const [currentSchema, setCurrentSchema] = useState<JSONSchema7>();
@@ -85,7 +86,13 @@ function SchemaEditorApp() {
             <SchemaBuilder
               initialSchema={initialSchema}
               onSchemaChange={handleSchemaChange}
-              plugins={[numberPlugin, stringPlugin, arrayPlugin, objectPlugin]}
+              plugins={[
+                NumberConstraintPlugin,
+                StringConstraintPlugin,
+                ArrayConstraintPlugin,
+                ObjectConstraintPlugin,
+                EnumConstraintPlugin,
+              ]}
             />
           </PluginsProvider>
         </SchemaProvider>
@@ -166,10 +173,11 @@ interface PropertyComponentProps {
 
 The SchemaBuilder supports different types of constraints for properties through plugins:
 
-- `numberPlugin`: Adds constraints like minimum, maximum, and multipleOf for number properties
-- `stringPlugin`: Adds constraints like minLength, maxLength, pattern for string properties
-- `arrayPlugin`: Adds constraints like minItems, maxItems, uniqueItems for array properties
-- `objectPlugin`: Adds constraints like minProperties, maxProperties for object properties
+- `NumberConstraintPlugin`: Adds constraints like minimum, maximum, and multipleOf for number properties
+- `StringConstraintPlugin`: Adds constraints like minLength, maxLength, pattern for string properties
+- `ArrayConstraintPlugin`: Adds constraints like minItems, maxItems, uniqueItems for array properties
+- `ObjectConstraintPlugin`: Adds constraints like minProperties, maxProperties for object properties
+- `EnumConstraintPlugin`: Adds enum constraints
 
 ## Advanced Usage
 

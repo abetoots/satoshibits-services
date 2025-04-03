@@ -9,6 +9,7 @@ import locale from "react-json-editor-ajrm/locale/en";
 import { NumberConstraintPlugin } from "./packages/plugins/number";
 import { StringConstraintPlugin } from "./packages/plugins/string";
 import { ArrayConstraintPlugin } from "./packages/plugins/array";
+import { ObjectConstraintPlugin } from "./packages/plugins/object";
 import { EnumConstraintPlugin } from "./packages/plugins/enum";
 
 const Dev = () => {
@@ -33,6 +34,7 @@ const Dev = () => {
           NumberConstraintPlugin,
           StringConstraintPlugin,
           ArrayConstraintPlugin,
+          ObjectConstraintPlugin,
           EnumConstraintPlugin,
         ]}
         onSchemaChange={(schema) => {
