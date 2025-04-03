@@ -1,5 +1,11 @@
 # @satoshibits/react-json-schema-builder
 
+## 1.4.0
+
+### Minor Changes
+
+- 885b51a: enable disabled mode and read-only of properties
+
 ## 1.3.0
 
 ### Minor Changes
