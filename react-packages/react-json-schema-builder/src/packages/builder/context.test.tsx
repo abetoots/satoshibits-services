@@ -146,7 +146,7 @@ describe("Schema Context", () => {
           result.current.setPath(["testProp"]);
         });
 
-        const currentSchema = result.current.getCurrentProperty();
+        const currentSchema = result.current.getCurrentPropertyOfPath();
         expect(currentSchema?.title).toBe("Test Property");
         expect(currentSchema?.type).toBe("object");
       });
@@ -180,7 +180,7 @@ describe("Schema Context", () => {
           result.current.setPath(["testArray", "testProp"]);
         });
 
-        const currentSchema = result.current.getCurrentProperty();
+        const currentSchema = result.current.getCurrentPropertyOfPath();
         expect(currentSchema?.title).toBe("Test Property");
         expect(currentSchema?.type).toBe("string");
       });
