@@ -1,6 +1,8 @@
 import { createFilter, FilterPattern } from "@rollup/pluginutils";
 import { Options as SWCOption, transform as SWCTransform } from "@swc/core";
 
+import type { PluginOption } from "vite";
+
 interface Options extends Omit<SWCOption, "filename" | "sourceFileName"> {
   include?: FilterPattern;
 }
@@ -23,7 +25,7 @@ export const swc = (
       },
     },
   },
-) => {
+): PluginOption => {
   const { include, ...swcOptions } = options;
   const filter = createFilter(options.include, options.exclude);
   return {
