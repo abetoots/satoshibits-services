@@ -25,13 +25,13 @@ export const swc = (
       },
     },
   },
-): PluginOption => {
+) => {
   const { include, ...swcOptions } = options;
   const filter = createFilter(options.include, options.exclude);
   return {
     name: "vite-plugin-swc",
-    enforce: "pre",
-    transform(code: string, id: string) {
+    enforce: "pre" as const,
+    transform: (code: string, id: string) => {
       const sourceFileName = id.split("?", 1)[0];
       if (filter(id) || filter(sourceFileName)) {
         return SWCTransform(code, {
@@ -41,7 +41,7 @@ export const swc = (
         });
       }
     },
-  };
+  } satisfies PluginOption;
 };
 
 export default swc;
