@@ -30,10 +30,11 @@ export const swc = (
     name: "vite-plugin-swc",
     enforce: "pre",
     transform(code: string, id: string) {
-      if (filter(id)) {
+      const sourceFileName = id.split("?", 1)[0];
+      if (filter(id) || filter(sourceFileName)) {
         return SWCTransform(code, {
-          filename: id,
-          sourceFileName: id.split("?", 1)[0],
+          filename: sourceFileName,
+          sourceFileName,
           ...swcOptions,
         });
       }
