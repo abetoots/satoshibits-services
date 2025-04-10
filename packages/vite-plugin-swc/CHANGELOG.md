@@ -1,5 +1,11 @@
 # @satoshibits/vite-plugin-swc
 
+## 1.0.2
+
+### Patch Changes
+
+- af4f20f: fix types
+
 ## 1.0.1
 
 ### Patch Changes
