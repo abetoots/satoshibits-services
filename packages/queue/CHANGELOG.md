@@ -1,5 +1,11 @@
 # @satoshibits/queue
 
+## 1.0.7
+
+### Patch Changes
+
+- 2eb8ec8: rely on options instead of env
+
 ## 1.0.6
 
 ### Patch Changes
