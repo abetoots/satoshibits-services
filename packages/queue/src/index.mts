@@ -19,6 +19,8 @@ export interface QueueHandlerOptions {
   rootPath: string;
   jobsPath?: string;
   onUnhandledError?: (e: unknown) => void;
+  extension?: string;
+  isDev?: boolean;
 }
 
 /**
@@ -33,7 +35,8 @@ export class QueueHandler<TJobTypes extends string = string> {
   private validateJob: (jobType: string) => boolean;
 
   constructor(options: QueueHandlerOptions) {
-    this.extension = process.env.NODE_ENV === "production" ? "js" : "ts";
+    this.extension = options.isDev ? "ts" : "js";
+    this.extension = options.extension ?? this.extension;
 
     this.validateJob = options.validateJob;
     this.jobsPath = options.jobsPath ?? path.join(options.rootPath, "jobs");
@@ -49,7 +52,7 @@ export class QueueHandler<TJobTypes extends string = string> {
     //Node fixes the issue.
     //See https://github.com/breejs/ts-worker/blob/main/src/index.js to learn how to extend Bree.
 
-    if (process.env.NODE_ENV === "development") {
+    if (options.isDev) {
       const devLoaderPath = fileURLToPath(
         import.meta.resolve("./dev-loader.mjs"),
       );
