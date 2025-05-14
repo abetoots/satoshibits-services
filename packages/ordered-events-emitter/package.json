@@ -1,6 +1,6 @@
 {
   "name": "@satoshibits/ordered-events-emitter",
-  "version": "1.0.4",
+  "version": "2.0.0",
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
   "exports": "./dist/index.mjs",
