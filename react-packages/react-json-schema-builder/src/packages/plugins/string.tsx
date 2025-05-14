@@ -150,6 +150,9 @@ const FormatConstraintRenderer = ({
     { value: "ipv4", label: "IPv4" },
     { value: "ipv6", label: "IPv6" },
     { value: "phone", label: "Phone" },
+    { value: "time", label: "Time" },
+    { value: "iso-time", label: "ISO Time" },
+    { value: "iso-date-time", label: "ISO Date-Time" },
   ];
 
   if (!constraintDef) {
@@ -276,6 +279,9 @@ export const StringConstraintPlugin: BaseJSONSchemaPlugin = {
               "ipv4",
               "ipv6",
               "phone",
+              "time",
+              "iso-time",
+              "iso-date-time",
             ],
           },
           description: "Predefined format validation for the string",
