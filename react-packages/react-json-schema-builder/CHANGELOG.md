@@ -1,5 +1,11 @@
 # @satoshibits/react-json-schema-builder
 
+## 1.4.2
+
+### Patch Changes
+
+- 010dbdd: add more formats
+
 ## 1.4.1
 
 ### Patch Changes
