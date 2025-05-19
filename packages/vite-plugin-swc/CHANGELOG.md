@@ -1,5 +1,11 @@
 # @satoshibits/vite-plugin-swc
 
+## 1.0.4
+
+### Patch Changes
+
+- 3e74e31: fix deps
+
 ## 1.0.3
 
 ### Patch Changes
