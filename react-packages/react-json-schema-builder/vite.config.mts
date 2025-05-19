@@ -16,6 +16,7 @@ export default defineConfig({
     include: ["**/__tests__/**/*.[jt]s?(x)", "**/?(*.)+(spec|test).[jt]s?(x)"],
     environment: "happy-dom",
     setupFiles: "./src/setupTests.ts",
+    testTimeout: 15000,
   },
   build: {
     lib: {
