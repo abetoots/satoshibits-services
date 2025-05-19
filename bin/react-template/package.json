@@ -64,5 +64,10 @@
     "vite-plugin-dts": "^4.5.0",
     "vite-tsconfig-paths": "^5.1.4",
     "vitest": "^3.0.5"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/abetoots/satoshibits-services.git"
+  },
+  "homepage": "https://github.com/abetoots/satoshibits-services/packages/sample-package-name"
 }

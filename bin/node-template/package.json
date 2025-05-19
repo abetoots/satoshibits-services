@@ -26,6 +26,7 @@
   "license": "ISC",
   "description": "",
   "devDependencies": {
+    "@eslint/compat": "^1.2.0",
     "@repo/typescript-config": "workspace:^",
     "@satoshibits/eslint-config": "workspace:^",
     "@types/node": "^22.7.4",
@@ -33,6 +34,12 @@
     "eslint": "^9.22.0",
     "jiti": "^2.4.2",
     "lint-staged": "^15.2.10",
-    "typescript": "^5.7.3"
-  }
+    "typescript": "^5.7.3",
+    "vitest": "^3.1.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/abetoots/satoshibits-services.git"
+  },
+  "homepage": "https://github.com/abetoots/satoshibits-services/packages/sample-package"
 }

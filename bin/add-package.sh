@@ -120,10 +120,13 @@ function main() {
         cp -a "$BIN_DIR/react-template/." "$package_dir"
     fi
 
-    # Update package.json with package name and description. Also updates the keywords to
+    # Extract the current placeholder package name from the homepage property
+    current_placeholder_name=$(jq -r '.name' "$package_dir/package.json")
+    
+    # Update package.json with package name, description, and homepage. Also updates the keywords to
     # include the package name.
-    jq --arg package_name "$package_name" --arg package_description "$package_description" \
-        '.name = $package_name | .description = $package_description | .keywords += [$package_name]' \
+    jq --arg package_name "$package_name" --arg package_description "$package_description" --arg current_name "$current_placeholder_name" \
+        '.name = $package_name | .description = $package_description | .keywords += [$package_name] | .homepage = .homepage | .homepage = (.homepage | gsub($current_name; $package_name))' \
         "$package_dir/package.json" > tmp.$$.json && mv tmp.$$.json "$package_dir/package.json"
 
     # Update jsr.json with package name and description
