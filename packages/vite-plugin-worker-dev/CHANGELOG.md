@@ -1,5 +1,11 @@
 # vite-plugin-worker-dev
 
+## 1.0.3
+
+### Patch Changes
+
+- 0f62e7e: fix peer dep
+
 ## 1.0.2
 
 ### Patch Changes
