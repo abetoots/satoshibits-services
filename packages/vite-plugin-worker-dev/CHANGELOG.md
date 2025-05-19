@@ -1,5 +1,11 @@
 # vite-plugin-worker-dev
 
+## 1.0.1
+
+### Patch Changes
+
+- a06aeea: fix deps
+
 ## 1.0.0
 
 ### Major Changes
