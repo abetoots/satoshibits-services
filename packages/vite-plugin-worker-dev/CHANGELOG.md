@@ -1,5 +1,11 @@
 # vite-plugin-worker-dev
 
+## 1.0.2
+
+### Patch Changes
+
+- e949aa1: fix package name
+
 ## 1.0.1
 
 ### Patch Changes
