@@ -1,0 +1,8 @@
+{
+  "$schema": "https://jsr.io/schema/config-file.v1.json",
+  "name": "vite-plugin-worker-dev",
+  "description": "Fixes web workers in development mode using esbuild",
+  "version": "0.0.0",
+  "exports": "./src/index.mts",
+  "license": "ISC"
+}
