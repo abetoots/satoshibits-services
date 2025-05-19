@@ -1,5 +1,5 @@
 {
-  "name": "vite-plugin-worker-dev",
+  "name": "@satoshibits/vite-plugin-worker-dev",
   "version": "1.0.1",
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
