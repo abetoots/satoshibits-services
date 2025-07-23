@@ -743,9 +743,9 @@ export const predicateUtils = {
    * 
    * @since 2025-07-03
    */
-  propsMatch: <T extends Record<string, unknown>>(partial: Partial<T>) =>
+  propsMatch: <T extends object>(partial: Partial<T>) =>
     (obj: T): boolean =>
-      Object.entries(partial).every(([key, value]) => obj[key] === value),
+      Object.entries(partial).every(([key, value]) => obj[key as keyof T] === value),
 
   /**
    * Creates a predicate that applies a transformation before testing.

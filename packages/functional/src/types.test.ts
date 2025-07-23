@@ -492,7 +492,6 @@ describe('Branded Types', () => {
 
     it('should work with repository pattern', () => {
       class Repository<T, ID> {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         async findById(_id: ID): Promise<T | null> {
           // Mock implementation
           return Promise.resolve(null);

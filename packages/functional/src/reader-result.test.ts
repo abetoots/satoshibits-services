@@ -312,7 +312,7 @@ describe('ReaderResult', () => {
       const computation = ReaderResult.map<TestDeps, string, { x: number; y: number; sum: number }, { x: number; y: number; sum: number }>(({ x, y, sum }: { x: number; y: number; sum: number }) => ({ x, y, sum }))(
         ReaderResult.let<TestDeps, string, { x: number; y: number }, 'sum', number>('sum', ({ x, y }: { x: number; y: number }) => x + y)(
           ReaderResult.bind<TestDeps, string, { x: number }, 'y', number>('y', ({ x }: { x: number }) => ReaderResult.of<TestDeps, string, number>(x * 2))(
-            ReaderResult.bind<TestDeps, string, {}, 'x', number>('x', () => ReaderResult.of<TestDeps, string, number>(5))(
+            ReaderResult.bind<TestDeps, string, Record<string, never>, 'x', number>('x', () => ReaderResult.of<TestDeps, string, number>(5))(
               ReaderResult.Do<TestDeps, string>()
             )
           )
@@ -326,7 +326,7 @@ describe('ReaderResult', () => {
     it('short-circuits on error in Do notation', async () => {
       const computation = ReaderResult.bind<TestDeps, string, { x: number; y: number }, 'z', number>('z', ({ x, y }: { x: number; y: number }) => ReaderResult.of<TestDeps, string, number>(x + y))(
         ReaderResult.bind<TestDeps, string, { x: number }, 'y', number>('y', () => ReaderResult.fail<TestDeps, string, number>('error'))(
-          ReaderResult.bind<TestDeps, string, {}, 'x', number>('x', () => ReaderResult.of<TestDeps, string, number>(5))(
+          ReaderResult.bind<TestDeps, string, Record<string, never>, 'x', number>('x', () => ReaderResult.of<TestDeps, string, number>(5))(
             ReaderResult.Do<TestDeps, string>()
           )
         )
@@ -608,7 +608,11 @@ describe('ReaderResult', () => {
       const rr1 = ReaderResult.of<TestDeps, string, number>(1);
       const rr2 = ReaderResult.of<TestDeps, string, string>('hello');
       const rr3 = ReaderResult.of<TestDeps, string, boolean>(true);
-      const zipped = (ReaderResult.zipAll as any)(rr1, rr2, rr3);
+      const zipped = ReaderResult.zipAll<TestDeps, string, [
+        ReaderResult<TestDeps, string, number>,
+        ReaderResult<TestDeps, string, string>,
+        ReaderResult<TestDeps, string, boolean>
+      ]>(rr1, rr2, rr3);
       
       const result = await ReaderResult.run(mockDeps)(zipped);
       expect(result).toEqual({ success: true, data: [1, 'hello', true] });
@@ -618,7 +622,11 @@ describe('ReaderResult', () => {
       const rr1 = ReaderResult.of<TestDeps, string, number>(1);
       const rr2 = ReaderResult.fail<TestDeps, string, string>('error');
       const rr3 = ReaderResult.of<TestDeps, string, boolean>(true);
-      const zipped = (ReaderResult.zipAll as any)(rr1, rr2, rr3);
+      const zipped = ReaderResult.zipAll<TestDeps, string, [
+        ReaderResult<TestDeps, string, number>,
+        ReaderResult<TestDeps, string, string>,
+        ReaderResult<TestDeps, string, boolean>
+      ]>(rr1, rr2, rr3);
       
       const result = await ReaderResult.run(mockDeps)(zipped);
       expect(result).toEqual({ success: false, error: 'error' });
@@ -633,7 +641,7 @@ describe('ReaderResult', () => {
         z: ReaderResult.of<TestDeps, string, boolean>(true),
       };
       
-      const parallel = (ReaderResult.parallel as any)(rrs);
+      const parallel = ReaderResult.parallel<TestDeps, string, typeof rrs>(rrs);
       const result = await ReaderResult.run(mockDeps)(parallel);
       
       expect(result).toEqual({ 
@@ -649,7 +657,7 @@ describe('ReaderResult', () => {
         z: ReaderResult.fail<TestDeps, string, boolean>('error2'),
       };
       
-      const parallel = (ReaderResult.parallel as any)(rrs);
+      const parallel = ReaderResult.parallel<TestDeps, string, typeof rrs>(rrs);
       const result = await ReaderResult.run(mockDeps)(parallel);
       
       expect(result).toEqual({ 
@@ -664,7 +672,7 @@ describe('ReaderResult', () => {
     it('returns empty object for empty input', async () => {
       const rrs = {};
       
-      const parallel = (ReaderResult.parallel as any)(rrs);
+      const parallel = ReaderResult.parallel(rrs);
       const result = await ReaderResult.run(mockDeps)(parallel);
       
       expect(result).toEqual({ success: true, data: {} });

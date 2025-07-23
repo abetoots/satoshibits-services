@@ -309,10 +309,11 @@ describe('Validation combinators', () => {
         name: validators.string.nonEmpty(),
       });
       
-      const result = validator({
+      const input: { name: string; extra?: string } = {
         name: 'John',
         extra: 'ignored',
-      } as any);
+      };
+      const result = validator(input);
       
       expect(result.success).toBe(true);
       if (result.success) {

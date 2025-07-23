@@ -330,6 +330,7 @@ describe('Result', () => {
     });
 
     it('wraps non-Error rejections in Error', async () => {
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
       const promise = Promise.reject('string rejection');
       const result = await Result.fromPromise(promise);
       expect(result.success).toBe(false);
@@ -363,6 +364,7 @@ describe('Result', () => {
 
     it('wraps non-Error throws in Error', () => {
       const fn = () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
         throw 'string error';
       };
       const wrapped = Result.fromThrowable(fn);
@@ -416,7 +418,7 @@ describe('safe', () => {
 
   it('returns error Result for undefined property', () => {
     const obj = { name: 'test' };
-    const getter = safe((o: typeof obj) => (o as any).value);
+    const getter = safe((o: typeof obj & { value?: unknown }) => o.value);
     const result = getter(obj);
     expect(result).toEqual({ success: false, error: 'Property access failed' });
   });
@@ -441,7 +443,7 @@ describe('safe', () => {
 
   it('uses custom error message', () => {
     const obj = {};
-    const getter = safe((o: typeof obj) => (o as any).value, 'Value not found');
+    const getter = safe((o: typeof obj & { value?: unknown }) => o.value, 'Value not found');
     const result = getter(obj);
     expect(result).toEqual({ success: false, error: 'Value not found' });
   });
