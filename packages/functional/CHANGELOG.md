@@ -1,5 +1,11 @@
 # functional
 
+## 1.0.1
+
+### Patch Changes
+
+- 1d2007d: fix lint and ts errors
+
 ## 1.0.0
 
 ### Major Changes
