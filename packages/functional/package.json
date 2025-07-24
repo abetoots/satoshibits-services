@@ -1,5 +1,5 @@
 {
-  "name": "functional",
+  "name": "@satoshibits/functional",
   "version": "1.0.1",
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.mts",

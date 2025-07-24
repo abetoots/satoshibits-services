@@ -1,6 +1,6 @@
 {
   "$schema": "https://jsr.io/schema/config-file.v1.json",
-  "name": "functional",
+  "name": "@satoshibits/functional",
   "description": "",
   "version": "0.0.0",
   "exports": "./src/index.mts",
