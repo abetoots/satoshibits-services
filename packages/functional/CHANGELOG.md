@@ -1,5 +1,11 @@
 # functional
 
+## 1.0.2
+
+### Patch Changes
+
+- dd8571e: fix name
+
 ## 1.0.1
 
 ### Patch Changes
