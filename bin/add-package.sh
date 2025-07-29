@@ -134,7 +134,7 @@ function main() {
         '.name = $package_name | .description = $package_description' \
         "$package_dir/jsr.json" > tmp.$$.json && mv tmp.$$.json "$package_dir/jsr.json"
 
-    pnpm i --ignore-scripts
+    pnpm i --filter $package_name --ignore-scripts
 }
 
 main
