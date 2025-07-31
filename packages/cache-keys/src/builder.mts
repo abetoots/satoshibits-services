@@ -10,7 +10,7 @@ export class CacheKeyBuilder {
   
   constructor(options: KeyBuilderOptions = {}) {
     this.options = {
-      separator: options.separator || ':',
+      separator: options.separator ?? ':',
       sanitize: options.sanitize !== false,
     };
   }
@@ -175,7 +175,7 @@ export function fromTemplate(
   values: Record<string, string | number | ID>,
   sanitize = true
 ): string {
-  return template.replace(/{(\w+)}/g, (match, key) => {
+  return template.replace(/{(\w+)}/g, (_match, key: string) => {
     if (!(key in values)) {
       throw new Error(`Missing value for placeholder: ${key}`);
     }

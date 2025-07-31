@@ -40,8 +40,8 @@ export const accountKeys = {
       const parts = splitKeyComponents(suffix, ':', true);
       if (parts.length !== 2) return null;
       return {
-        accountId: parts[0] || '',
-        period: parts[1] || ''
+        accountId: parts[0] ?? '',
+        period: parts[1] ?? ''
       };
     }
   ),

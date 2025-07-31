@@ -77,8 +77,8 @@ import { sanitizeKeyComponent } from "./sanitizer.mjs";
  * });
  */
 export function createDomainKeys<
-  T extends Record<string, CKF<string, any[]>>,
->(namespace: string, factories: T): T {
+  T extends Record<string, CKF<string, unknown[]>>,
+>(_namespace: string, factories: T): T {
   // Currently a pass-through function that provides type safety
   // Future versions may add namespace validation or factory enhancement
   return factories;

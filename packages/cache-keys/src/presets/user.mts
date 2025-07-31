@@ -40,8 +40,8 @@ export const userKeys = {
       const parts = splitKeyComponents(suffix, ':', true);
       if (parts.length !== 2) return null;
       return {
-        userId: parts[0] || '',
-        sessionId: parts[1] || ''
+        userId: parts[0] ?? '',
+        sessionId: parts[1] ?? ''
       };
     }
   ),

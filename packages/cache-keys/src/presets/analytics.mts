@@ -31,9 +31,9 @@ export const analyticsKeys = {
       if (parts.length !== 3) return null;
       
       return {
-        metricId: parts[0] || '',
-        date: parts[1] || '',
-        hour: parts[2] || ''
+        metricId: parts[0] ?? '',
+        date: parts[1] ?? '',
+        hour: parts[2] ?? ''
       };
     }
   ),
@@ -52,8 +52,8 @@ export const analyticsKeys = {
       const parts = splitKeyComponents(suffix, ':', true);
       if (parts.length !== 2) return null;
       return {
-        metricId: parts[0] || '',
-        date: parts[1] || ''
+        metricId: parts[0] ?? '',
+        date: parts[1] ?? ''
       };
     }
   ),
@@ -72,8 +72,8 @@ export const analyticsKeys = {
       const parts = splitKeyComponents(suffix, ':', true);
       if (parts.length !== 2) return null;
       return {
-        metricId: parts[0] || '',
-        yearMonth: parts[1] || ''
+        metricId: parts[0] ?? '',
+        yearMonth: parts[1] ?? ''
       };
     }
   ),
@@ -102,8 +102,8 @@ export const analyticsKeys = {
       const parts = splitKeyComponents(suffix, ':', true);
       if (parts.length !== 2) return null;
       return {
-        funnelId: parts[0] || '',
-        date: parts[1] || ''
+        funnelId: parts[0] ?? '',
+        date: parts[1] ?? ''
       };
     }
   ),
@@ -122,8 +122,8 @@ export const analyticsKeys = {
       const parts = splitKeyComponents(suffix, ':', true);
       if (parts.length !== 2) return null;
       return {
-        cohortId: parts[0] || '',
-        period: parts[1] || ''
+        cohortId: parts[0] ?? '',
+        period: parts[1] ?? ''
       };
     }
   ),

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument */
 import { describe, it, expect } from 'vitest';
 import { userKeys } from '../presets/user.mjs';
 import { accountKeys } from '../presets/account.mjs';

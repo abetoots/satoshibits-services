@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument */
 import { describe, it, expect } from 'vitest';
 import {
   createKeyFactory,
@@ -119,9 +120,9 @@ describe('createKeyFactory with custom formatter', () => {
       const match = /^(.+):(.+):h(\d+)$/.exec(suffix);
       if (!match) return null;
       return {
-        metric: match[1] || '',
-        date: match[2] || '',
-        hour: match[3] || ''
+        metric: match[1] ?? '',
+        date: match[2] ?? '',
+        hour: match[3] ?? ''
       };
     }
   );

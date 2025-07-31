@@ -100,8 +100,8 @@ export function extractKeyType(
   }
   
   return {
-    namespace: parts[0] || '',
-    type: parts[1] || '',
+    namespace: parts[0] ?? '',
+    type: parts[1] ?? '',
   };
 }
 
@@ -121,7 +121,7 @@ export function groupKeysByNamespace(
   for (const key of keys) {
     const namespace = extractNamespace(key, separator);
     if (namespace) {
-      const group = groups.get(namespace) || [];
+      const group = groups.get(namespace) ?? [];
       group.push(key);
       groups.set(namespace, group);
     }

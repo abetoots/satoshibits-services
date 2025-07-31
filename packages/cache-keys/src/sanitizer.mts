@@ -103,6 +103,7 @@ export function isValidKeyComponent(component: string): boolean {
   }
   
   // Check for null bytes or other control characters
+  // eslint-disable-next-line no-control-regex
   if (/[\x00-\x1F\x7F]/.test(component)) {
     return false;
   }
@@ -161,7 +162,7 @@ export function splitKeyComponents(
       
       // Find the next separator after the encoding prefix
       const prefixEnd = i + ENCODING_PREFIX.length;
-      let nextSeparator = key.indexOf(separator, prefixEnd);
+      const nextSeparator = key.indexOf(separator, prefixEnd);
       
       // If no separator found, the rest of the string is the encoded component
       if (nextSeparator === -1) {

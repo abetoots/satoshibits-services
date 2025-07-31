@@ -34,7 +34,7 @@ export function createKeyFactory<T extends string, TArgs extends readonly unknow
       
       // Default parser splits by colon and returns first part as 'id'
       const parts = splitKeyComponents(suffix, ':', true);
-      return { id: parts[0] || '' };
+      return { id: parts[0] ?? '' };
     },
     
     matches(key: string): key is T {
@@ -90,8 +90,8 @@ export function createDualKeyFactory<T extends string>(
       const parts = splitKeyComponents(suffix, ':', true);
       if (parts.length !== 2) return null;
       return {
-        [id1Name]: parts[0] || '',
-        [id2Name]: parts[1] || ''
+        [id1Name]: parts[0] ?? '',
+        [id2Name]: parts[1] ?? ''
       };
     }
   );
@@ -117,9 +117,9 @@ export function createPaginatedKeyFactory<T extends string>(
       const match = /^(.+?):page_(\d+):limit_(\d+)$/.exec(suffix);
       if (!match) return null;
       return {
-        id: decodeKeyComponent(match[1] || ''),
-        page: match[2] || '',
-        limit: match[3] || '',
+        id: decodeKeyComponent(match[1] ?? ''),
+        page: match[2] ?? '',
+        limit: match[3] ?? '',
       };
     }
   );
@@ -144,8 +144,8 @@ export function createVersionedKeyFactory<T extends string>(
       const match = /^(.+?):v(\d+)$/.exec(suffix);
       if (!match) return null;
       return {
-        id: decodeKeyComponent(match[1] || ''),
-        version: match[2] || '',
+        id: decodeKeyComponent(match[1] ?? ''),
+        version: match[2] ?? '',
       };
     }
   );

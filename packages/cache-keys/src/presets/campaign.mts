@@ -40,8 +40,8 @@ export const campaignKeys = {
       const parts = splitKeyComponents(suffix, ':', true);
       if (parts.length !== 2) return null;
       return {
-        campaignId: parts[0] || '',
-        date: parts[1] || ''
+        campaignId: parts[0] ?? '',
+        date: parts[1] ?? ''
       };
     }
   ),
