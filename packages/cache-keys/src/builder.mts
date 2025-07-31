@@ -26,7 +26,11 @@ export class CacheKeyBuilder {
    * Add a namespace component
    */
   namespace(namespace: string): this {
-    this.parts.push(namespace);
+    if (this.options.sanitize) {
+      this.parts.push(sanitizeKeyComponent(namespace));
+    } else {
+      this.parts.push(namespace);
+    }
     return this;
   }
   
@@ -34,7 +38,11 @@ export class CacheKeyBuilder {
    * Add a type component
    */
   type(type: string): this {
-    this.parts.push(type);
+    if (this.options.sanitize) {
+      this.parts.push(sanitizeKeyComponent(type));
+    } else {
+      this.parts.push(type);
+    }
     return this;
   }
   
@@ -75,7 +83,12 @@ export class CacheKeyBuilder {
    * Add a version component
    */
   version(version: number): this {
-    this.parts.push(`v${version}`);
+    const versionStr = `v${version}`;
+    if (this.options.sanitize) {
+      this.parts.push(sanitizeKeyComponent(versionStr));
+    } else {
+      this.parts.push(versionStr);
+    }
     return this;
   }
   
