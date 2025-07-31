@@ -7,6 +7,16 @@ import type { MetricEvent, MetricSnapshot } from '@satoshibits/core-metrics';
 // cache operation types
 export type CacheOperation = 'get' | 'set' | 'del' | 'clear';
 
+// cache event types - matches @satoshibits/cache event structure
+export interface CacheEvent {
+  type: 'hit' | 'miss' | 'set' | 'delete' | 'error' | 'stampede_prevented';
+  key: string;
+  timestamp: number;
+  duration?: number;
+  error?: Error;
+  metadata?: Record<string, unknown>;
+}
+
 // cache-specific event metadata
 export interface CacheMetadata {
   key: string;

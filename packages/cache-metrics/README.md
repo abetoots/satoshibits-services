@@ -22,10 +22,10 @@ pnpm add @satoshibits/cache-metrics
 ## Quick Start
 
 ```typescript
-import { createMetricsCollector } from '@satoshibits/cache-metrics';
+import { CacheCollector } from '@satoshibits/cache-metrics';
 
 // Create a metrics collector
-const collector = createMetricsCollector({
+const collector = new CacheCollector({
   maxLatencySamples: 1000,
   calculatePercentiles: true,
 });
@@ -44,10 +44,10 @@ console.log(`Hit rate: ${(snapshot.hitRate * 100).toFixed(2)}%`);
 ## With Handlers
 
 ```typescript
-import { createCollectorWithHandlers } from '@satoshibits/cache-metrics';
+import { CacheCollector, ConsoleHandler, PrometheusHandler } from '@satoshibits/cache-metrics';
 
-// Create collector with pre-configured handlers
-const { collector, handlers } = createCollectorWithHandlers({
+// Create collector with handlers
+const collector = new CacheCollector({
   enableConsole: true,
   enablePrometheus: true,
   snapshotInterval: 60000, // emit snapshots every minute
@@ -60,12 +60,12 @@ collector.recordHit('key', 1.2);
 ## Custom Event Handlers
 
 ```typescript
-import { MetricsCollector, ConsoleEventHandler } from '@satoshibits/cache-metrics';
+import { CacheCollector, ConsoleHandler } from '@satoshibits/cache-metrics';
 
-const collector = new MetricsCollector();
+const collector = new CacheCollector();
 
 // Add console handler for errors only
-const errorHandler = new ConsoleEventHandler('error-logger', {
+const errorHandler = new ConsoleHandler({
   eventTypes: new Set(['error']),
   includeTimestamp: true,
 });
@@ -76,10 +76,10 @@ collector.on('event', (event) => errorHandler.handle(event));
 ## Prometheus Integration
 
 ```typescript
-import { MetricsCollector, PrometheusHandler } from '@satoshibits/cache-metrics';
+import { CacheCollector, PrometheusHandler } from '@satoshibits/cache-metrics';
 
-const collector = new MetricsCollector();
-const prometheusHandler = new PrometheusHandler('prometheus', (text) => {
+const collector = new CacheCollector();
+const prometheusHandler = new PrometheusHandler({
   // Send to your metrics endpoint
   fetch('/metrics', { method: 'POST', body: text });
 });
@@ -92,9 +92,9 @@ collector.startSnapshotTimer(30000);
 ## Aggregated Metrics
 
 ```typescript
-import { MetricsCollector, MetricsAggregator } from '@satoshibits/cache-metrics';
+import { CacheCollector } from '@satoshibits/cache-metrics';
 
-const collector = new MetricsCollector();
+const collector = new CacheCollector();
 const aggregator = new MetricsAggregator({
   maxSnapshots: 60,
   windowDuration: 3600000, // 1 hour
@@ -113,7 +113,7 @@ console.log(`Trend: ${hitRateStats.trend}`);
 
 ## API Reference
 
-### MetricsCollector
+### CacheCollector
 
 The main class for collecting cache metrics.
 

@@ -11,6 +11,7 @@ export type { CacheCollectorOptions } from './cache-collector.mjs';
 
 // types
 export type {
+  CacheEvent,
   CacheOperation,
   CacheMetadata,
   CacheMetricEvent,
@@ -36,4 +37,7 @@ export type {
   MetricValue,
   MetricHandler as CoreMetricHandler,
 } from '@satoshibits/core-metrics';
+
+// helper to connect cache to metrics
+export { connectCacheToMetrics } from './connect.mjs';
 
