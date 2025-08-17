@@ -1,5 +1,11 @@
 # functional
 
+## 1.0.3
+
+### Patch Changes
+
+- a6aba42: add barrel export
+
 ## 1.0.2
 
 ### Patch Changes
