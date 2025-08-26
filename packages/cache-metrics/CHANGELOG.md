@@ -1,5 +1,11 @@
 # @satoshibits/cache-metrics
 
+## 1.0.1
+
+### Patch Changes
+
+- ae6a7b1: remove unused test script from pre-commit hooks
+
 ## 1.0.0
 
 ### Major Changes
