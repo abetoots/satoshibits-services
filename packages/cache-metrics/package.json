@@ -10,8 +10,7 @@
     "build": "rm -rf dist && tsc",
     "lint": "pnpm exec eslint .",
     "prepublishOnly": "npm run build",
-    "pre-commit": "pnpm exec lint-staged -c ./.lintstagedrc.mjs --concurrent false",
-    "test": "vitest --run"
+    "pre-commit": "pnpm exec lint-staged -c ./.lintstagedrc.mjs --concurrent false"
   },
   "files": [
     "./dist/**/*",
