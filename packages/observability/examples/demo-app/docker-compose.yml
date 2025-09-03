@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  # React Frontend Application
+  frontend:
+    build:
+      context: ../../../..  # monorepo root
+      dockerfile: packages/observability/examples/demo-app/frontend/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_OBSERVABILITY_ENDPOINT=http://localhost:4318/v1/traces
+      - VITE_API_BASE_URL=http://localhost:3001
+      # Optional: print spans to the browser console instead of sending to the collector
+      # - VITE_USE_CONSOLE_EXPORTER=1
+    depends_on:
+      - backend
+      - otel-collector
+
+  # Express Backend Application
+  backend:
+    build:
+      context: ../../../..  # monorepo root
+      dockerfile: packages/observability/examples/demo-app/backend/Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      # Point the exporter to the OTel Collector service within the Docker network
+      - OBSERVABILITY_ENDPOINT=http://otel-collector:4318
+      - FRONTEND_URL=http://localhost:3000
+      - PORT=3001
+    depends_on:
+      - otel-collector
+
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.98.0
+    command: ["--config=/etc/otel-collector-config.yml"]
+    volumes:
+      - ./otel-collector-config.yml:/etc/otel-collector-config.yml
+    ports:
+      - "4317:4317" # OTLP gRPC receiver
+      - "4318:4318" # OTLP HTTP receiver
+      - "8889:8889" # Prometheus exporter endpoint
+    depends_on:
+      - jaeger
+
+  # Jaeger (for Distributed Tracing)
+  jaeger:
+    image: jaegertracing/all-in-one:1.54
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "14250:14250" # Accepts spans from the collector
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+
+  # Prometheus (for Metrics)
+  prometheus:
+    image: prom/prometheus:v2.51.1
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    command: 
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+
+  # Grafana (for Visualization)
+  grafana:
+    image: grafana/grafana:10.4.2
+    ports:
+      - "3002:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+    volumes:
+      - grafana-storage:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+volumes:
+  grafana-storage:

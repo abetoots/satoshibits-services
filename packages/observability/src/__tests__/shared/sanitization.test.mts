@@ -1,0 +1,1322 @@
+/**
+ * Shared Sanitization Functionality Tests
+ *
+ * Tests PII detection, credit card masking, and data sanitization features.
+ * Focuses on the DataSanitizer class and global sanitization functions.
+ */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { UnifiedObservabilityClient } from "../../unified-smart-client.mjs";
+import type {
+  CircularTestObject,
+  TestErrorWithProps,
+  TestMetricLabels,
+  TestUserData,
+  TestUserProfile,
+} from "../test-utils/test-types.mjs";
+
+import {
+  createSanitizer,
+  DataSanitizer,
+  SanitizerManager,
+} from "../../enrichment/sanitizer.mjs";
+import { SmartClient } from "../../index.mjs";
+import {
+  isSanitizedArray,
+  isSanitizedObject,
+  isSanitizedString,
+} from "../test-utils/test-types.mjs";
+
+describe("Data Sanitization - Shared Functionality", () => {
+  let sanitizer: DataSanitizer;
+
+  beforeEach(() => {
+    // create a new DataSanitizer instance for each test
+    // each instance has its own internal cache, so no global clear needed
+    sanitizer = new DataSanitizer();
+  });
+
+  describe("Credit Card Detection and Masking", () => {
+    it("Should mask Visa credit card numbers", () => {
+      const input = "My card is 4111-1111-1111-1111 for testing";
+      const result = sanitizer.sanitize(input);
+
+      expect(result).toBe("My card is [REDACTED] for testing");
+      expect(result).not.toContain("4111");
+    });
+
+    it("Should mask MasterCard credit card numbers", () => {
+      const input = "Payment card: 5555 5555 5555 4444";
+      const result = sanitizer.sanitize(input);
+
+      expect(result).toBe("Payment card: [REDACTED]");
+      expect(result).not.toContain("5555");
+    });
+
+    it("Should mask American Express credit card numbers (when formatted)", () => {
+      const input = "Amex: 3782-8224-6310-0051";
+      const result = sanitizer.sanitize(input);
+
+      expect(result).toBe("Amex: [REDACTED]");
+      expect(result).not.toContain("3782");
+    });
+
+    it("Should mask Discover credit card numbers", () => {
+      const input = "Discover card 6011111111111117 is valid";
+      const result = sanitizer.sanitize(input);
+
+      expect(result).toBe("Discover card [REDACTED] is valid");
+      expect(result).not.toContain("6011");
+    });
+
+    it("Should handle multiple credit cards in one string", () => {
+      const input = "Cards: 4111111111111111 and 5555555555554444";
+      const result = sanitizer.sanitize(input);
+
+      expect(result).toBe("Cards: [REDACTED] and [REDACTED]");
+    });
+
+    it("Should not mask non-credit card number sequences", () => {
+      const input = "Phone: 555-123-4567 and ID: 12345";
+      const result = sanitizer.sanitize(input);
+
+      // phones are NOT masked by default, regular numbers should not be masked
+      expect(result).toBe("Phone: 555-123-4567 and ID: 12345");
+    });
+  });
+
+  describe("SSN Detection and Masking", () => {
+    it("Should mask Social Security Numbers", () => {
+      const input = "SSN: 123-45-6789 for verification";
+      const result = sanitizer.sanitize(input);
+
+      expect(result).toBe("SSN: [REDACTED] for verification");
+      expect(result).not.toContain("123-45-6789");
+    });
+
+    it("Should mask multiple SSNs", () => {
+      const input = "Primary: 111-22-3333, Spouse: 444-55-6666";
+      const result = sanitizer.sanitize(input);
+
+      expect(result).toBe("Primary: [REDACTED], Spouse: [REDACTED]");
+    });
+
+    it("Should not mask partial SSN patterns", () => {
+      const input = "Code: 123-45 is incomplete";
+      const result = sanitizer.sanitize(input);
+
+      expect(result).toBe("Code: 123-45 is incomplete");
+    });
+  });
+
+  describe("JWT and API Key Detection", () => {
+    it("Should mask JWT tokens", () => {
+      const jwt =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+      const input = `Authorization: Bearer ${jwt}`;
+      const result = sanitizer.sanitize(input);
+
+      expect(result).toBe("Authorization: Bearer [REDACTED]");
+      expect(result).not.toContain("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9");
+    });
+
+    it("Should mask long alphanumeric keys in strict mode", () => {
+      const strictSanitizer = new DataSanitizer({ strictMode: true });
+      const input = "API Key: abcd1234567890123456789012345678";
+      const result = strictSanitizer.sanitize(input);
+
+      expect(result).toBe("API Key: [REDACTED]");
+      expect(result).not.toContain("abcd1234567890123456789012345678");
+    });
+
+    it("Should not mask API keys in normal mode", () => {
+      const input = "API Key: sk_test_4eC39HqLyjWDarjtT1zdp7dc";
+      const result = sanitizer.sanitize(input);
+
+      // In normal mode, API keys are not masked
+      expect(result).toContain("sk_test_4eC39HqLyjWDarjtT1zdp7dc");
+    });
+  });
+
+  describe("Phone Number Masking", () => {
+    it("Should NOT mask phone numbers by default", () => {
+      const input = "Call me at 555-123-4567 today";
+      const result = sanitizer.sanitize(input);
+
+      // phones are NOT masked by default (maskPhones: false)
+      expect(result).toBe("Call me at 555-123-4567 today");
+    });
+
+    it("Should mask phone numbers when enabled", () => {
+      const phoneSanitizer = new DataSanitizer({ maskPhones: true });
+      const testCases = [
+        "(555) 123-4567",
+        "555.123.4567",
+        "15551234567",
+        "+1 555 123 4567",
+      ];
+
+      testCases.forEach((input) => {
+        const result = phoneSanitizer.sanitize(`Phone: ${input}`);
+        expect(result).toMatch(/Phone: .*\*.*/);
+        expect(result).not.toContain("555");
+        expect(result).not.toContain("123");
+        expect(result).not.toContain("4567");
+      });
+    });
+
+    it("Should not mask phone numbers when disabled", () => {
+      const noPhoneSanitizer = new DataSanitizer({ maskPhones: false });
+      const input = "Call me at 555-123-4567";
+      const result = noPhoneSanitizer.sanitize(input);
+
+      expect(result).toBe("Call me at 555-123-4567");
+    });
+  });
+
+  describe("Email Masking", () => {
+    it("Should not mask emails by default", () => {
+      const input = "Contact: user@example.com for support";
+      const result = sanitizer.sanitize(input);
+
+      expect(result).toBe("Contact: user@example.com for support");
+    });
+
+    it("Should mask emails when enabled", () => {
+      const emailSanitizer = new DataSanitizer({ maskEmails: true });
+      const input = "Email: john.doe@example.com";
+      const result = emailSanitizer.sanitize(input);
+
+      expect(result).toBe("Email: j***@example.com");
+      expect(result).not.toContain("john.doe");
+    });
+
+    it("Should handle multiple emails", () => {
+      const emailSanitizer = new DataSanitizer({ maskEmails: true });
+      const input = "Primary: alice@test.com, Secondary: bob@demo.org";
+      const result = emailSanitizer.sanitize(input);
+
+      expect(result).toBe("Primary: a***@test.com, Secondary: b***@demo.org");
+    });
+  });
+
+  describe("IP Address Masking", () => {
+    it("Should not mask IPs by default", () => {
+      const input = "Server: 192.168.1.100 is responding";
+      const result = sanitizer.sanitize(input);
+
+      expect(result).toBe("Server: 192.168.1.100 is responding");
+    });
+
+    it("Should mask IPs when enabled", () => {
+      const ipSanitizer = new DataSanitizer({ maskIPs: true });
+      const input = "Connected from 192.168.1.100";
+      const result = ipSanitizer.sanitize(input);
+
+      expect(result).toBe("Connected from ***.***.***");
+      expect(result).not.toContain("192.168.1.100");
+    });
+  });
+
+  describe("UUID Masking", () => {
+    it("Should not mask UUIDs by default", () => {
+      const uuid = "550e8400-e29b-41d4-a716-446655440000";
+      const input = `User ID: ${uuid}`;
+      const result = sanitizer.sanitize(input);
+
+      expect(result).toBe(`User ID: ${uuid}`);
+    });
+
+    it("Should mask UUIDs when enabled", () => {
+      const uuidSanitizer = new DataSanitizer({ maskUUIDs: true });
+      const uuid = "550e8400-e29b-41d4-a716-446655440000";
+      const input = `User ID: ${uuid}`;
+      const result = uuidSanitizer.sanitize(input);
+
+      expect(result).toBe("User ID: ********-****-****-****-************");
+      expect(result).not.toContain(uuid);
+    });
+  });
+
+  describe("Field-based Redaction", () => {
+    it("Should redact password fields", () => {
+      const data: TestUserData = {
+        username: "john_doe",
+        password: "secretPassword123",
+        email: "john@example.com",
+      };
+
+      const result = sanitizer.sanitize(data);
+
+      if (isSanitizedObject(result)) {
+        expect(result.username).toBe("john_doe");
+        expect(result.password).toBe("[REDACTED]");
+        expect(result.email).toBe("john@example.com");
+      }
+    });
+
+    it("Should redact various sensitive field names", () => {
+      const data: TestUserData = {
+        apiKey: "secret-key-123",
+        auth_token: "bearer-token",
+        private_key: "-----BEGIN PRIVATE KEY-----",
+        creditCard: "4111111111111111",
+        ssn: "123-45-6789",
+        normal_field: "safe_value",
+      };
+
+      const result = sanitizer.sanitize(data);
+
+      if (isSanitizedObject(result)) {
+        expect(result.apiKey).toBe("[REDACTED]");
+        expect(result.auth_token).toBe("[REDACTED]");
+        expect(result.private_key).toBe("[REDACTED]");
+        expect(result.creditCard).toBe("[REDACTED]");
+        expect(result.ssn).toBe("[REDACTED]");
+        expect(result.normal_field).toBe("safe_value");
+      }
+    });
+
+    it("Should handle custom redact fields", () => {
+      const customSanitizer = new DataSanitizer({
+        customRedactFields: ["customSecret", "internalId"],
+      });
+
+      const data: TestUserData = {
+        customSecret: "should_be_redacted",
+        internalId: "internal_12345",
+        publicField: "visible_data",
+      };
+
+      const result = customSanitizer.sanitize(data);
+
+      if (isSanitizedObject(result)) {
+        expect(result.customSecret).toBe("[REDACTED]");
+        expect(result.internalId).toBe("[REDACTED]");
+        expect(result.publicField).toBe("visible_data");
+      }
+    });
+
+    it("Should not redact object fields that are sensitive", () => {
+      const data: TestUserData = {
+        password: "string_password", // should be redacted
+        passwordSettings: {
+          // should not be redacted (it's an object)
+          minLength: 8,
+          requireNumbers: true,
+        },
+        user: "john_doe",
+      };
+
+      const result = sanitizer.sanitize(data);
+
+      if (isSanitizedObject(result)) {
+        expect(result.password).toBe("[REDACTED]");
+        expect(result.passwordSettings).toEqual({
+          minLength: 8,
+          requireNumbers: true,
+        });
+        expect(result.user).toBe("john_doe");
+      }
+    });
+  });
+
+  describe("Object Traversal and Protection", () => {
+    it("Should handle nested objects", () => {
+      const data: TestUserProfile = {
+        user: {
+          profile: {
+            name: "John Doe",
+            password: "secret123",
+            preferences: {
+              theme: "dark",
+              apiKey: "key_12345",
+            },
+          },
+        },
+      };
+
+      const result = sanitizer.sanitize(data);
+
+      if (
+        isSanitizedObject(result) &&
+        isSanitizedObject(result.user) &&
+        isSanitizedObject(result.user.profile) &&
+        isSanitizedObject(result.user.profile.preferences)
+      ) {
+        expect(result.user.profile.name).toBe("John Doe");
+        expect(result.user.profile.password).toBe("[REDACTED]");
+        expect(result.user.profile.preferences.theme).toBe("dark");
+        expect(result.user.profile.preferences.apiKey).toBe("[REDACTED]");
+      }
+    });
+
+    it("Should handle arrays", () => {
+      const data: TestUserProfile = {
+        users: [
+          { name: "Alice", password: "secret1" },
+          { name: "Bob", password: "secret2" },
+        ],
+      };
+
+      const result = sanitizer.sanitize(data);
+
+      if (
+        isSanitizedObject(result) &&
+        isSanitizedArray(result.users) &&
+        isSanitizedObject(result.users[0]) &&
+        isSanitizedObject(result.users[1])
+      ) {
+        expect(result.users[0].name).toBe("Alice");
+        expect(result.users[0].password).toBe("[REDACTED]");
+        expect(result.users[1].name).toBe("Bob");
+        expect(result.users[1].password).toBe("[REDACTED]");
+      }
+    });
+
+    describe("Circular Reference Handling", () => {
+      it("should handle simple self-referencing objects", () => {
+        const obj: CircularTestObject = { name: "test" };
+        obj.self = obj; // create circular reference
+
+        const result = sanitizer.sanitize(obj);
+
+        if (isSanitizedObject(result)) {
+          expect(result.name).toBe("test");
+          expect(result.self).toBe("[CIRCULAR]");
+        }
+      });
+
+      it("should not incorrectly flag shared objects across multiple sanitization calls", () => {
+        // bug: instance-level WeakSet could cause shared objects to be flagged as circular
+        // even though cleanup logic currently prevents this
+        const sharedObject = { data: "shared", password: "secret" };
+        const container1 = { id: 1, shared: sharedObject };
+        const container2 = { id: 2, shared: sharedObject };
+
+        // first sanitization call
+        const result1 = sanitizer.sanitize(container1);
+
+        // second sanitization call with the same shared object
+        const result2 = sanitizer.sanitize(container2);
+
+        // both results should sanitize the shared object correctly, not mark it as [CIRCULAR]
+        if (isSanitizedObject(result1) && isSanitizedObject(result1.shared)) {
+          expect(result1.id).toBe(1);
+          expect(result1.shared.data).toBe("shared");
+          expect(result1.shared.password).toBe("[REDACTED]");
+          expect(result1.shared).not.toBe("[CIRCULAR]");
+        }
+
+        if (isSanitizedObject(result2) && isSanitizedObject(result2.shared)) {
+          expect(result2.id).toBe(2);
+          expect(result2.shared.data).toBe("shared");
+          expect(result2.shared.password).toBe("[REDACTED]");
+          expect(result2.shared).not.toBe("[CIRCULAR]");
+        }
+      });
+
+      it("should handle concurrent sanitization of objects with shared references", () => {
+        // test that WeakSet is properly scoped for concurrent operations
+        const sharedRef = { value: "shared" };
+
+        const obj1 = { id: 1, ref: sharedRef };
+        const obj2 = { id: 2, ref: sharedRef };
+        const obj3 = { id: 3, nested: { ref: sharedRef } };
+
+        // sanitize multiple objects that share the same reference
+        const results = [obj1, obj2, obj3].map(obj => sanitizer.sanitize(obj));
+
+        // all should sanitize correctly without false circular detection
+        results.forEach((result, index) => {
+          expect(result).not.toBe("[CIRCULAR]");
+          if (isSanitizedObject(result)) {
+            expect(result.id).toBe(index + 1);
+          }
+        });
+      });
+
+      it("should handle mutually circular references between objects", () => {
+        const a: CircularTestObject = { name: "a" };
+        const b: CircularTestObject = { name: "b" };
+        a.b = b;
+        b.a = a; // create mutual circular reference
+        const data = { root: a };
+
+        const result = sanitizer.sanitize(data);
+
+        if (
+          isSanitizedObject(result) &&
+          isSanitizedObject(result.root) &&
+          isSanitizedObject(result.root.b)
+        ) {
+          expect(result.root.name).toBe("a");
+          expect(result.root.b.name).toBe("b");
+          expect(result.root.b.a).toBe("[CIRCULAR]");
+        }
+      });
+
+      it("should handle circular references within arrays without crashing", () => {
+        // note: arrays with circular references currently recurse until depth limit
+        // (unlike objects, which use WeakSet tracking). this test verifies fail-safe behavior.
+        const arr: { id: number }[] = [{ id: 1 }];
+        //@ts-expect-error -- adding circular reference for test
+        arr.push(arr); // arr[1] is reference to arr itself
+
+        // should not throw - fail-safe behavior is critical for observability libraries
+        expect(() => sanitizer.sanitize(arr)).not.toThrow();
+
+        const result = sanitizer.sanitize(arr);
+
+        if (isSanitizedArray(result) && isSanitizedObject(result[0])) {
+          // first element should be sanitized correctly
+          expect(result[0]).toEqual({ id: 1 });
+          // second element will be deeply nested until depth limit (current behavior)
+          expect(Array.isArray(result[1])).toBe(true);
+        }
+      });
+
+      it("should correctly redact sensitive data within a circular structure", () => {
+        const obj: CircularTestObject = { password: "secret-password" };
+        obj.nested = { circular: obj };
+
+        const result = sanitizer.sanitize(obj);
+
+        if (isSanitizedObject(result) && isSanitizedObject(result.nested)) {
+          expect(result.password).toBe("[REDACTED]");
+          expect(result.nested.circular).toBe("[CIRCULAR]");
+        }
+      });
+
+      it("should handle complex circular references with multiple levels", () => {
+        const a: CircularTestObject = { name: "a", password: "secret-a" };
+        const b: CircularTestObject = { name: "b", apiKey: "key-b" };
+        const c: CircularTestObject = {
+          name: "c",
+          creditCard: "4111111111111111",
+        };
+
+        a.child = b;
+        b.child = c;
+        c.parent = a; // create circular reference: a → b → c → a
+
+        const result = sanitizer.sanitize(a);
+
+        if (
+          isSanitizedObject(result) &&
+          isSanitizedObject(result.child) &&
+          isSanitizedObject(result.child.child)
+        ) {
+          expect(result.name).toBe("a");
+          expect(result.password).toBe("[REDACTED]");
+          expect(result.child.name).toBe("b");
+          expect(result.child.apiKey).toBe("[REDACTED]");
+          expect(result.child.child.name).toBe("c");
+          expect(result.child.child.creditCard).toBe("[REDACTED]");
+          expect(result.child.child.parent).toBe("[CIRCULAR]");
+        }
+      });
+
+      it("should handle array of objects with circular references", () => {
+        const obj1: CircularTestObject = { id: 1, data: "test1" };
+        const obj2: CircularTestObject = {
+          id: 2,
+          data: "test2",
+          password: "secret",
+        };
+        obj1.ref = obj2;
+        obj2.ref = obj1; // create circular reference
+
+        const arr = [obj1, obj2];
+        const result = sanitizer.sanitize(arr);
+
+        if (
+          isSanitizedArray(result) &&
+          isSanitizedObject(result[0]) &&
+          isSanitizedObject(result[0].ref) &&
+          isSanitizedObject(result[1])
+        ) {
+          expect(result[0].id).toBe(1);
+          expect(result[0].ref.id).toBe(2);
+          expect(result[0].ref.password).toBe("[REDACTED]");
+          expect(result[0].ref.ref).toBe("[CIRCULAR]");
+          expect(result[1].id).toBe(2);
+          expect(result[1].password).toBe("[REDACTED]");
+        }
+      });
+    });
+
+    it("Should respect max depth limit", () => {
+      const shallowSanitizer = new DataSanitizer({ maxDepth: 2 });
+
+      const deepData: TestUserProfile = {
+        level1: {
+          level2: {
+            level3: {
+              value: "too_deep",
+            },
+          },
+        },
+      };
+
+      const result = shallowSanitizer.sanitize(deepData);
+
+      if (isSanitizedObject(result) && isSanitizedObject(result.level1)) {
+        expect(result.level1.level2).toBe("[MAX_DEPTH_EXCEEDED]");
+      }
+    });
+
+    it("Should handle null and undefined values", () => {
+      const data = {
+        nullValue: null,
+        undefinedValue: undefined,
+        emptyString: "",
+        password: "secret",
+      };
+
+      const result = sanitizer.sanitize(data);
+
+      if (isSanitizedObject(result)) {
+        expect(result.nullValue).toBe(null);
+        expect(result.undefinedValue).toBe(undefined);
+        expect(result.emptyString).toBe("");
+        expect(result.password).toBe("[REDACTED]");
+      }
+    });
+  });
+
+  describe("Password Detection in Strings", () => {
+    it("Should mask password values in strings", () => {
+      const input = "Config: password: secret123, username: john";
+      const result = sanitizer.sanitize(input);
+
+      expect(result).toContain("password: [REDACTED]");
+      expect(result).toContain("username: john");
+      expect(result).not.toContain("secret123");
+    });
+
+    it("Should handle different password formats", () => {
+      const testCases = [
+        "password: secret123",
+        "passwd: mypass",
+        "pwd: shortpwd",
+      ];
+
+      testCases.forEach((input) => {
+        const result = sanitizer.sanitize(input);
+        expect(result).toContain("[REDACTED]");
+        expect(result).not.toContain("secret123");
+        expect(result).not.toContain("mypass");
+        expect(result).not.toContain("shortpwd");
+      });
+    });
+  });
+
+  describe("Custom Configuration", () => {
+    it("Should use custom redaction string", () => {
+      const customSanitizer = new DataSanitizer({
+        redactionString: "[HIDDEN]",
+      });
+
+      const data = { password: "secret" };
+      const result = customSanitizer.sanitize(data) as typeof data;
+
+      expect(result?.password).toBe("[HIDDEN]");
+    });
+
+    it("Should support custom patterns", () => {
+      const customSanitizer = new DataSanitizer({
+        customPatterns: [
+          { pattern: /CUSTOM-\d+/g, replacement: "[CUSTOM_REDACTED]" },
+        ],
+      });
+
+      const input = "Reference: CUSTOM-12345 and CUSTOM-67890";
+      const result = customSanitizer.sanitize(input);
+
+      expect(result).toBe("Reference: [CUSTOM_REDACTED] and [CUSTOM_REDACTED]");
+    });
+
+    it("Should handle strict mode for additional patterns", () => {
+      const strictSanitizer = new DataSanitizer({ strictMode: true });
+
+      const data: TestUserData = {
+        id: "user_123", // should be redacted in strict mode
+        key: "some_key", // should be redacted in strict mode
+        userId: "456", // should be redacted in strict mode
+        accountId: "789", // should be redacted in strict mode
+        name: "John Doe", // should not be redacted
+      };
+
+      const result = strictSanitizer.sanitize(data);
+
+      if (isSanitizedObject(result)) {
+        expect(result.id).toBe("[REDACTED]");
+        expect(result.key).toBe("[REDACTED]");
+        expect(result.userId).toBe("[REDACTED]");
+        expect(result.accountId).toBe("[REDACTED]");
+        expect(result.name).toBe("John Doe");
+      }
+    });
+  });
+
+  describe("Error Sanitization", () => {
+    it("Should sanitize error messages", () => {
+      const error = new Error("Authentication failed for user@example.com");
+      const phoneSanitizer = new DataSanitizer({
+        maskPhones: true,
+        maskEmails: true,
+      });
+      const result = phoneSanitizer.sanitizeError(error);
+
+      expect(result.message).toBe("Authentication failed for u***@example.com");
+      expect(result.name).toBe("Error");
+    });
+
+    it("Should sanitize error stack traces", () => {
+      const error = new Error("Database connection failed");
+      error.stack =
+        "Error: Database connection failed\\n    at connect (file:///app/db.js:42)\\n    password: secret123";
+
+      const result = sanitizer.sanitizeError(error);
+
+      expect(result.stack).toContain("password: [REDACTED]");
+      expect(result.stack).not.toContain("secret123");
+    });
+
+    it("Should sanitize custom error properties", () => {
+      const error: TestErrorWithProps = new Error(
+        "Validation failed",
+      ) as TestErrorWithProps;
+      error.userPassword = "secret123";
+      error.userId = "user_456";
+      error.errorCode = "AUTH_001";
+
+      const result = sanitizer.sanitizeError(error) as typeof error;
+
+      expect(result?.userPassword).toBe("[REDACTED]");
+      expect(result?.userId).toBe("user_456");
+      expect(result?.errorCode).toBe("AUTH_001");
+    });
+  });
+
+  describe("Label Sanitization", () => {
+    it("Should sanitize metric labels", () => {
+      const labels: TestMetricLabels = {
+        service: "auth-service",
+        version: "1.0.0",
+        apiKey: "key_12345",
+        userPassword: "secret",
+        endpoint: "/api/login",
+      };
+
+      const result = sanitizer.sanitizeLabels(labels as Record<string, string>);
+
+      expect(result.service).toBe("auth-service");
+      expect(result.version).toBe("1.0.0");
+      expect(result.apiKey).toBe("[REDACTED]");
+      expect(result.userPassword).toBe("[REDACTED]");
+      expect(result.endpoint).toBe("/api/login");
+    });
+
+    it("Should sanitize values in labels", () => {
+      const phoneSanitizer = new DataSanitizer({ maskPhones: true });
+      const labels: TestMetricLabels = {
+        contact_number: "555-123-4567",
+        service: "notification",
+      };
+
+      const result = phoneSanitizer.sanitizeLabels(
+        labels as Record<string, string>,
+      );
+
+      expect(result.contact_number).toMatch(/.*\*.*/);
+      expect(result.contact_number).not.toContain("555-123-4567");
+      expect(result.service).toBe("notification");
+    });
+  });
+
+  describe("Caching Functionality", () => {
+    it("Should cache sanitized strings", () => {
+      const input = "Credit card: 4111-1111-1111-1111";
+
+      // First sanitization
+      const result1 = sanitizer.sanitize(input);
+      const stats1 = sanitizer.getCacheStats();
+
+      // Second sanitization of same string
+      const result2 = sanitizer.sanitize(input);
+      const stats2 = sanitizer.getCacheStats();
+
+      expect(result1).toBe(result2);
+      expect(stats2.size).toBeGreaterThanOrEqual(stats1.size);
+    });
+
+    it("Should clear cache when requested", () => {
+      sanitizer.sanitize("test string");
+      expect(sanitizer.getCacheStats().size).toBeGreaterThan(0);
+
+      sanitizer.clearCache();
+      expect(sanitizer.getCacheStats().size).toBe(0);
+    });
+
+    it("Should provide cache statistics", () => {
+      const stats = sanitizer.getCacheStats();
+
+      expect(typeof stats.size).toBe("number");
+      expect(typeof stats.max).toBe("number");
+      expect(typeof stats.ttl).toBe("number");
+      expect(stats.max).toBe(1000); // Default max size
+      expect(stats.ttl).toBe(0); // TTL removed per consensus decision
+    });
+  });
+
+  describe("Client-Initialized Sanitizer Functions", () => {
+    let client: UnifiedObservabilityClient;
+
+    beforeEach(async () => {
+      // initialize client with specific sanitizer config
+      client = await SmartClient.initialize({
+        serviceName: "test-sanitization",
+        environment: "node",
+        disableInstrumentation: true,
+        sanitizerOptions: {
+          maskEmails: true,
+          maskPhones: true,
+          redactionString: "[CLIENT_REDACTED]",
+        },
+      });
+    });
+
+    afterEach(async () => {
+      await SmartClient.shutdown();
+    });
+
+    it("should access sanitizer through client", () => {
+      const manager = client.getSanitizerManager();
+      const sanitizer = manager.getDefault();
+
+      const input: TestUserData = {
+        password: "secret",
+        email: "user@test.com",
+      };
+      const result = sanitizer.sanitize(input);
+
+      if (isSanitizedObject(result)) {
+        expect(result.password).toBe("[CLIENT_REDACTED]");
+        expect(result.email).toBe("u***@test.com");
+      }
+    });
+
+    it("should sanitize strings through client sanitizer", () => {
+      const manager = client.getSanitizerManager();
+      const sanitizer = manager.getDefault();
+
+      const input = "Password: secret123";
+      const result = sanitizer.sanitize(input);
+
+      expect(result).toContain("[CLIENT_REDACTED]");
+    });
+
+    it("should sanitize errors through client sanitizer", () => {
+      const manager = client.getSanitizerManager();
+      const sanitizer = manager.getDefault();
+
+      const error: TestErrorWithProps = new Error(
+        "Auth failed",
+      ) as TestErrorWithProps;
+      error.password = "secret";
+      const result = sanitizer.sanitizeError(error) as typeof error;
+
+      expect(result.password).toBe("[CLIENT_REDACTED]");
+    });
+
+    it("should sanitize labels through client sanitizer", () => {
+      const manager = client.getSanitizerManager();
+      const sanitizer = manager.getDefault();
+
+      const labels = { apiKey: "secret", service: "auth" };
+      const result = sanitizer.sanitizeLabels(labels);
+
+      expect(result.apiKey).toBe("[CLIENT_REDACTED]");
+      expect(result.service).toBe("auth");
+    });
+
+    it("should access sanitizer cache stats", () => {
+      const manager = client.getSanitizerManager();
+      const sanitizer = manager.getDefault();
+
+      sanitizer.sanitize("test");
+      const stats = sanitizer.getCacheStats();
+
+      expect(typeof stats.size).toBe("number");
+      expect(stats.size).toBeGreaterThan(0);
+    });
+
+    it("should clear sanitizer cache", () => {
+      const manager = client.getSanitizerManager();
+      const sanitizer = manager.getDefault();
+
+      sanitizer.sanitize("test");
+      expect(sanitizer.getCacheStats().size).toBeGreaterThan(0);
+
+      sanitizer.clearCache();
+      expect(sanitizer.getCacheStats().size).toBe(0);
+    });
+  });
+
+  describe("Factory Functions", () => {
+    it("Should create custom sanitizer with factory", () => {
+      const customSanitizer = createSanitizer({
+        maskEmails: true,
+        redactionString: "[FACTORY_CREATED]",
+      });
+
+      const input: TestUserData = {
+        password: "secret",
+        email: "user@test.com",
+      };
+      const result = customSanitizer.sanitize(input);
+
+      if (isSanitizedObject(result)) {
+        expect(result.password).toBe("[FACTORY_CREATED]");
+        expect(result.email).toBe("u***@test.com");
+      }
+    });
+
+    it("Should provide all sanitization methods in factory", () => {
+      const factory = createSanitizer();
+
+      expect(typeof factory.sanitize).toBe("function");
+      expect(typeof factory.sanitizeString).toBe("function");
+      expect(typeof factory.sanitizeObject).toBe("function");
+      expect(typeof factory.sanitizeError).toBe("function");
+      expect(typeof factory.sanitizeLabels).toBe("function");
+      expect(typeof factory.clearCache).toBe("function");
+      expect(typeof factory.getCacheStats).toBe("function");
+    });
+  });
+
+  describe("shouldRedactField Method", () => {
+    it("Should identify sensitive field names", () => {
+      const testCases = [
+        { field: "password", expected: true },
+        { field: "apiKey", expected: true },
+        { field: "creditCard", expected: true },
+        { field: "social_security", expected: true },
+        { field: "username", expected: false },
+        { field: "email", expected: false },
+        { field: "name", expected: false },
+      ];
+
+      testCases.forEach(({ field, expected }) => {
+        expect(sanitizer.shouldRedactField(field)).toBe(expected);
+      });
+    });
+
+    it("Should handle custom redact fields", () => {
+      const customSanitizer = new DataSanitizer({
+        customRedactFields: ["customSecret", "internalId"],
+      });
+
+      expect(customSanitizer.shouldRedactField("customSecret")).toBe(true);
+      expect(customSanitizer.shouldRedactField("internalId")).toBe(true);
+      expect(customSanitizer.shouldRedactField("normalField")).toBe(false);
+    });
+
+    it("Should apply strict mode patterns", () => {
+      const strictSanitizer = new DataSanitizer({ strictMode: true });
+
+      expect(strictSanitizer.shouldRedactField("id")).toBe(true);
+      expect(strictSanitizer.shouldRedactField("someKey")).toBe(true);
+      expect(strictSanitizer.shouldRedactField("userId")).toBe(true);
+      expect(strictSanitizer.shouldRedactField("customerInfo")).toBe(true);
+      expect(strictSanitizer.shouldRedactField("accountData")).toBe(true);
+      expect(strictSanitizer.shouldRedactField("regularField")).toBe(false);
+    });
+  });
+
+  describe("Edge Cases and Error Handling", () => {
+    it("Should handle empty objects", () => {
+      const result = sanitizer.sanitize({});
+      expect(result).toEqual({});
+    });
+
+    it("Should handle empty arrays", () => {
+      const result = sanitizer.sanitize([]);
+      expect(result).toEqual([]);
+    });
+
+    it("Should handle empty strings", () => {
+      const result = sanitizer.sanitize("");
+      expect(result).toBe("");
+    });
+
+    it("Should handle numbers and booleans", () => {
+      expect(sanitizer.sanitize(42)).toBe(42);
+      expect(sanitizer.sanitize(true)).toBe(true);
+      expect(sanitizer.sanitize(false)).toBe(false);
+    });
+
+    it("Should handle mixed data types", () => {
+      const data: TestUserProfile = {
+        string: "password: secret123",
+        number: 42,
+        boolean: true,
+        null_value: null,
+        array: ["password", "safe_item"],
+        nested: {
+          apiKey: "secret_key",
+        },
+      };
+
+      const result = sanitizer.sanitize(data);
+
+      if (
+        isSanitizedObject(result) &&
+        isSanitizedString(result.string) &&
+        isSanitizedArray(result.array) &&
+        isSanitizedObject(result.nested)
+      ) {
+        expect(result.string).toContain("[REDACTED]");
+        expect(result.number).toBe(42);
+        expect(result.boolean).toBe(true);
+        expect(result.null_value).toBe(null);
+        expect(result.array[0]).toBe("password");
+        expect(result.array[1]).toBe("safe_item");
+        expect(result.nested.apiKey).toBe("[REDACTED]");
+      }
+    });
+
+    it("Should handle very long strings efficiently", () => {
+      const longString =
+        "safe text ".repeat(1000) +
+        " password: secret123 " +
+        "more safe text ".repeat(1000);
+      const result = sanitizer.sanitize(longString);
+
+      expect(result).toContain("[REDACTED]");
+      expect(result).toContain("safe text");
+      expect(result).not.toContain("secret123");
+    });
+  });
+
+  describe("SanitizerManager - Multi-Tenant Support", () => {
+    let manager: SanitizerManager;
+
+    beforeEach(() => {
+      // create a new manager for each test to ensure isolation
+      // each manager instance has its own internal state
+      manager = new SanitizerManager();
+    });
+
+    // basic tenant isolation
+    it("should return default sanitizer when no tenant context", () => {
+      const sanitizer = manager.getSanitizer();
+      const defaultSanitizer = manager.getDefault();
+
+      expect(sanitizer).toBe(defaultSanitizer);
+    });
+
+    it("should create tenant-specific sanitizer with tenantId", () => {
+      const configProvider = vi.fn().mockReturnValue({ maskEmails: true });
+      manager = new SanitizerManager(undefined, {
+        tenantConfigProvider: configProvider,
+      });
+
+      const sanitizer = manager.getSanitizer({ tenantId: "tenant-1" });
+
+      expect(configProvider).toHaveBeenCalledWith({ tenantId: "tenant-1" });
+      expect(sanitizer).not.toBe(manager.getDefault());
+    });
+
+    it("should cache tenant sanitizers", () => {
+      const configProvider = vi.fn().mockReturnValue({ maskEmails: true });
+      manager = new SanitizerManager(undefined, {
+        tenantConfigProvider: configProvider,
+      });
+
+      const sanitizer1 = manager.getSanitizer({ tenantId: "tenant-1" });
+      const sanitizer2 = manager.getSanitizer({ tenantId: "tenant-1" });
+
+      expect(sanitizer1).toBe(sanitizer2);
+      expect(configProvider).toHaveBeenCalledTimes(1); // only called once due to caching
+    });
+
+    it("should create separate sanitizers per tenant:region combination", () => {
+      const configProvider = vi.fn().mockReturnValue({ maskEmails: true });
+      manager = new SanitizerManager(undefined, {
+        tenantConfigProvider: configProvider,
+      });
+
+      const sanitizerUsEast = manager.getSanitizer({
+        tenantId: "t1",
+        region: "us-east",
+      });
+      const sanitizerEuWest = manager.getSanitizer({
+        tenantId: "t1",
+        region: "eu-west",
+      });
+
+      expect(sanitizerUsEast).not.toBe(sanitizerEuWest);
+      expect(configProvider).toHaveBeenCalledTimes(2); // called for each region
+    });
+
+    // lru cache behavior
+    it("should evict oldest tenant sanitizer when cache exceeds 100 entries", () => {
+      const configProvider = vi.fn().mockReturnValue({ maskEmails: true });
+      manager = new SanitizerManager(undefined, {
+        maxTenantSanitizers: 100,
+        tenantConfigProvider: configProvider,
+      });
+
+      // create 100 tenant sanitizers
+      const firstSanitizer = manager.getSanitizer({ tenantId: "tenant-0" });
+      for (let i = 1; i < 100; i++) {
+        manager.getSanitizer({ tenantId: `tenant-${i}` });
+      }
+
+      // access the 101st tenant (should evict tenant-0)
+      manager.getSanitizer({ tenantId: "tenant-100" });
+
+      // reset the mock to track new calls
+      configProvider.mockClear();
+
+      // accessing tenant-0 again should require creating a new sanitizer
+      const newFirstSanitizer = manager.getSanitizer({ tenantId: "tenant-0" });
+
+      expect(configProvider).toHaveBeenCalledWith({ tenantId: "tenant-0" });
+      expect(newFirstSanitizer).not.toBe(firstSanitizer);
+    });
+
+    it("should update LRU position when accessing existing tenant sanitizer", () => {
+      const configProvider = vi.fn().mockReturnValue({ maskEmails: true });
+      manager = new SanitizerManager(undefined, {
+        maxTenantSanitizers: 100,
+        tenantConfigProvider: configProvider,
+      });
+
+      // create the first sanitizer
+      const firstSanitizer = manager.getSanitizer({ tenantId: "tenant-0" });
+
+      // create 99 more sanitizers (total 100)
+      for (let i = 1; i < 100; i++) {
+        manager.getSanitizer({ tenantId: `tenant-${i}` });
+      }
+
+      // access tenant-0 again to move it to the front of LRU
+      manager.getSanitizer({ tenantId: "tenant-0" });
+
+      // reset mock to track new calls
+      configProvider.mockClear();
+
+      // create one more tenant (should evict tenant-1, not tenant-0)
+      manager.getSanitizer({ tenantId: "tenant-100" });
+
+      // accessing tenant-0 should still return cached sanitizer
+      const cachedFirst = manager.getSanitizer({ tenantId: "tenant-0" });
+      expect(cachedFirst).toBe(firstSanitizer);
+      expect(configProvider).not.toHaveBeenCalledWith({ tenantId: "tenant-0" });
+
+      // but accessing tenant-1 should require recreation
+      manager.getSanitizer({ tenantId: "tenant-1" });
+      expect(configProvider).toHaveBeenCalledWith({ tenantId: "tenant-1" });
+    });
+
+    // configuration provider
+    it("should call tenantConfigProvider with correct context", () => {
+      const configProvider = vi.fn().mockReturnValue({ maskEmails: true });
+      manager = new SanitizerManager(undefined, {
+        tenantConfigProvider: configProvider,
+      });
+
+      manager.getSanitizer({ tenantId: "t1", region: "eu" });
+
+      expect(configProvider).toHaveBeenCalledWith({
+        tenantId: "t1",
+        region: "eu",
+      });
+    });
+
+    it("should merge tenant config with default options", () => {
+      const defaultOptions = { maskPhones: true, redactionString: "[DEFAULT]" };
+      const configProvider = vi.fn().mockReturnValue({ maskEmails: true });
+      manager = new SanitizerManager(defaultOptions, {
+        tenantConfigProvider: configProvider,
+      });
+
+      const tenantSanitizer = manager.getSanitizer({ tenantId: "tenant-1" });
+
+      // test that tenant sanitizer uses tenant config (maskEmails: true)
+      const emailInput: TestUserData = { email: "user@test.com" };
+      const result = tenantSanitizer.sanitize(emailInput);
+      if (isSanitizedObject(result)) {
+        expect(result.email).toBe("u***@test.com");
+      }
+    });
+
+    it("should use default config when tenantConfigProvider returns undefined", () => {
+      const defaultOptions = { maskEmails: true };
+      const configProvider = vi.fn().mockReturnValue(undefined);
+      manager = new SanitizerManager(defaultOptions, {
+        tenantConfigProvider: configProvider,
+      });
+
+      const tenantSanitizer = manager.getSanitizer({ tenantId: "tenant-1" });
+
+      // should use default options when provider returns undefined
+      const emailInput: TestUserData = { email: "user@test.com" };
+      const result = tenantSanitizer.sanitize(emailInput);
+      if (isSanitizedObject(result)) {
+        expect(result.email).toBe("u***@test.com");
+      }
+    });
+
+    // context provider injection
+    it("should inject context provider to break circular dependency", () => {
+      const contextProvider = vi
+        .fn()
+        .mockReturnValue({ tenantId: "injected-tenant" });
+      manager = new SanitizerManager(undefined, { contextProvider });
+
+      const context = manager.getContext();
+
+      expect(contextProvider).toHaveBeenCalled();
+      expect(context).toEqual({ tenantId: "injected-tenant" });
+    });
+
+    it("should use injected context provider to get tenant context", () => {
+      const contextProvider = vi
+        .fn()
+        .mockReturnValue({ tenantId: "auto-tenant", region: "us" });
+      const configProvider = vi.fn().mockReturnValue({ maskEmails: true });
+      manager = new SanitizerManager(undefined, {
+        contextProvider,
+        tenantConfigProvider: configProvider,
+      });
+
+      // when no explicit context is provided, should use contextProvider
+      const context = manager.getContext();
+      // retrieve sanitizer to trigger configProvider call
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const sanitizer = manager.getSanitizer(context);
+
+      expect(contextProvider).toHaveBeenCalled();
+      expect(configProvider).toHaveBeenCalledWith({
+        tenantId: "auto-tenant",
+        region: "us",
+      });
+    });
+
+    // sanitizer manager access through client
+    it("should access sanitizer manager through client", async () => {
+      // create a temporary client to test manager access
+      const tempClient = await SmartClient.initialize({
+        serviceName: "temp-manager-test",
+        environment: "node",
+        disableInstrumentation: true,
+      });
+
+      const manager1 = tempClient.getSanitizerManager();
+      const manager2 = tempClient.getSanitizerManager();
+
+      expect(manager1).toBe(manager2);
+      await SmartClient.shutdown();
+    });
+
+    // edge cases
+    it("should handle null tenantId gracefully", () => {
+      const sanitizer = manager.getSanitizer({
+        tenantId: null as unknown as string,
+      });
+      const defaultSanitizer = manager.getDefault();
+
+      expect(sanitizer).toBe(defaultSanitizer);
+    });
+
+    it("should handle missing region (undefined)", () => {
+      const configProvider = vi.fn().mockReturnValue({ maskEmails: true });
+      manager = new SanitizerManager(undefined, {
+        tenantConfigProvider: configProvider,
+      });
+
+      manager.getSanitizer({ tenantId: "t1", region: undefined });
+
+      // should use "default" region in cache key
+      expect(configProvider).toHaveBeenCalledWith({
+        tenantId: "t1",
+        region: undefined,
+      });
+    });
+
+    it("should not mutate default options when creating tenant sanitizer", () => {
+      const defaultOptions = {
+        maskPhones: true,
+        customRedactFields: ["field1"],
+      };
+      const configProvider = vi
+        .fn()
+        .mockReturnValue({ customRedactFields: ["field2"] });
+      manager = new SanitizerManager(defaultOptions, {
+        tenantConfigProvider: configProvider,
+      });
+
+      manager.getSanitizer({ tenantId: "tenant-1" });
+
+      // default options should remain unchanged
+      expect(defaultOptions.customRedactFields).toEqual(["field1"]);
+    });
+
+    it("should fallback to default sanitizer when tenant config provider throws error", () => {
+      const configProvider = vi.fn().mockImplementation(() => {
+        throw new Error("Config provider failed");
+      });
+      const consoleErrorSpy = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {
+          /* intentionally empty */
+        });
+
+      manager = new SanitizerManager(undefined, {
+        tenantConfigProvider: configProvider,
+      });
+
+      const _sanitizer = manager.getSanitizer({ tenantId: "tenant-1" });
+
+      expect(_sanitizer).toBe(manager.getDefault());
+      expect(consoleErrorSpy).toHaveBeenCalled();
+
+      consoleErrorSpy.mockRestore();
+    });
+
+    it("should clear tenant sanitizer cache", () => {
+      const configProvider = vi.fn().mockReturnValue({ maskEmails: true });
+      manager = new SanitizerManager(undefined, {
+        tenantConfigProvider: configProvider,
+      });
+
+      const sanitizer1 = manager.getSanitizer({ tenantId: "tenant-1" });
+      manager.clearTenantCache();
+      configProvider.mockClear();
+
+      const sanitizer2 = manager.getSanitizer({ tenantId: "tenant-1" });
+
+      expect(sanitizer1).not.toBe(sanitizer2);
+      expect(configProvider).toHaveBeenCalledTimes(1); // called again after cache clear
+    });
+
+    it("should use explicit context over context provider", () => {
+      const contextProvider = vi
+        .fn()
+        .mockReturnValue({ tenantId: "auto-tenant" });
+      manager = new SanitizerManager(undefined, { contextProvider });
+
+      const explicitContext = { tenantId: "explicit-tenant" };
+      const context = manager.getContext(explicitContext);
+
+      expect(context).toBe(explicitContext);
+      expect(contextProvider).not.toHaveBeenCalled();
+    });
+  });
+});

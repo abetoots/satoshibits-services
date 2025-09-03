@@ -1,0 +1,59 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+        cors:
+          # Allow CORS for browser-based telemetry from React frontend
+          allowed_origins:
+            - "http://localhost:3000"
+          allowed_headers:
+            - "*"
+
+processors:
+  batch:
+    # Batches spans and metrics for more efficient export
+    timeout: 1s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+
+  # Add service name and environment attributes
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: "demo"
+        action: upsert
+
+exporters:
+  # For debugging: prints telemetry to the collector's console
+  logging:
+    loglevel: debug
+    
+  # Exports traces to Jaeger
+  jaeger:
+    endpoint: jaeger:14250
+    tls:
+      insecure: true
+      
+  # Exposes an endpoint for Prometheus to scrape
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: demo_app
+    const_labels:
+      environment: demo
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch, resource]
+      exporters: [logging, jaeger]
+      
+    metrics:
+      receivers: [otlp] 
+      processors: [batch, resource]
+      exporters: [logging, prometheus]
+      
+  extensions: []
