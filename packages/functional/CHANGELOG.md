@@ -1,5 +1,11 @@
 # functional
 
+## 1.1.0
+
+### Minor Changes
+
+- 0c80cdd: added new utils with real world use cases
+
 ## 1.0.3
 
 ### Patch Changes
