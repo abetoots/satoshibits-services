@@ -3,12 +3,17 @@
  */
 
 // re-export everything for full access
-export * from "./result.mjs";
-export * from "./validation.mjs";
-export * from "./composition.mjs";
-export * from "./pipeline.mjs";
 export * from "./array-utils.mjs";
+export * from "./composition.mjs";
+export * from "./io.mjs";
 export * from "./object-utils.mjs";
-export * from "./predicates.mjs";
-export * from "./types.mjs";
+export * from "./option.mjs";
 export * from "./performance.mjs";
+export * from "./pipeline.mjs";
+export * from "./predicates.mjs";
+export * from "./reader.mjs";
+export * from "./reader-result.mjs";
+export * from "./result.mjs";
+export * from "./task.mjs";
+export * from "./types.mjs";
+export * from "./validation.mjs";

@@ -70,6 +70,20 @@ export type Result<T, E = string> =
   | { success: false; error: E };
 
 /**
+ * Do notation builder for Result types
+ * @internal
+ */
+export interface ResultDoBuilder<E = unknown> {
+  bind: <K extends string, T>(
+    key: K,
+    result: Result<T, E> | ((ctx: Record<string, unknown>) => Result<T, E>)
+  ) => ResultDoBuilder<E>;
+  map: <T,>(f: (ctx: Record<string, unknown>) => T) => Result<T, E>;
+  flatMap: <T,>(f: (ctx: Record<string, unknown>) => Result<T, E>) => Result<T, E>;
+  value: () => Result<Record<string, unknown>, E>;
+}
+
+/**
  * Result utility functions for working with Result types.
  * @description Provides a functional API for creating, transforming, and composing Results.
  * All functions are curried to support functional composition and partial application.
@@ -658,6 +672,294 @@ export const Result = {
           );
         }
       },
+
+  /**
+   * Maps a function returning a Result over an array and sequences the results.
+   * @description Applies a Result-returning function to each element of an array
+   * and collects all results. If any operation fails, returns the first error.
+   *
+   * @template T - The input type
+   * @template U - The output type
+   * @template E - The error type
+   * @param {function(T): Result<U, E>} f - Function that returns a Result
+   * @returns {function(T[]): Result<U[], E>} A function that traverses arrays with Results
+   *
+   * @category Combinators
+   * @example
+   * ```typescript
+   * const parseNumber = (s: string): Result<number, string> => {
+   *   const n = Number(s);
+   *   return isNaN(n) ? Result.err(`Not a number: ${s}`) : Result.ok(n);
+   * };
+   *
+   * const parseAll = Result.traverse(parseNumber);
+   * parseAll(['1', '2', '3']); // => { success: true, data: [1, 2, 3] }
+   * parseAll(['1', 'x', '3']); // => { success: false, error: 'Not a number: x' }
+   * ```
+   *
+   * @since 2025-09-18
+   */
+  traverse: <T, U, E>(f: (t: T) => Result<U, E>) => (ts: T[]): Result<U[], E> => {
+    const results: U[] = [];
+    for (const t of ts) {
+      const result = f(t);
+      if (!result.success) {
+        return result as Result<U[], E>;
+      }
+      results.push(result.data);
+    }
+    return Result.ok(results);
+  },
+
+  /**
+   * Applies a Result of a function to a Result of a value.
+   * @description Enables applying functions wrapped in Results to values wrapped
+   * in Results. If either Result is an error, returns that error. This is the
+   * applicative apply operation for Result types.
+   *
+   * @template T - The input type
+   * @template U - The output type
+   * @template E - The error type
+   * @param {Result<T, E>} resultValue - Result containing a value
+   * @returns {function(Result<function(T): U, E>): Result<U, E>} A function that applies Result functions
+   *
+   * @category Combinators
+   * @example
+   * ```typescript
+   * const add = (a: number) => (b: number) => a + b;
+   * const resultAdd = Result.ok(add);
+   * const result5 = Result.ok(5);
+   * const result3 = Result.ok(3);
+   *
+   * const sum = Result.ap(result3)(
+   *   Result.ap(result5)(
+   *     Result.map(add)(Result.ok(10))
+   *   )
+   * ); // => { success: true, data: 18 }
+   * ```
+   *
+   * @since 2025-09-18
+   */
+  ap: <T, U, E>(resultValue: Result<T, E>) => (resultFn: Result<(t: T) => U, E>): Result<U, E> => {
+    if (!resultFn.success) {
+      return resultFn as Result<U, E>;
+    }
+    if (!resultValue.success) {
+      return resultValue as Result<U, E>;
+    }
+    return Result.ok(resultFn.data(resultValue.data));
+  },
+
+  /**
+   * Maps both the success and error values of a Result.
+   * @description Transforms both channels of a Result simultaneously. Useful for
+   * normalizing both success values and errors in a single operation.
+   *
+   * @template T - The input success type
+   * @template U - The output success type
+   * @template E - The input error type
+   * @template F - The output error type
+   * @param {function(T): U} f - Function to transform the success value
+   * @param {function(E): F} g - Function to transform the error value
+   * @returns {function(Result<T, E>): Result<U, F>} A function that transforms both channels
+   *
+   * @category Transformations
+   * @example
+   * ```typescript
+   * const transform = Result.bimap(
+   *   (n: number) => n.toString(),
+   *   (e: Error) => e.message
+   * );
+   *
+   * transform(Result.ok(42)); // => { success: true, data: '42' }
+   * transform(Result.err(new Error('fail'))); // => { success: false, error: 'fail' }
+   * ```
+   *
+   * @since 2025-09-18
+   */
+  bimap: <T, U, E, F>(f: (t: T) => U, g: (e: E) => F) => (result: Result<T, E>): Result<U, F> =>
+    result.success ? Result.ok(f(result.data)) : Result.err(g(result.error)),
+
+  /**
+   * Executes a Result for its side effects, discarding the result.
+   * @description Runs a Result-returning function but preserves the original value.
+   * Useful for logging or other side effects where the result isn't needed.
+   *
+   * @template T - The type of the value
+   * @template E - The error type
+   * @param {function(T): Result<any, E>} f - Function that returns a Result (result discarded)
+   * @returns {function(Result<T, E>): Result<T, E>} A function that executes side effects
+   *
+   * @category Combinators
+   * @example
+   * ```typescript
+   * const log = (msg: string): Result<void, never> => {
+   *   console.log(msg);
+   *   return Result.ok(undefined);
+   * };
+   *
+   * const result = Result.chainFirst((n: number) => log(`Got: ${n}`))(
+   *   Result.ok(42)
+   * ); // logs "Got: 42", returns { success: true, data: 42 }
+   * ```
+   *
+   * @since 2025-09-18
+   */
+  chainFirst: <T, E>(f: (t: T) => Result<unknown, E>) => (result: Result<T, E>): Result<T, E> => {
+    if (!result.success) {
+      return result;
+    }
+    const sideEffect = f(result.data);
+    if (!sideEffect.success) {
+      return sideEffect as Result<T, E>;
+    }
+    return result;
+  },
+
+  /**
+   * Combines the results of a tuple of Results into a Result of a tuple.
+   * @description Takes multiple Results and returns a Result containing a tuple
+   * of their values. If any Result is an error, returns the first error.
+   *
+   * @template T - Tuple type of Results
+   * @param {...T} results - Results to combine
+   * @returns {Result<{ [K in keyof T]: T[K] extends Result<infer U, any> ? U : never }, T[number] extends Result<any, infer E> ? E : never>} Result of tuple
+   *
+   * @category Combinators
+   * @example
+   * ```typescript
+   * const result1 = Result.ok(1);
+   * const result2 = Result.ok('hello');
+   * const result3 = Result.ok(true);
+   *
+   * const combined = Result.sequenceT(result1, result2, result3);
+   * // => { success: true, data: [1, 'hello', true] }
+   * ```
+   *
+   * @since 2025-09-18
+   */
+  sequenceT: <T extends readonly Result<unknown, unknown>[]>(
+    ...results: T
+  ): Result<
+    { [K in keyof T]: T[K] extends Result<infer U, unknown> ? U : never },
+    T[number] extends Result<unknown, infer E> ? E : never
+  > => {
+    const values: unknown[] = [];
+    for (const result of results) {
+      if (!result.success) {
+        return result as Result<
+          { [K in keyof T]: T[K] extends Result<infer U, unknown> ? U : never },
+          T[number] extends Result<unknown, infer E> ? E : never
+        >;
+      }
+      values.push(result.data);
+    }
+    return Result.ok(values) as Result<
+      { [K in keyof T]: T[K] extends Result<infer U, unknown> ? U : never },
+      T[number] extends Result<unknown, infer E> ? E : never
+    >;
+  },
+
+  /**
+   * Combines the results of a record of Results into a Result of a record.
+   * @description Takes an object with Result values and returns a Result containing
+   * an object with the unwrapped values. If any Result is an error, returns the first error.
+   *
+   * @template R - Record type with Result values
+   * @param {R} results - Record of Results to combine
+   * @returns {Result<{ [K in keyof R]: R[K] extends Result<infer U, any> ? U : never }, R[keyof R] extends Result<any, infer E> ? E : never>} Result of record
+   *
+   * @category Combinators
+   * @example
+   * ```typescript
+   * const results = {
+   *   user: Result.ok({ name: 'Alice' }),
+   *   count: Result.ok(42),
+   *   enabled: Result.ok(true)
+   * };
+   *
+   * const combined = Result.sequenceS(results);
+   * // => { success: true, data: { user: { name: 'Alice' }, count: 42, enabled: true } }
+   * ```
+   *
+   * @since 2025-09-18
+   */
+  sequenceS: <R extends Record<string, Result<unknown, unknown>>>(
+    results: R
+  ): Result<
+    { [K in keyof R]: R[K] extends Result<infer U, unknown> ? U : never },
+    R[keyof R] extends Result<unknown, infer E> ? E : never
+  > => {
+    const keys = Object.keys(results) as (keyof R)[];
+    const values: Record<string, unknown> = {};
+    for (const key of keys) {
+      const result = results[key]!;
+      if (!result.success) {
+        return result as Result<
+          { [K in keyof R]: R[K] extends Result<infer U, unknown> ? U : never },
+          R[keyof R] extends Result<unknown, infer E> ? E : never
+        >;
+      }
+      values[key as string] = result.data;
+    }
+    return Result.ok(values) as Result<
+      { [K in keyof R]: R[K] extends Result<infer U, unknown> ? U : never },
+      R[keyof R] extends Result<unknown, infer E> ? E : never
+    >;
+  },
+
+  /**
+   * Do notation helper for Result types.
+   * @description Provides a way to write sequential Result operations in an
+   * imperative style, similar to async/await but for Result types.
+   *
+   * @template E - The error type
+   * @returns {object} Do notation builder
+   *
+   * @category Do Notation
+   * @example
+   * ```typescript
+   * const result = Result.Do<string>()
+   *   .bind('x', Result.ok(5))
+   *   .bind('y', Result.ok(3))
+   *   .map(({ x, y }) => x + y);
+   * // => { success: true, data: 8 }
+   *
+   * const withError = Result.Do<string>()
+   *   .bind('x', Result.ok(5))
+   *   .bind('y', Result.err<number, string>('error'))
+   *   .map(({ x, y }) => x + y);
+   * // => { success: false, error: 'error' }
+   * ```
+   *
+   * @since 2025-09-18
+   */
+  Do: <E = unknown,>(): ResultDoBuilder<E> => {
+    type Context = Record<string, unknown>;
+
+    const createBuilder = (context: Result<Context, E>): ResultDoBuilder<E> => ({
+      bind: <K extends string, T>(
+        key: K,
+        result: Result<T, E> | ((ctx: Context) => Result<T, E>)
+      ): ResultDoBuilder<E> => {
+        if (!context.success) {
+          return createBuilder(context);
+        }
+        const actualResult = typeof result === 'function' ? result(context.data) : result;
+        if (!actualResult.success) {
+          return createBuilder(actualResult as Result<Context, E>);
+        }
+        return createBuilder(Result.ok({ ...context.data, [key]: actualResult.data }));
+      },
+      map: <T,>(f: (ctx: Context) => T): Result<T, E> =>
+        context.success ? Result.ok(f(context.data)) : context as Result<T, E>,
+      flatMap: <T,>(f: (ctx: Context) => Result<T, E>): Result<T, E> =>
+        context.success ? f(context.data) : context as Result<T, E>,
+      value: (): Result<Context, E> => context,
+    });
+
+    return createBuilder(Result.ok({}));
+  },
 };
 
 /**

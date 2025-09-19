@@ -162,6 +162,9 @@ export const filterMap =
 export const chunk =
   <T,>(size: number) =>
   (arr: T[]): T[][] => {
+    if (size <= 0) {
+      throw new RangeError("chunk size must be greater than 0");
+    }
     const chunks: T[][] = [];
     for (let i = 0; i < arr.length; i += size) {
       chunks.push(arr.slice(i, i + size));
@@ -290,9 +293,9 @@ export const findSafe =
   (
     arr: T[],
   ): { success: true; data: T } | { success: false; error: string } => {
-    const found = arr.find(predicate);
-    if (found !== undefined) {
-      return { success: true, data: found };
+    const index = arr.findIndex(predicate);
+    if (index >= 0) {
+      return { success: true, data: arr[index] as T };
     }
     return { success: false, error: "Item not found" };
   };

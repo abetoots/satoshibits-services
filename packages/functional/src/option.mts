@@ -4,22 +4,22 @@
  * Provides a safe alternative to nullable values by wrapping them in a container type.
  * Forces explicit handling of edge cases and eliminates null pointer exceptions.
  * Inspired by functional programming languages like Haskell and Rust.
- * 
+ *
  * @example
  * ```typescript
  * import { Option, some, none, fromNullable, map, getOrElse } from './option.mts';
- * 
+ *
  * // creating options
  * const user = some({ id: '123', name: 'Alice' });
  * const notFound = none();
  * const maybeUser = fromNullable(localStorage.getItem('user'));
- * 
+ *
  * // transforming values
  * const userName = map((u: User) => u.name)(user);
- * 
+ *
  * // extracting values safely
  * const name = getOrElse(() => 'Anonymous')(userName);
- * 
+ *
  * // chaining operations
  * const greeting = pipe(
  *   fromNullable(getUserById(id)),
@@ -28,7 +28,7 @@
  *   getOrElse(() => 'Hello, stranger!')
  * );
  * ```
- * 
+ *
  * @category Core
  * @since 2025-07-03
  */
@@ -37,9 +37,9 @@
  * Option type representing a value that may or may not exist.
  * @description A discriminated union type that forces explicit handling of null/undefined cases.
  * An Option is either Some<T> (containing a value) or None (representing absence).
- * 
+ *
  * @template T - The type of the value when present
- * 
+ *
  * @category Core Types
  * @since 2025-07-03
  */
@@ -48,64 +48,64 @@ export type Option<T> = Some<T> | None;
 /**
  * Represents a value that exists.
  * @description The Some variant of Option, containing a non-null value.
- * 
+ *
  * @template T - The type of the contained value
  * @property {"Some"} _tag - Discriminant for pattern matching
  * @property {T} value - The contained value
- * 
+ *
  * @category Core Types
  * @since 2025-07-03
  */
 export interface Some<T> {
-  readonly _tag: 'Some';
+  readonly _tag: "Some";
   readonly value: T;
 }
 
 /**
  * Represents the absence of a value.
  * @description The None variant of Option, representing no value.
- * 
+ *
  * @property {"None"} _tag - Discriminant for pattern matching
- * 
+ *
  * @category Core Types
  * @since 2025-07-03
  */
 export interface None {
-  readonly _tag: 'None';
+  readonly _tag: "None";
 }
 
 /**
  * Creates a Some variant containing the provided value.
  * @description Wraps a value in the Some variant of Option.
  * Use this when you have a value that definitely exists.
- * 
+ *
  * @template T - The type of the value to wrap
  * @param {T} value - The value to wrap in Some
  * @returns {Option<T>} A Some variant containing the value
- * 
+ *
  * @category Constructors
  * @example
  * const user = some({ id: '123', name: 'Alice' });
  * // => { _tag: 'Some', value: { id: '123', name: 'Alice' } }
- * 
+ *
  * @example
  * // Wrapping a found value
  * const found = database.find(id);
  * const result = found ? some(found) : none();
- * 
+ *
  * @example
  * // Creating from non-null assertion
  * const config = getConfig();
  * if (config.apiKey) {
  *   return some(config.apiKey);
  * }
- * 
+ *
  * @see none - Create an empty Option
  * @see fromNullable - Create Option from nullable value
  * @since 2025-07-03
  */
 export const some = <T,>(value: T): Option<T> => ({
-  _tag: 'Some',
+  _tag: "Some",
   value,
 });
 
@@ -113,30 +113,30 @@ export const some = <T,>(value: T): Option<T> => ({
  * Creates a None variant representing no value.
  * @description Creates the None variant of Option, representing absence of value.
  * Use this when you want to explicitly represent "no value" in a type-safe way.
- * 
+ *
  * @returns {Option<never>} A None variant
- * 
+ *
  * @category Constructors
  * @example
  * const notFound = none();
  * // => { _tag: 'None' }
- * 
+ *
  * @example
  * // Representing search miss
  * const user = users.find(u => u.id === targetId);
  * return user ? some(user) : none();
- * 
+ *
  * @example
  * // Empty configuration
  * const apiKey = process.env.API_KEY;
  * return apiKey ? some(apiKey) : none();
- * 
+ *
  * @see some - Create an Option with a value
  * @see fromNullable - Create Option from nullable value
  * @since 2025-07-03
  */
 export const none = (): Option<never> => ({
-  _tag: 'None',
+  _tag: "None",
 });
 
 /**
@@ -144,24 +144,24 @@ export const none = (): Option<never> => ({
  * @description Converts a nullable value into an Option.
  * Returns Some if the value is not null/undefined, None otherwise.
  * This is the primary way to bridge nullable APIs with Option.
- * 
+ *
  * @template T - The type of the non-null value
  * @param {T | null | undefined} value - The nullable value to convert
  * @returns {Option<T>} Some if value exists, None otherwise
- * 
+ *
  * @category Constructors
  * @example
  * const maybeUser = fromNullable(localStorage.getItem('user'));
  * // => Some(userData) if exists, None if null
- * 
+ *
  * @example
  * // Safe property access
  * const email = fromNullable(user?.contact?.email);
- * 
+ *
  * @example
  * // Array element access
  * const firstItem = fromNullable(items[0]);
- * 
+ *
  * @see some - Wrap a non-null value
  * @see none - Create an empty Option
  * @since 2025-07-03
@@ -172,19 +172,19 @@ export const fromNullable = <T,>(value: T | null | undefined): Option<T> =>
 /**
  * Creates an Option from a predicate function.
  * Returns Some if the predicate is true, None otherwise.
- * 
+ *
  * @category Constructors
  * @example
  * const positive = Option.fromPredicate((n: number) => n > 0);
  * positive(5); // => Some(5)
  * positive(-1); // => None
- * 
+ *
  * @example
  * // Validation wrapper
- * const validEmail = Option.fromPredicate((s: string) => 
+ * const validEmail = Option.fromPredicate((s: string) =>
  *   /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)
  * );
- * 
+ *
  * @example
  * // Range check
  * const inRange = Option.fromPredicate((n: number) => n >= 0 && n <= 100);
@@ -196,18 +196,18 @@ export const fromPredicate =
 
 /**
  * Type guard to check if an Option is Some.
- * 
+ *
  * @category Type Guards
  * @example
  * const opt = Option.fromNullable(getValue());
  * if (Option.isSome(opt)) {
  *   console.log(opt.value); // TypeScript knows opt.value exists
  * }
- * 
+ *
  * @example
  * // Filtering array of options
  * const values = options.filter(Option.isSome).map(opt => opt.value);
- * 
+ *
  * @example
  * // Early return pattern
  * if (!Option.isSome(result)) {
@@ -216,24 +216,24 @@ export const fromPredicate =
  * return processValue(result.value);
  */
 export const isSome = <T,>(option: Option<T>): option is Some<T> =>
-  option._tag === 'Some';
+  option._tag === "Some";
 
 /**
  * Type guard to check if an Option is None.
- * 
+ *
  * @category Type Guards
  * @example
  * const user = findUser(id);
  * if (Option.isNone(user)) {
  *   throw new Error('User not found');
  * }
- * 
+ *
  * @example
  * // Conditional rendering
  * if (Option.isNone(data)) {
  *   return <LoadingSpinner />;
  * }
- * 
+ *
  * @example
  * // Validation check
  * const validated = validate(input);
@@ -242,17 +242,17 @@ export const isSome = <T,>(option: Option<T>): option is Some<T> =>
  * }
  */
 export const isNone = <T,>(option: Option<T>): option is None =>
-  option._tag === 'None';
+  option._tag === "None";
 
 /**
  * Maps a function over the value in Some, does nothing for None.
- * 
+ *
  * @category Transformations
  * @example
  * const doubled = Option.map((n: number) => n * 2);
  * doubled(Option.some(5)); // => Some(10)
  * doubled(Option.none()); // => None
- * 
+ *
  * @example
  * // Transform user data
  * const userName = pipe(
@@ -260,7 +260,7 @@ export const isNone = <T,>(option: Option<T>): option is None =>
  *   Option.map(user => user.name),
  *   Option.map(name => name.toUpperCase())
  * );
- * 
+ *
  * @example
  * // Parse and transform
  * const parsed = pipe(
@@ -277,23 +277,23 @@ export const map =
 /**
  * FlatMaps a function over the value in Some, does nothing for None.
  * Also known as chain or bind in other libraries.
- * 
+ *
  * @category Transformations
  * @example
- * const safeDivide = (n: number) => 
+ * const safeDivide = (n: number) =>
  *   n === 0 ? Option.none() : Option.some(10 / n);
- * 
+ *
  * const result = pipe(
  *   Option.some(5),
  *   Option.flatMap(safeDivide)
  * ); // => Some(2)
- * 
+ *
  * @example
  * // Chaining optional operations
  * const getManager = (employee: Employee) =>
  *   Option.fromNullable(employee.managerId)
  *     .pipe(Option.flatMap(id => findEmployee(id)));
- * 
+ *
  * @example
  * // Validation chain
  * const processUser = pipe(
@@ -309,7 +309,7 @@ export const flatMap =
 
 /**
  * Alias for flatMap - monadic bind operation.
- * 
+ *
  * @category Transformations
  * @see flatMap
  */
@@ -317,11 +317,11 @@ export const chain = flatMap;
 
 /**
  * Returns the value if Some, otherwise returns the provided default.
- * 
+ *
  * @category Extractors
  * @example
  * const value = Option.getOrElse(() => 'default')(maybeValue);
- * 
+ *
  * @example
  * // Configuration with defaults
  * const port = pipe(
@@ -329,7 +329,7 @@ export const chain = flatMap;
  *   Option.map(parseInt),
  *   Option.getOrElse(() => 3000)
  * );
- * 
+ *
  * @example
  * // User preferences
  * const theme = pipe(
@@ -345,13 +345,13 @@ export const getOrElse =
 /**
  * Returns the first Some option, or None if both are None.
  * Useful for fallback chains.
- * 
+ *
  * @category Combinations
  * @example
  * const config = Option.orElse(
  *   () => Option.fromNullable(process.env.API_KEY)
  * )(Option.fromNullable(config.apiKey));
- * 
+ *
  * @example
  * // Multiple fallbacks
  * const findUser = (id: string) => pipe(
@@ -359,7 +359,7 @@ export const getOrElse =
  *   Option.orElse(() => findInDatabase(id)),
  *   Option.orElse(() => findInArchive(id))
  * );
- * 
+ *
  * @example
  * // Try alternative parsing
  * const parsed = pipe(
@@ -376,26 +376,26 @@ export const orElse =
  * Filters the value in Some based on a predicate.
  * Returns None if the predicate is false or if already None.
  * Supports type guard predicates for type refinement.
- * 
+ *
  * @category Refinements
  * @example
  * const positive = Option.filter((n: number) => n > 0);
  * positive(Option.some(5)); // => Some(5)
  * positive(Option.some(-1)); // => None
- * 
+ *
  * @example
  * // Type narrowing with type guards
  * const maybeString: Option<string | number> = Option.some(123);
  * const isString = (v: unknown): v is string => typeof v === 'string';
  * const onlyString: Option<string> = pipe(maybeString, Option.filter(isString));
- * 
+ *
  * @example
  * // User authorization
  * const authorizedUser = pipe(
  *   findUser(id),
  *   Option.filter(user => user.role === 'admin')
  * );
- * 
+ *
  * @example
  * // Valid data filtering
  * const validData = pipe(
@@ -405,10 +405,10 @@ export const orElse =
  * );
  */
 export function filter<T, S extends T>(
-  predicate: (value: T) => value is S
+  predicate: (value: T) => value is S,
 ): (option: Option<T>) => Option<S>;
 export function filter<T>(
-  predicate: (value: T) => boolean
+  predicate: (value: T) => boolean,
 ): (option: Option<T>) => Option<T>;
 export function filter<T>(predicate: (value: T) => boolean) {
   return (option: Option<T>): Option<T> =>
@@ -418,25 +418,25 @@ export function filter<T>(predicate: (value: T) => boolean) {
 /**
  * Pattern matching for Option types.
  * Provides exhaustive handling of both Some and None cases.
- * 
+ *
  * @category Pattern Matching
  * @example
  * const message = Option.match({
  *   some: (user) => `Hello, ${user.name}!`,
  *   none: () => 'Hello, guest!'
  * })(maybeUser);
- * 
+ *
  * @example
  * // React component rendering
  * const UserProfile = ({ userId }: Props) => {
  *   const user = useUser(userId);
- *   
+ *
  *   return Option.match({
  *     some: (u) => <Profile user={u} />,
  *     none: () => <NotFound />
  *   })(user);
  * };
- * 
+ *
  * @example
  * // API response handling
  * const response = await Option.match({
@@ -445,22 +445,19 @@ export function filter<T>(predicate: (value: T) => boolean) {
  * })(existingData);
  */
 export const match =
-  <T, A, B>(patterns: {
-    some: (value: T) => A;
-    none: () => B;
-  }) =>
+  <T, A, B>(patterns: { some: (value: T) => A; none: () => B }) =>
   (option: Option<T>): A | B =>
     isSome(option) ? patterns.some(option.value) : patterns.none();
 
 /**
  * Converts an Option to a nullable value.
  * Some(value) becomes value, None becomes null.
- * 
+ *
  * @category Conversions
  * @example
  * const value = Option.toNullable(maybeValue);
  * localStorage.setItem('key', value ?? '');
- * 
+ *
  * @example
  * // Database update
  * const update = {
@@ -468,7 +465,7 @@ export const match =
  *   email: Option.toNullable(maybeEmail),
  *   phone: Option.toNullable(maybePhone)
  * };
- * 
+ *
  * @example
  * // JSON serialization
  * const data = {
@@ -482,14 +479,14 @@ export const toNullable = <T,>(option: Option<T>): T | null =>
 /**
  * Converts an Option to undefined if None.
  * Some(value) becomes value, None becomes undefined.
- * 
+ *
  * @category Conversions
  * @example
  * const params = {
  *   limit: 10,
  *   offset: Option.toUndefined(maybeOffset)
  * };
- * 
+ *
  * @example
  * // Optional chaining alternative
  * const city = Option.toUndefined(
@@ -502,19 +499,19 @@ export const toUndefined = <T,>(option: Option<T>): T | undefined =>
 /**
  * Creates an Option from a function that might throw an error.
  * Returns Some with the result if the function succeeds, None if it throws.
- * 
+ *
  * @category Constructors
  * @example
  * const safeParse = (json: string) => Option.tryCatch(() => JSON.parse(json));
  * safeParse('{"a":1}'); // => Some({ a: 1 })
  * safeParse('invalid json'); // => None
- * 
+ *
  * @example
  * // Safe file parsing
- * const config = Option.tryCatch(() => 
+ * const config = Option.tryCatch(() =>
  *   JSON.parse(fs.readFileSync('config.json', 'utf8'))
  * );
- * 
+ *
  * @example
  * // Safe URL parsing
  * const url = Option.tryCatch(() => new URL(input));
@@ -530,32 +527,32 @@ export const tryCatch = <T,>(fn: () => T): Option<T> => {
 /**
  * Executes a side-effecting function on the value in Some.
  * Returns the original Option unchanged.
- * 
+ *
  * @category Side Effects
  * @example
  * const logValue = pipe(
  *   Option.some(42),
- *   Option.tap(value => console.log('Found value:', value))
+ *   Option.tapOption(value => console.log('Found value:', value))
  * ); // logs "Found value: 42" and returns Some(42)
- * 
+ *
  * @example
  * // Debug logging in a chain
  * const result = pipe(
  *   getUserInput(),
- *   Option.tap(input => console.log('Raw input:', input)),
+ *   Option.tapOption(input => console.log('Raw input:', input)),
  *   Option.map(normalize),
- *   Option.tap(normalized => console.log('Normalized:', normalized)),
+ *   Option.tapOption(normalized => console.log('Normalized:', normalized)),
  *   Option.filter(isValid)
  * );
- * 
+ *
  * @example
  * // Side effects like analytics
  * const trackEvent = pipe(
  *   findUser(id),
- *   Option.tap(user => analytics.track('user.found', { id: user.id }))
+ *   Option.tapOption(user => analytics.track('user.found', { id: user.id }))
  * );
  */
-export const tap =
+export const tapOption =
   <T,>(fn: (value: T) => void) =>
   (option: Option<T>): Option<T> => {
     if (isSome(option)) {
@@ -565,8 +562,335 @@ export const tap =
   };
 
 /**
+ * Combines two Options using a binary function.
+ * Returns None if either Option is None.
+ *
+ * @category Combinations
+ * @example
+ * const add = (a: number, b: number) => a + b;
+ * const sum = lift2(add)(Option.some(5), Option.some(3));
+ * // => Some(8)
+ *
+ * @example
+ * // Form validation
+ * const createUser = (name: string, email: string) => ({ name, email });
+ * const validUser = lift2(createUser)(
+ *   validateName(input.name),
+ *   validateEmail(input.email)
+ * );
+ *
+ * @example
+ * // Coordinate operations
+ * const distance = (x: number, y: number) => Math.sqrt(x * x + y * y);
+ * const result = lift2(distance)(parseX(input), parseY(input));
+ */
+export const lift2 =
+  <A, B, C>(fn: (a: A, b: B) => C) =>
+  (optionA: Option<A>, optionB: Option<B>): Option<C> =>
+    isSome(optionA) && isSome(optionB)
+      ? some(fn(optionA.value, optionB.value))
+      : none();
+
+/**
+ * Sequences an array of Options into an Option of array.
+ * Returns Some with all values if all are Some, None if any is None.
+ *
+ * @category Combinations
+ * @example
+ * const results = sequenceOption([
+ *   Option.some(1),
+ *   Option.some(2),
+ *   Option.some(3)
+ * ]);
+ * // => Some([1, 2, 3])
+ *
+ * @example
+ * // Parse multiple values
+ * const numbers = sequenceOption(
+ *   inputs.map(input => parseNumber(input))
+ * );
+ *
+ * @example
+ * // Validate all fields
+ * const validatedFields = sequenceOption([
+ *   validateField('name', data.name),
+ *   validateField('email', data.email),
+ *   validateField('age', data.age)
+ * ]);
+ */
+export const sequenceOption = <T,>(options: Option<T>[]): Option<T[]> => {
+  const results: T[] = [];
+  for (const option of options) {
+    if (isNone(option)) {
+      return none();
+    }
+    results.push(option.value);
+  }
+  return some(results);
+};
+
+/**
+ * Sequences a struct of Options into an Option of a struct.
+ * Returns Some with the struct of all values if all are Some, None if any is None.
+ *
+ * @category Combinations
+ * @example
+ * const result = sequenceS({
+ *   a: Option.some(1),
+ *   b: Option.some('hello')
+ * });
+ * // => Some({ a: 1, b: 'hello' })
+ *
+ * @example
+ * // Form validation
+ * const validForm = sequenceS({
+ *   name: validateName(input.name),
+ *   email: validateEmail(input.email),
+ *   age: validateAge(input.age)
+ * });
+ *
+ * @example
+ * // Configuration validation
+ * const config = sequenceS({
+ *   apiKey: Option.fromNullable(process.env.API_KEY),
+ *   port: Option.tryCatch(() => parseInt(process.env.PORT!)),
+ *   debug: Option.fromNullable(process.env.DEBUG).pipe(Option.map(v => v === 'true'))
+ * });
+ */
+export const sequenceS = <T extends Record<string, Option<unknown>>>(
+  struct: T,
+): Option<{ [K in keyof T]: T[K] extends Option<infer U> ? U : never }> => {
+  const result: Record<string, unknown> = {};
+  for (const key in struct) {
+    const option = struct[key];
+    if (option && isSome(option)) {
+      result[key] = option.value;
+    } else {
+      return none();
+    }
+  }
+  return some(
+    result as { [K in keyof T]: T[K] extends Option<infer U> ? U : never },
+  );
+};
+
+/**
+ * Executes an Option for its side effects, discarding the result.
+ * @description Runs an Option-returning function but preserves the original value.
+ * Useful for logging or other side effects where the result isn't needed.
+ *
+ * @template A - The type of the value
+ * @param {function(A): Option<unknown>} f - Function that returns an Option (result discarded)
+ * @returns {function(Option<A>): Option<A>} A function that executes side effects
+ *
+ * @category Combinators
+ * @example
+ * const log = (msg: string): Option<void> => {
+ *   console.log(msg);
+ *   return Option.some(undefined);
+ * };
+ *
+ * const result = Option.chainFirst((n: number) => log(`Got: ${n}`))(
+ *   Option.some(42)
+ * ); // logs "Got: 42", returns Some(42)
+ *
+ * @since 2025-09-18
+ */
+export const chainFirst =
+  <A,>(f: (a: A) => Option<unknown>) =>
+  (option: Option<A>): Option<A> => {
+    if (isNone(option)) {
+      return option;
+    }
+    const sideEffect = f(option.value);
+    if (isNone(sideEffect)) {
+      return none();
+    }
+    return option;
+  };
+
+/**
+ * Combines Options in a tuple into an Option of a tuple.
+ * @description Takes multiple Options and returns an Option containing a tuple
+ * of their values. Returns None if any Option is None.
+ *
+ * @template T - Tuple type of Options
+ * @param {...T} options - Options to combine
+ * @returns {Option<{ [K in keyof T]: T[K] extends Option<infer U> ? U : never }>} Option of tuple
+ *
+ * @category Combinators
+ * @example
+ * const option1 = Option.some(1);
+ * const option2 = Option.some('hello');
+ * const option3 = Option.some(true);
+ *
+ * const combined = Option.sequenceT(option1, option2, option3);
+ * // => Some([1, 'hello', true])
+ *
+ * @since 2025-09-18
+ */
+export const sequenceT = <T extends readonly Option<unknown>[]>(
+  ...options: T
+): Option<{ [K in keyof T]: T[K] extends Option<infer U> ? U : never }> => {
+  const values: unknown[] = [];
+  for (const option of options) {
+    if (isNone(option)) {
+      return none();
+    }
+    values.push(option.value);
+  }
+  return some(
+    values as { [K in keyof T]: T[K] extends Option<infer U> ? U : never },
+  );
+};
+
+/**
+ * Maps a function returning an Option over an array and sequences the results.
+ * @description Applies an Option-returning function to each element of an array
+ * and collects all results. If any operation returns None, returns None.
+ *
+ * @template T - The input type
+ * @template U - The output type
+ * @param {function(T): Option<U>} f - Function that returns an Option
+ * @returns {function(T[]): Option<U[]>} A function that traverses arrays with Options
+ *
+ * @category Combinators
+ * @example
+ * const parseNumber = (s: string): Option<number> => {
+ *   const n = Number(s);
+ *   return isNaN(n) ? Option.none() : Option.some(n);
+ * };
+ *
+ * const parseAll = Option.traverse(parseNumber);
+ * parseAll(['1', '2', '3']); // => Some([1, 2, 3])
+ * parseAll(['1', 'x', '3']); // => None
+ *
+ * @since 2025-09-18
+ */
+export const traverse =
+  <T, U>(f: (t: T) => Option<U>) =>
+  (ts: T[]): Option<U[]> => {
+    const results: U[] = [];
+    for (const t of ts) {
+      const option = f(t);
+      if (isNone(option)) {
+        return none();
+      }
+      results.push(option.value);
+    }
+    return some(results);
+  };
+
+/**
+ * Applies an Option of a function to an Option of a value.
+ * @description Enables applying functions wrapped in Options to values wrapped
+ * in Options. If either Option is None, returns None. This is the
+ * applicative apply operation for Option types.
+ *
+ * @template A - The input type
+ * @template B - The output type
+ * @param {Option<A>} optionValue - Option containing a value
+ * @returns {function(Option<function(A): B>): Option<B>} A function that applies Option functions
+ *
+ * @category Combinators
+ * @example
+ * const add = (a: number) => (b: number) => a + b;
+ * const optionAdd = Option.some(add);
+ * const option5 = Option.some(5);
+ * const option3 = Option.some(3);
+ *
+ * const sum = Option.ap(option3)(
+ *   Option.ap(option5)(
+ *     Option.map(add)(Option.some(10))
+ *   )
+ * ); // => Some(18)
+ *
+ * @since 2025-09-18
+ */
+export const ap =
+  <A, B>(optionValue: Option<A>) =>
+  (optionFn: Option<(a: A) => B>): Option<B> => {
+    if (isNone(optionFn) || isNone(optionValue)) {
+      return none();
+    }
+    return some(optionFn.value(optionValue.value));
+  };
+
+type Context = Record<string, unknown>;
+
+interface Builder {
+  bind: <K extends string, T>(
+    key: K,
+    option: Option<T> | ((ctx: Context) => Option<T>),
+  ) => Builder;
+  map: <T>(f: (ctx: Context) => T) => Option<T>;
+  flatMap: <T>(f: (ctx: Context) => Option<T>) => Option<T>;
+  value: () => Option<Context>;
+}
+/**
+ * Do notation helper for Option types.
+ * @description Provides a way to write sequential Option operations in an
+ * imperative style, similar to async/await but for Option types.
+ *
+ * @returns {object} Do notation builder
+ *
+ * @category Do Notation
+ * @example
+ * const result = Option.Do()
+ *   .bind('x', Option.some(5))
+ *   .bind('y', Option.some(3))
+ *   .map(({ x, y }) => x + y);
+ * // => Some(8)
+ *
+ * @example
+ * const withNone = Option.Do()
+ *   .bind('x', Option.some(5))
+ *   .bind('y', Option.none())
+ *   .map(({ x, y }) => x + y);
+ * // => None
+ *
+ * @example
+ * // With dependent bindings
+ * const calculation = Option.Do()
+ *   .bind('a', Option.some(10))
+ *   .bind('b', ({ a }) => a > 5 ? Option.some(a * 2) : Option.none())
+ *   .bind('c', ({ b }) => Option.some(b + 1))
+ *   .map(({ a, b, c }) => ({ original: a, doubled: b, final: c }));
+ * // => Some({ original: 10, doubled: 20, final: 21 })
+ *
+ * @since 2025-09-18
+ */
+export const Do = () => {
+  const createBuilder = (context: Option<Context>): Builder => ({
+    bind: <K extends string, T>(
+      key: K,
+      option: Option<T> | ((ctx: Context) => Option<T>),
+    ): Builder => {
+      if (isNone(context)) {
+        return createBuilder(context);
+      }
+      const actualOption =
+        typeof option === "function" ? option(context.value) : option;
+      if (isNone(actualOption)) {
+        return createBuilder(none());
+      }
+      return createBuilder(
+        some({ ...context.value, [key]: actualOption.value }),
+      );
+    },
+    map: <T,>(f: (ctx: Context) => T): Option<T> =>
+      isSome(context) ? some(f(context.value)) : none(),
+    flatMap: <T,>(f: (ctx: Context) => Option<T>): Option<T> =>
+      isSome(context) ? f(context.value) : none(),
+    value: (): Option<Context> => context,
+  });
+
+  return createBuilder(some({}));
+};
+
+/**
  * Namespace containing all Option utilities.
- * 
+ *
  * @category Namespace
  */
 export const Option = {
@@ -583,142 +907,15 @@ export const Option = {
   getOrElse,
   orElse,
   filter,
-  tap,
+  tapOption,
   match,
   toNullable,
   toUndefined,
+  ap,
+  chainFirst,
+  sequenceT,
+  traverse,
+  sequenceOption,
+  sequenceS,
+  Do,
 } as const;
-
-/**
- * Combines two Options using a binary function.
- * Returns None if either Option is None.
- * 
- * @category Combinations
- * @example
- * const add = (a: number, b: number) => a + b;
- * const sum = lift2(add)(Option.some(5), Option.some(3));
- * // => Some(8)
- * 
- * @example
- * // Form validation
- * const createUser = (name: string, email: string) => ({ name, email });
- * const validUser = lift2(createUser)(
- *   validateName(input.name),
- *   validateEmail(input.email)
- * );
- * 
- * @example
- * // Coordinate operations
- * const distance = (x: number, y: number) => Math.sqrt(x * x + y * y);
- * const result = lift2(distance)(parseX(input), parseY(input));
- */
-export const lift2 =
-  <A, B, C>(fn: (a: A, b: B) => C) =>
-  (optionA: Option<A>, optionB: Option<B>): Option<C> =>
-    isSome(optionA) && isSome(optionB)
-      ? some(fn(optionA.value, optionB.value))
-      : none();
-
-/**
- * Sequences an array of Options into an Option of array.
- * Returns Some with all values if all are Some, None if any is None.
- * 
- * @category Combinations
- * @example
- * const results = sequence([
- *   Option.some(1),
- *   Option.some(2),
- *   Option.some(3)
- * ]);
- * // => Some([1, 2, 3])
- * 
- * @example
- * // Parse multiple values
- * const numbers = sequence(
- *   inputs.map(input => parseNumber(input))
- * );
- * 
- * @example
- * // Validate all fields
- * const validatedFields = sequence([
- *   validateField('name', data.name),
- *   validateField('email', data.email),
- *   validateField('age', data.age)
- * ]);
- */
-export const sequence = <T,>(options: Option<T>[]): Option<T[]> => {
-  const results: T[] = [];
-  for (const option of options) {
-    if (isNone(option)) {
-      return none();
-    }
-    results.push(option.value);
-  }
-  return some(results);
-};
-
-/**
- * Applies a function wrapped in an Option to a value wrapped in an Option.
- * 
- * @category Apply
- * @example
- * const addOne = (n: number) => n + 1;
- * const result = ap(Option.some(addOne))(Option.some(5));
- * // => Some(6)
- * 
- * @example
- * // Partial application with options
- * const add = (a: number) => (b: number) => a + b;
- * const maybeAdd5 = Option.map(add)(Option.some(5));
- * const result = ap(maybeAdd5)(Option.some(3));
- * // => Some(8)
- */
-export const ap =
-  <A, B>(optionFn: Option<(a: A) => B>) =>
-  (optionA: Option<A>): Option<B> =>
-    isSome(optionFn) && isSome(optionA)
-      ? some(optionFn.value(optionA.value))
-      : none();
-
-/**
- * Sequences a struct of Options into an Option of a struct.
- * Returns Some with the struct of all values if all are Some, None if any is None.
- * 
- * @category Combinations
- * @example
- * const result = sequenceS({
- *   a: Option.some(1),
- *   b: Option.some('hello')
- * });
- * // => Some({ a: 1, b: 'hello' })
- * 
- * @example
- * // Form validation
- * const validForm = sequenceS({
- *   name: validateName(input.name),
- *   email: validateEmail(input.email),
- *   age: validateAge(input.age)
- * });
- * 
- * @example
- * // Configuration validation
- * const config = sequenceS({
- *   apiKey: Option.fromNullable(process.env.API_KEY),
- *   port: Option.tryCatch(() => parseInt(process.env.PORT!)),
- *   debug: Option.fromNullable(process.env.DEBUG).pipe(Option.map(v => v === 'true'))
- * });
- */
-export const sequenceS = <T extends Record<string, Option<unknown>>,>(
-  struct: T
-): Option<{ [K in keyof T]: T[K] extends Option<infer U> ? U : never }> => {
-  const result: Record<string, unknown> = {};
-  for (const key in struct) {
-    const option = struct[key];
-    if (option && isSome(option)) {
-      result[key] = option.value;
-    } else {
-      return none();
-    }
-  }
-  return some(result as { [K in keyof T]: T[K] extends Option<infer U> ? U : never });
-};

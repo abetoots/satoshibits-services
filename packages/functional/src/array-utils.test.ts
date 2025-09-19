@@ -102,6 +102,13 @@ describe('array-utils', () => {
       expect(chunks).toEqual([[1, 2], [3, 4], [5]]);
     });
 
+    it('should throw when size is zero or negative', () => {
+      expect(() => chunk(0)([1, 2, 3])).toThrowError(
+        new RangeError('chunk size must be greater than 0')
+      );
+      expect(() => chunk(-1)([1, 2, 3])).toThrowError(RangeError);
+    });
+
     it('should handle arrays that divide evenly', () => {
       const chunks = chunk(3)([1, 2, 3, 4, 5, 6]);
       expect(chunks).toEqual([[1, 2, 3], [4, 5, 6]]);
@@ -229,6 +236,16 @@ describe('array-utils', () => {
     it('should handle falsy values correctly', () => {
       const result = findSafe((n: number | null | undefined) => n === 0)([null, undefined, 0, 1, 2]);
       expect(result).toEqual({ success: true, data: 0 });
+    });
+
+    it('should treat undefined value as found when present', () => {
+      const result = findSafe((value: string | undefined) => value === undefined)([
+        'a',
+        undefined,
+        'b'
+      ]);
+
+      expect(result).toEqual({ success: true, data: undefined });
     });
   });
 

@@ -376,28 +376,33 @@ export const timingUtils = {
    */
   measureTime: <T extends unknown[], R>(
     fn: (...args: T) => R,
-    onComplete?: (duration: number, result: Awaited<R>) => void
+    onComplete?: (duration: number, result: Awaited<R>) => void,
+    onError?: (duration: number, error: unknown) => void
   ): ((...args: T) => R) => {
     return (...args: T): R => {
       const start = performance.now();
-      const result = fn(...args);
-      
-      if (onComplete) {
+      try {
+        const result = fn(...args);
+
         if (result instanceof Promise) {
-          // Handle async functions
-          const promiseWithTiming = (result as Promise<unknown>).then((value) => {
-            const totalDuration = performance.now() - start;
-            onComplete(totalDuration, value as Awaited<R>);
-            return value;
-          });
-          return promiseWithTiming as R;
+          const promiseWithTiming = (result as Promise<Awaited<R>>) 
+            .then((value) => {
+              onComplete?.(performance.now() - start, value);
+              return value;
+            })
+            .catch((error) => {
+              onError?.(performance.now() - start, error);
+              throw error;
+            });
+          return promiseWithTiming as unknown as R;
         }
-        // Handle sync functions
-        const duration = performance.now() - start;
-        onComplete(duration, result as Awaited<R>);
+
+        onComplete?.(performance.now() - start, result as Awaited<R>);
+        return result;
+      } catch (error) {
+        onError?.(performance.now() - start, error);
+        throw error;
       }
-      
-      return result;
     };
   },
 };

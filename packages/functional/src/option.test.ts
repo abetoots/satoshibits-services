@@ -17,14 +17,14 @@ import {
   flatMap,
   chain,
   filter,
-  tap,
+  tapOption as tap,
   getOrElse,
   orElse,
   match,
   toNullable,
   toUndefined,
   lift2,
-  sequence,
+  sequenceOption as sequence,
   ap,
   sequenceS,
 } from './option.mjs';
@@ -85,6 +85,9 @@ describe('Option Type', () => {
         expect(fromNullable(0)).toEqual(some(0));
         expect(fromNullable('')).toEqual(some(''));
         expect(fromNullable(false)).toEqual(some(false));
+        expect(fromNullable(NaN)).toEqual(some(NaN));
+        expect(fromNullable([])).toEqual(some([]));
+        expect(fromNullable({})).toEqual(some({}));
       });
 
       it('should return None for null or undefined', () => {
@@ -513,22 +516,24 @@ describe('Option Type', () => {
     describe('ap', () => {
       it('should apply Some function to Some value', () => {
         const addOne = (n: number) => n + 1;
-        expect(ap(some(addOne))(some(5))).toEqual(some(6));
+        expect(ap(some(5))(some(addOne))).toEqual(some(6));
       });
 
       it('should return None if function is None', () => {
-        expect(ap(none())(some(5))).toEqual(none());
+        expect(ap(some(5))(none())).toEqual(none());
       });
 
       it('should return None if value is None', () => {
         const addOne = (n: number) => n + 1;
-        expect(ap(some(addOne))(none())).toEqual(none());
+        expect(ap(none())(some(addOne))).toEqual(none());
       });
 
       it('should work with curried functions', () => {
         const add = (a: number) => (b: number) => a + b;
-        const maybeAdd5 = map(add)(some(5));
-        expect(ap(maybeAdd5)(some(3))).toEqual(some(8));
+        const maybeAdd = some(add);
+        const applied1 = ap(some(5))(maybeAdd);
+        const result = ap(some(3))(applied1 as Option<(b: number) => number>);
+        expect(result).toEqual(some(8));
       });
     });
 
@@ -600,7 +605,7 @@ describe('Option Type', () => {
       expect(Option.flatMap).toBe(flatMap);
       expect(Option.chain).toBe(chain);
       expect(Option.filter).toBe(filter);
-      expect(Option.tap).toBe(tap);
+      expect(Option.tapOption).toBe(tap);
       expect(Option.getOrElse).toBe(getOrElse);
       expect(Option.orElse).toBe(orElse);
       expect(Option.match).toBe(match);
