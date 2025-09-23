@@ -5,6 +5,18 @@
  * Forces explicit handling of edge cases and eliminates null pointer exceptions.
  * Inspired by functional programming languages like Haskell and Rust.
  *
+ * ### For Dummies
+ * - An `Option` is either "Some value" or "None"—no surprises, no `null` pitfalls.
+ * - You poke at it with helper functions instead of checking for `null` everywhere.
+ * - When you finally need a real value, you decide how to handle the empty case explicitly.
+ *
+ * ### Decision Tree
+ * - Have a definite value? Wrap it with `Option.some(value)`.
+ * - Unsure if a value exists? Use `Option.fromNullable(maybeValue)`.
+ * - Transforming without changing emptiness? Use `Option.map(fn)`.
+ * - Need the next step to also be optional? Use `Option.flatMap(fnReturningOption)`.
+ * - Want a default? Call `Option.getOrElse(() => fallback)(option)` at the edge.
+ *
  * @example
  * ```typescript
  * import { Option, some, none, fromNullable, map, getOrElse } from './option.mts';
@@ -291,8 +303,10 @@ export const map =
  * @example
  * // Chaining optional operations
  * const getManager = (employee: Employee) =>
- *   Option.fromNullable(employee.managerId)
- *     .pipe(Option.flatMap(id => findEmployee(id)));
+ *   pipe(
+ *     Option.fromNullable(employee.managerId),
+ *     Option.flatMap(id => findEmployee(id)),
+ *   );
  *
  * @example
  * // Validation chain
@@ -654,7 +668,10 @@ export const sequenceOption = <T,>(options: Option<T>[]): Option<T[]> => {
  * const config = sequenceS({
  *   apiKey: Option.fromNullable(process.env.API_KEY),
  *   port: Option.tryCatch(() => parseInt(process.env.PORT!)),
- *   debug: Option.fromNullable(process.env.DEBUG).pipe(Option.map(v => v === 'true'))
+ *   debug: pipe(
+ *     Option.fromNullable(process.env.DEBUG),
+ *     Option.map(v => v === 'true'),
+ *   )
  * });
  */
 export const sequenceS = <T extends Record<string, Option<unknown>>>(

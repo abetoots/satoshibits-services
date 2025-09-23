@@ -6,9 +6,22 @@
  * and dependency injection. Similar to fp-ts's ReaderTaskEither but tailored
  * for our Result type and async/await patterns.
  * 
+ * ### For Dummies
+ * - Think of it as a recipe that needs ingredients (`deps`) and might fail; every step returns either success data or a named error.
+ * - You describe the steps first, then later hand in the ingredients; the container makes sure dependencies flow in without threading them manually.
+ * - If any step fails, the whole recipe stops and hands you the error—no partial states.
+ *
+ * ### Decision Tree
+ * - Need a starting point? Call `ReaderResult.Do<Deps, Error>()` and build from there.
+ * - Want to run another dependency-aware step? Use `ReaderResult.bind('name', () => nextStep(args))` (internally uses `chain`).
+ * - Just computing a derived value from what you already have? Use `ReaderResult.let('name', ({ existing }) => value)`.
+ * - Transforming the final output shape? Finish with `ReaderResult.map(record => result)`.
+ * - Accessing dependencies directly? Reach for `ReaderResult.ask()` or `ReaderResult.asks(selector)`.
+ *
  * @example
  * ```typescript
  * import { ReaderResult, liftAsync } from './reader-result.mts';
+ * import { pipe } from './composition.mts';
  * 
  * // define dependencies
  * interface Deps {
@@ -25,10 +38,12 @@
  *   );
  * 
  * // compose operations
- * const program = ReaderResult.Do()
- *   .pipe(ReaderResult.bind('user', () => getUser('123')))
- *   .pipe(ReaderResult.bind('posts', ({ user }) => getUserPosts(user.id)))
- *   .pipe(ReaderResult.map(({ user, posts }) => ({ ...user, posts })));
+ * const program = pipe(
+ *   ReaderResult.Do<Deps, string>(),
+ *   ReaderResult.bind('user', () => getUser('123')),
+ *   ReaderResult.bind('posts', ({ user }) => getUserPosts(user.id)),
+ *   ReaderResult.map(({ user, posts }) => ({ ...user, posts })),
+ * );
  * 
  * // run with dependencies
  * const result = await ReaderResult.run(dependencies)(program);
@@ -212,11 +227,13 @@ export const ReaderResult = {
    * 
    * @category Dependencies
    * @example
-   * const program = ReaderResult.Do()
-   *   .pipe(ReaderResult.bind('deps', () => ReaderResult.ask<Deps, string>()))
-   *   .pipe(ReaderResult.bind('config', ({ deps }) => 
-   *     ReaderResult.of(deps.config)
-   *   ));
+   * import { pipe } from './composition.mts';
+   * 
+   * const program = pipe(
+   *   ReaderResult.Do<Deps, string>(),
+   *   ReaderResult.bind('deps', () => ReaderResult.ask<Deps, string>()),
+   *   ReaderResult.bind('config', ({ deps }) => ReaderResult.of(deps.config)),
+   * );
    * 
    * @since 2025-07-03
    */
@@ -366,15 +383,19 @@ export const ReaderResult = {
    * 
    * @category Do Notation
    * @example
-   * const program = ReaderResult.Do<Deps, string>()
-   *   .pipe(ReaderResult.bind('user', () => getUser('123')))
-   *   .pipe(ReaderResult.bind('posts', ({ user }) => getUserPosts(user.id)))
-   *   .pipe(ReaderResult.let('postCount', ({ posts }) => posts.length))
-   *   .pipe(ReaderResult.map(({ user, posts, postCount }) => ({
+   * import { pipe } from './composition.mts';
+   * 
+   * const program = pipe(
+   *   ReaderResult.Do<Deps, string>(),
+   *   ReaderResult.bind('user', () => getUser('123')),
+   *   ReaderResult.bind('posts', ({ user }) => getUserPosts(user.id)),
+   *   ReaderResult.let('postCount', ({ posts }) => posts.length),
+   *   ReaderResult.map(({ user, posts, postCount }) => ({
    *     ...user,
    *     posts,
-   *     stats: { postCount }
-   *   })));
+   *     stats: { postCount },
+   *   })),
+   * );
    * 
    * @since 2025-07-03
    */

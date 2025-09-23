@@ -5,6 +5,18 @@
  * configuration or dependency injection context, without having to pass it explicitly
  * through every function call.
  *
+ * ### For Dummies
+ * - A Reader is just a function that expects a bag of dependencies and gives you a result.
+ * - You describe what to do with the bag now and hand the bag in later, keeping tests simple.
+ * - No async, no error handling—think "grab config once you finally call me".
+ *
+ * ### Decision Tree
+ * - Need a starting value that ignores the environment? Use `Reader.of(value)`.
+ * - Want the full environment? `Reader.ask()` gives it to you; need a slice? Use `Reader.asks(selector)`.
+ * - Transforming a computed value without changing dependencies? Use `Reader.map(fn)`.
+ * - Need the next step to access the environment again? Use `Reader.chain(nextReader)`.
+ * - Done describing the program? Call `Reader.run(env)(program)` when you finally have the dependencies.
+ *
  * @example
  * ```typescript
  * import { Reader } from './reader.mts';

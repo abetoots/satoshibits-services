@@ -6,6 +6,18 @@
  * combinators for building complex predicates from simple ones, along with
  * common predicate patterns for everyday use.
  * 
+ * ### For Dummies
+ * - A predicate is just a yes/no function; this module helps you wire them together.
+ * - Build tiny checks (`isNotNil`, `inRange`) and compose them like Lego to express rules.
+ * - Everything stays pure, so you can reuse predicates across filters, guards, and validators.
+ *
+ * ### Decision Tree
+ * - Need every rule to pass? Combine them with `and(predicateA, predicateB, ...)`.
+ * - Any rule may pass? Use `or(...)`.
+ * - Want the opposite? Wrap with `not(predicate)`.
+ * - Exactly one condition allowed? Reach for `xor(a, b)`.
+ * - Checking structure? Helpers like `hasProperty('field')`, `isNotNil`, and `inRange(min, max)` get you started.
+ *
  * @example
  * ```typescript
  * import { and, or, not, isNotNil, inRange, hasProperty } from './predicates.mts';

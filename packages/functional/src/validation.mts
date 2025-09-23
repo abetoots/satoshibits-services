@@ -7,6 +7,18 @@
  * error handling explicit and composable. Validators can be combined, transformed,
  * and reused to build sophisticated validation logic.
  *
+ * ### For Dummies
+ * - Validators are tiny functions that say "valid" or "here’s why not"—never exceptions.
+ * - Chain them to collect multiple errors instead of stopping at the first failure.
+ * - Everything returns a `Result`, so you keep success and error flows explicit.
+ *
+ * ### Decision Tree
+ * - Need simple value checks? Grab primitives from `validators.string`, `validators.number`, etc.
+ * - Combining rules for one field? Use `Validation.all(ruleA, ruleB, ...)`.
+ * - Optional field? Wrap with `Validation.optional(rule)`.
+ * - Validating objects? Build a `schema({ ... })` and reuse it.
+ * - Handling errors? Inspect the returned `ValidationError`—it stores every message.
+ *
  * @example
  * ```typescript
  * import { Validation, validators, schema, ValidationError } from './validation.mts';

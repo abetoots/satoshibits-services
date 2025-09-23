@@ -5,6 +5,19 @@
  * for pipelines of any length. All functions follow functional programming principles,
  * supporting both synchronous and asynchronous composition patterns.
  *
+ * ### For Dummies
+ * - Treat these helpers as Lego roads for wiring tiny functions together without writing loops.
+ * - `pipe` runs a list of functions on a starting value, `flow` builds the list first and reuses it later.
+ * - `compose` is just `flow` read from right to left; `tap` lets you peek without changing the value.
+ * - Async variants like `pipeAsync` do the same thing but wait for promises at every hop.
+ *
+ * ### Decision Tree
+ * - Already holding the starting value? Use `pipe(value, step1, step2, ...)`.
+ * - Need a reusable function to call many times? Use `flow(step1, step2, ...)`.
+ * - Prefer mathematical right-to-left order? Reach for `compose(last, ..., first)`.
+ * - Want to debug without altering data? Insert `tap(logFn)` inside the pipeline.
+ * - Need to await each step? Use `pipeAsync(step1, step2, ...)` and call the returned async function.
+ *
  * @example
  * ```typescript
  * import { pipe, flow, compose, tap, pipeAsync } from './composition.mts';

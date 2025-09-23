@@ -5,6 +5,18 @@
  * This provides a way to make side effects referentially transparent by wrapping them
  * in a function, delaying their execution until explicitly requested.
  *
+ * ### For Dummies
+ * - An `IO<T>` is just `() => T`; you keep side effects in a box until you open it.
+ * - Build the pipeline now, run it later—great for tests and deterministic wiring.
+ * - No promises here: everything happens synchronously once you call `IO.run` or the IO itself.
+ *
+ * ### Decision Tree
+ * - Got a plain value? Wrap it with `IO.of(value)` to start a chain.
+ * - Need to transform without running? Use `IO.map(fn)(io)`.
+ * - Want the next step to also be an IO? Use `IO.chain(nextStep)(io)` (aka `flatMap`).
+ * - Collecting side-effect functions? Compose them with `IO.ap`, `IO.map`, or `IO.chain`.
+ * - Ready to execute? Either call the thunk directly or use `IO.run(io)` for clarity.
+ *
  * @example
  * ```typescript
  * import { IO } from './io.mts';

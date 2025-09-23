@@ -7,6 +7,18 @@
  * provides utilities for creating branded types, common domain types, and
  * advanced TypeScript type utilities.
  * 
+ * ### For Dummies
+ * - Branded types are stickers you slap on primitives so TypeScript stops mixing them up.
+ * - `brand` gives you a constructor; using it is as cheap as returning the original value.
+ * - Helpful utilities like `assertNever` make exhaustive checks safer.
+ *
+ * ### Decision Tree
+ * - Need a nominal type? Create it with `const UserId = brand<string, 'UserId'>('UserId')`.
+ * - Got a branded value and want the plain type? Use `Unbrand<UserId>`.
+ * - Building rich domain models? Use the provided ID constructors (e.g., `UserId`, `AccountId`).
+ * - Validating before branding? Pass a `validate` function into `brand`.
+ * - Checking switch exhaustiveness? Drop `assertNever(value)` in the default case.
+ *
  * @example
  * ```typescript
  * import { brand, Brand, UserId, Email, assertNever } from './types.mts';

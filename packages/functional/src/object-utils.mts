@@ -4,6 +4,17 @@
  * These functions are designed to be composed and follow functional programming principles.
  * All operations return new objects, preserving immutability of the original data.
  * 
+ * ### For Dummies
+ * - These helpers let you copy objects with surgical precision—no accidental mutations.
+ * - Think "clone and tweak" rather than "reach in and change"; every function returns a fresh object.
+ * - Great for building DTOs, filtering config, or remapping values without side effects.
+ *
+ * ### Decision Tree
+ * - Only need certain keys? Use `pick(['id', 'name'])(obj)`.
+ * - Need to hide sensitive fields? Reach for `omit(['password'])(obj)`.
+ * - Want to remap values while keeping keys? Use `mapValues(transform)`.
+ * - Merging configs safely? Call `merge(defaults, overrides)` for a deep, non-mutating merge.
+ *
  * @example
  * ```typescript
  * import { pick, omit, mapValues, merge } from './object-utils.mts';

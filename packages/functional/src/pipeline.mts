@@ -5,6 +5,18 @@
  * interface for building complex data transformations with method chaining.
  * Combines the benefits of functional programming with familiar OOP patterns.
  * 
+ * ### For Dummies
+ * - Picture `Pipeline` as a conveyor belt: drop a value in with `Pipeline.of(value)` and bolt on steps like `.map`.
+ * - Each step produces a brand-new pipeline, so you never mutate the original value.
+ * - Async steps move you onto a Promise-based belt—await each `.mapAsync` before continuing.
+ *
+ * ### Decision Tree
+ * - Want a fluent, chainable API around a value? Start with `Pipeline.of(initial)`.
+ * - Need a synchronous tweak? Call `.map(fn)`; result stays a `Pipeline`.
+ * - Need async work? Use `.mapAsync(asyncFn)` and await the returned pipeline.
+ * - Validating or short-circuiting? Use `.filter(predicate, error)` or `.flatMap` with a Result.
+ * - Ready for the answer? Call `.value()` to unwrap the current payload.
+ *
  * @example
  * ```typescript
  * import { Pipeline } from './pipeline.mts';

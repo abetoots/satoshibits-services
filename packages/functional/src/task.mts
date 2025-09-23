@@ -6,6 +6,19 @@
  * async code more predictable and testable. Note that Tasks can reject - for
  * explicit error handling, consider using Task<Result<T, E>> pattern.
  *
+ * ### For Dummies
+ * - A `Task<T>` is `() => Promise<T>`—build your async pipeline today, execute tomorrow.
+ * - Nothing runs until you call `Task.run(task)` (or call the function yourself).
+ * - Great for retries, composition, and testing because you control when effects fire.
+ *
+ * ### Decision Tree
+ * - Have a value already? Start with `Task.of(value)`.
+ * - Need to wrap an async function? Use `Task.fromPromise(() => promise)`.
+ * - Transforming results? Apply `Task.map(fn)`.
+ * - Next step returns another Task? Chain with `Task.chain(nextTask)`.
+ * - Working with multiple tasks together? Use helpers like `Task.ap`, `Task.sequence`, etc., inside the module.
+ * - When it’s go time, run with `await Task.run(task)`.
+ *
  * @example
  * ```typescript
  * import { Task } from './task.mts';

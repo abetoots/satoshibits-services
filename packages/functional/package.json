@@ -3,7 +3,70 @@
   "version": "1.1.0",
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
-  "exports": "./dist/index.mjs",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    },
+    "./array-utils": {
+      "types": "./dist/array-utils.d.mts",
+      "import": "./dist/array-utils.mjs"
+    },
+    "./composition": {
+      "types": "./dist/composition.d.mts",
+      "import": "./dist/composition.mjs"
+    },
+    "./io": {
+      "types": "./dist/io.d.mts",
+      "import": "./dist/io.mjs"
+    },
+    "./object-utils": {
+      "types": "./dist/object-utils.d.mts",
+      "import": "./dist/object-utils.mjs"
+    },
+    "./option": {
+      "types": "./dist/option.d.mts",
+      "import": "./dist/option.mjs"
+    },
+    "./performance": {
+      "types": "./dist/performance.d.mts",
+      "import": "./dist/performance.mjs"
+    },
+    "./pipeline": {
+      "types": "./dist/pipeline.d.mts",
+      "import": "./dist/pipeline.mjs"
+    },
+    "./predicates": {
+      "types": "./dist/predicates.d.mts",
+      "import": "./dist/predicates.mjs"
+    },
+    "./reader": {
+      "types": "./dist/reader.d.mts",
+      "import": "./dist/reader.mjs"
+    },
+    "./reader-result": {
+      "types": "./dist/reader-result.d.mts",
+      "import": "./dist/reader-result.mjs"
+    },
+    "./result": {
+      "types": "./dist/result.d.mts",
+      "import": "./dist/result.mjs"
+    },
+    "./task": {
+      "types": "./dist/task.d.mts",
+      "import": "./dist/task.mjs"
+    },
+    "./types": {
+      "types": "./dist/types.d.mts",
+      "import": "./dist/types.mjs"
+    },
+    "./validation": {
+      "types": "./dist/validation.d.mts",
+      "import": "./dist/validation.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
   "type": "module",
   "private": false,
   "scripts": {

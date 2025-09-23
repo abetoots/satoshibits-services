@@ -5,9 +5,20 @@
  * and prevent performance issues in applications. All utilities are designed
  * to be composable and work well with functional programming patterns.
  * 
+ * ### For Dummies
+ * - These helpers slow noisy functions down, speed slow ones up, and batch the rest.
+ * - Wrap your callbacks so typing, scrolling, or API calls stop overwhelming the app.
+ * - Everything here returns a new function—swap it in place of the original.
+ *
+ * ### Decision Tree
+ * - Need to wait until the user pauses? Use `debounce(fn, delay)`.
+ * - Want to run at most once per interval? Reach for `throttle(fn, delay)`.
+ * - Flooded with async work? Chunk it with `batchAsync(items, worker, size, gap)`.
+ * - Tracking how long things take or need advanced timers? Look in `timingUtils` for extras like `measureTime`.
+ *
  * @example
  * ```typescript
- * import { debounce, throttle, batch, cache, Performance } from './performance.mts';
+ * import { debounce, throttle, batchAsync, timingUtils } from './performance.mts';
  * 
  * // debounce user input
  * const search = debounce((query: string) => {
@@ -20,14 +31,20 @@
  * }, 100);
  * 
  * // batch API calls
- * const saveItem = batch<Item>(async (items) => {
- *   await api.saveMany(items);
- * }, { maxSize: 100, maxWait: 1000 });
+ * const userIds = Array.from({ length: 100 }, (_, i) => i + 1);
+ * const users = await batchAsync(userIds, async (id) => {
+ *   const res = await api.getUser(id);
+ *   return res.data;
+ * }, 100, 1000);
  * 
- * // cache expensive computations
- * const fibonacci = cache((n: number): number => {
- *   if (n <= 1) return n;
- *   return fibonacci(n - 1) + fibonacci(n - 2);
+ * // measure runtime for observability
+ * const fetchJson = async (url: string) => {
+ *   const response = await fetch(url);
+ *   return response.json();
+ * };
+ * 
+ * const fetchWithTiming = timingUtils.measureTime(fetchJson, (ms) => {
+ *   logger.info('fetchJson duration', { ms });
  * });
  * ```
  * 

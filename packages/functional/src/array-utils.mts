@@ -4,6 +4,19 @@
  * These functions are designed to be composed and follow functional programming principles.
  * All operations return new arrays, preserving immutability.
  * 
+ * ### For Dummies
+ * - These helpers are fancy versions of `map`/`filter` that never mutate the original array.
+ * - You plug them into pipelines to keep array logic readable and testable.
+ * - Every function returns a **new** array, so you can trust the input stays untouched.
+ *
+ * ### Decision Tree
+ * - Need element plus index? Reach for `mapWithIndex`.
+ * - Want to transform and drop `undefined` results in one go? Use `filterMap`.
+ * - Splitting into fixed-size slices? Call `chunk(size)`.
+ * - Grouping by a computed key? Use `groupBy(keyFn)`.
+ * - Need safe lookups? `findSafe(predicate)` returns an Option instead of `undefined`.
+ * - Splitting by predicate? `partition(predicate)` gives you matching and non-matching buckets.
+ *
  * @example
  * ```typescript
  * import { filterMap, chunk, groupBy } from './array-utils.mts';

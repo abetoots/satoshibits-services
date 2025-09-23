@@ -6,6 +6,18 @@
  * making error handling explicit and composable. Similar to Rust's Result type
  * or fp-ts's Either, but with a simpler API focused on practical use cases.
  * 
+ * ### For Dummies
+ * - A `Result` is either `{ success: true, data }` or `{ success: false, error }`—no hidden throws.
+ * - You build pipelines of risky steps without exceptions leaking everywhere.
+ * - Inspect the container at the edge and decide what to show the user or caller.
+ *
+ * ### Decision Tree
+ * - Operation succeeded? Wrap with `Result.ok(value)`.
+ * - Failed? Return `Result.err(error)` immediately.
+ * - Need to transform happy-path data? Use `Result.map(fn)`.
+ * - Next step might fail too? Use `Result.flatMap(fnReturningResult)`.
+ * - Provide fallbacks? `Result.orElse(handler)` or `Result.getOrElse(fallback)` are your friends.
+ *
  * @example
  * ```typescript
  * import { Result, unwrap, safe } from './result.mts';
