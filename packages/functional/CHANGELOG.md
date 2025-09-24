@@ -1,5 +1,11 @@
 # functional
 
+## 1.1.1
+
+### Patch Changes
+
+- 5029a19: enhance README and module files with "For Dummies" and decision tree sections for better usability
+
 ## 1.1.0
 
 ### Minor Changes
