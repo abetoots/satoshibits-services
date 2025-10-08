@@ -19,6 +19,17 @@ const configs: TSESLint.FlatConfig.ConfigArray = [
       },
     },
   },
+  // disable @typescript-eslint/unbound-method for test files
+  // this rule produces false positives when checking mock methods from vi.fn()
+  // mock functions are standalone objects with no `this` context dependency
+  // vitest utilities (expect, vi.mocked) are designed to work with unbound mocks
+  // disabling this rule for tests is standard practice in typescript + vitest projects
+  {
+    files: ["**/*.test.mts", "**/*.spec.mts"],
+    rules: {
+      "@typescript-eslint/unbound-method": "off",
+    },
+  },
 ];
 
 export default configs;
