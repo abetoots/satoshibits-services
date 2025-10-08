@@ -1,5 +1,11 @@
 # @satoshibits/queue
 
+## 2.0.2
+
+### Patch Changes
+
+- 09afc8c: update README to reflect new provider structure and usage examples for BullMQ and SQS
+
 ## 2.0.1
 
 ### Patch Changes
@@ -309,14 +315,15 @@ The `timeout` field has been removed from `JobOptions`. Timeouts are now a **use
 **OLD API (v1):**
 
 ```typescript
-await queue.add('job', data, {
-  timeout: 30000  // ❌ No longer supported
+await queue.add("job", data, {
+  timeout: 30000, // ❌ No longer supported
 });
 ```
 
 **Why Removed:**
 
 Promise.race-based timeouts don't actually cancel handler execution - they just abandon the promise while the handler continues running in the background. This creates:
+
 - Resource leaks (handlers keep consuming resources)
 - Unpredictable behavior (handlers may complete after "timeout")
 - False sense of cancellation
@@ -324,7 +331,7 @@ Promise.race-based timeouts don't actually cancel handler execution - they just 
 **NEW Pattern - AbortController:**
 
 ```typescript
-import { JobHandler } from '@satoshibits/queue';
+import { JobHandler } from "@satoshibits/queue";
 
 const handler: JobHandler<EmailData> = async (data, job) => {
   const controller = new AbortController();
@@ -337,12 +344,12 @@ const handler: JobHandler<EmailData> = async (data, job) => {
   } catch (error) {
     clearTimeout(timeoutId);
 
-    if (error.name === 'AbortError') {
+    if (error.name === "AbortError") {
       return Result.err({
-        type: 'RuntimeError',
-        code: 'TIMEOUT',
-        message: 'Operation timed out after 30000ms',
-        retryable: true
+        type: "RuntimeError",
+        code: "TIMEOUT",
+        message: "Operation timed out after 30000ms",
+        retryable: true,
       });
     }
 
@@ -352,6 +359,7 @@ const handler: JobHandler<EmailData> = async (data, job) => {
 ```
 
 **Migration:**
+
 - Remove `timeout` from `queue.add()` options
 - Implement timeout logic in job handlers using AbortController
 - This gives you proper cancellation with cleanup
@@ -624,6 +632,7 @@ new Worker(
 ```
 
 **Migration:**
+
 - Update constructors to accept provider as separate parameter
 - Queue: options are optional with sensible defaults (attempts: 3, jobId: uuidId, onUnsupportedFeature: console.warn)
 - Worker: **options are required** - must provide `pollInterval` and `errorBackoff`
