@@ -1,6 +1,6 @@
 {
   "name": "@satoshibits/queue",
-  "version": "1.0.7",
+  "version": "2.0.0",
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
   "exports": "./dist/index.mjs",
@@ -51,7 +51,7 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
-    "@satoshibits/functional": "^1.1.0",
+    "@satoshibits/functional": "^1.1.2",
     "generic-pool": "^3.9.0"
   },
   "peerDependencies": {

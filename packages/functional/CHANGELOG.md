@@ -1,5 +1,11 @@
 # functional
 
+## 1.1.2
+
+### Patch Changes
+
+- 7ad2599: implement exponential backoff in retry logic
+
 ## 1.1.1
 
 ### Patch Changes
