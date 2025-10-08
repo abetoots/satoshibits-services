@@ -1,5 +1,16 @@
 # @satoshibits/queue
 
+## 2.0.0
+
+### Major Changes
+
+- 3c3639c: complete architectural rewrite - migration to thin abstraction over queue providers
+
+### Patch Changes
+
+- Updated dependencies [7ad2599]
+  - @satoshibits/functional@1.1.2
+
 ## 2.0.0 - 2025-10-08
 
 **Complete architectural rewrite: migration to thin abstraction over queue providers**
@@ -7,6 +18,7 @@
 This is a **major breaking release** that completely rewrites the queue package from the ground up. The package has evolved from a specific queue implementation into a **thin, type-safe abstraction layer** over different queue providers (in-memory, BullMQ, AWS SQS).
 
 **Summary of Changes:**
+
 - 35 files changed, 19,316 insertions(+), 317 deletions(-)
 - Complete API redesign with Queue (producer) and Worker (consumer) separation
 - Provider abstraction with 3 built-in implementations
@@ -38,37 +50,43 @@ See `ARCHITECTURE.md` for complete architectural documentation (1,669 lines).
 ### 1. Complete API Redesign: Queue + Worker Separation
 
 **OLD API (v1):**
+
 ```typescript
 // Single class handled both producing and consuming
-import { Queue } from '@satoshibits/queue';
+import { Queue } from "@satoshibits/queue";
 
-const queue = new Queue('emails');
-await queue.add({ to: 'user@example.com' }); // throws on error
+const queue = new Queue("emails");
+await queue.add({ to: "user@example.com" }); // throws on error
 queue.process(async (job) => {
   // process job
 });
 ```
 
 **NEW API (v2):**
+
 ```typescript
 // Separate producer and consumer APIs
-import { Queue, Worker, MemoryProvider } from '@satoshibits/queue';
+import { Queue, Worker, MemoryProvider } from "@satoshibits/queue";
 
 const provider = new MemoryProvider();
 
 // Producer API
-const queue = new Queue('emails', provider);
-const result = await queue.add('send-email', { to: 'user@example.com' });
+const queue = new Queue("emails", provider);
+const result = await queue.add("send-email", { to: "user@example.com" });
 if (result.isErr()) {
-  console.error('Failed to add job:', result.error);
+  console.error("Failed to add job:", result.error);
   return;
 }
 
 // Consumer API
-const worker = new Worker('emails', async (data, job) => {
-  // process job
-  return Result.ok(undefined);
-}, provider);
+const worker = new Worker(
+  "emails",
+  async (data, job) => {
+    // process job
+    return Result.ok(undefined);
+  },
+  provider,
+);
 
 await worker.start();
 ```
@@ -90,16 +108,28 @@ All operations are **queue-scoped** (no `queueName` parameters):
 ```typescript
 interface IQueueProvider {
   // Core operations
-  add<T>(job: Job<T>, options?: JobOptions): Promise<Result<Job<T>, QueueError>>;
+  add<T>(
+    job: Job<T>,
+    options?: JobOptions,
+  ): Promise<Result<Job<T>, QueueError>>;
   getJob<T>(jobId: string): Promise<Result<Job<T> | null, QueueError>>;
 
   // Pull model (for Memory, SQS providers)
-  fetch?<T>(batchSize: number, waitTimeMs?: number): Promise<Result<ActiveJob<T>[], QueueError>>;
-  ack?<T>(job: ActiveJob<T>, result?: unknown): Promise<Result<void, QueueError>>;
+  fetch?<T>(
+    batchSize: number,
+    waitTimeMs?: number,
+  ): Promise<Result<ActiveJob<T>[], QueueError>>;
+  ack?<T>(
+    job: ActiveJob<T>,
+    result?: unknown,
+  ): Promise<Result<void, QueueError>>;
   nack?<T>(job: ActiveJob<T>, error: Error): Promise<Result<void, QueueError>>;
 
   // Push model (for BullMQ provider)
-  process?<T>(handler: (job: ActiveJob<T>) => Promise<void>, options: ProcessOptions): () => Promise<void>;
+  process?<T>(
+    handler: (job: ActiveJob<T>) => Promise<void>,
+    options: ProcessOptions,
+  ): () => Promise<void>;
 
   // Management
   pause(): Promise<Result<void, QueueError>>;
@@ -136,11 +166,13 @@ interface IProviderFactory {
 **Built-in Providers:**
 
 1. **MemoryProvider** - In-memory implementation for development and testing
+
    - Pull model with fetch/ack/nack
    - Full feature support (delays, priorities, retries, DLQ)
    - No external dependencies
 
 2. **BullMQProvider** - Redis-backed production provider
+
    - Push model with native blocking operations
    - Leverages BullMQ's optimized job processing
    - Supports all BullMQ features (delays, priorities, retries, repeat jobs)
@@ -159,27 +191,29 @@ interface IProviderFactory {
 ### 3. Functional Error Handling: Result<T, E>
 
 **OLD API (v1):**
+
 ```typescript
 // Methods threw errors
 try {
-  await queue.add({ data: 'value' });
+  await queue.add({ data: "value" });
 } catch (error) {
-  console.error('Failed:', error);
+  console.error("Failed:", error);
 }
 ```
 
 **NEW API (v2):**
+
 ```typescript
 // Methods return Result<T, E>
-import { Result } from '@satoshibits/functional';
+import { Result } from "@satoshibits/functional";
 
-const result = await queue.add('job-name', { data: 'value' });
+const result = await queue.add("job-name", { data: "value" });
 if (result.isErr()) {
   const error: QueueError = result.error;
   console.error(`Failed: ${error.message}`, {
     type: error.type,
     code: error.code,
-    retryable: error.retryable
+    retryable: error.retryable,
   });
   return;
 }
@@ -201,7 +235,14 @@ type QueueError =
     }
   | {
       type: "RuntimeError";
-      code: "CONNECTION" | "TIMEOUT" | "ENQUEUE" | "PROCESSING" | "SHUTDOWN" | "RATE_LIMIT" | "THROTTLING";
+      code:
+        | "CONNECTION"
+        | "TIMEOUT"
+        | "ENQUEUE"
+        | "PROCESSING"
+        | "SHUTDOWN"
+        | "RATE_LIMIT"
+        | "THROTTLING";
       message: string;
       retryable: boolean;
       queueName?: string;
@@ -233,7 +274,7 @@ type QueueError =
 ```typescript
 type JobHandler<T> = (
   data: T,
-  job: ActiveJob<T>
+  job: ActiveJob<T>,
 ) => Promise<Result<void, QueueError | Error>>;
 
 // Example handler
@@ -284,9 +325,9 @@ interface Job<T = unknown> {
 ```typescript
 interface ActiveJob<T = unknown> extends Job<T> {
   readonly providerMetadata?: {
-    readonly receiptHandle?: string;    // SQS receipt handle
-    readonly lockToken?: string;        // Lock tokens for other providers
-    readonly [key: string]: unknown;    // Provider-specific fields
+    readonly receiptHandle?: string; // SQS receipt handle
+    readonly lockToken?: string; // Lock tokens for other providers
+    readonly [key: string]: unknown; // Provider-specific fields
   };
 }
 ```
@@ -295,7 +336,7 @@ interface ActiveJob<T = unknown> extends Job<T> {
 
 ```typescript
 // Queue.add() returns Job<T>
-const result = await queue.add('send-email', emailData);
+const result = await queue.add("send-email", emailData);
 if (result.isOk()) {
   const job: Job<EmailData> = result.value;
 }
@@ -304,7 +345,7 @@ if (result.isOk()) {
 const handler = async (data: EmailData, job: ActiveJob<EmailData>) => {
   // Access runtime metadata if needed
   if (job.providerMetadata?.receiptHandle) {
-    console.log('SQS receipt:', job.providerMetadata.receiptHandle);
+    console.log("SQS receipt:", job.providerMetadata.receiptHandle);
   }
   return Result.ok(undefined);
 };
@@ -323,22 +364,24 @@ New `EventBus` class provides strongly-typed events for comprehensive observabil
 **Event System:**
 
 ```typescript
-import { EventBus, type QueueEventMap } from '@satoshibits/queue';
+import { EventBus } from "@satoshibits/queue";
+
+import type { QueueEventMap } from "@satoshibits/queue";
 
 const eventBus = new EventBus();
 
 // Worker lifecycle events
-eventBus.on('active', (payload) => {
+eventBus.on("active", (payload) => {
   // Payload type: { jobId, queueName, attempts, status, workerId?, metadata? }
   console.log(`Job ${payload.jobId} started`);
 });
 
-eventBus.on('completed', (payload) => {
+eventBus.on("completed", (payload) => {
   // Payload type: { jobId, queueName, attempts, status, duration, metadata? }
   console.log(`Job ${payload.jobId} completed in ${payload.duration}ms`);
 });
 
-eventBus.on('failed', (payload) => {
+eventBus.on("failed", (payload) => {
   // Payload type: { jobId, queueName, error, errorType, attempts, status, duration, willRetry, structuredError? }
   console.error(`Job ${payload.jobId} failed:`, payload.error);
   if (payload.willRetry) {
@@ -346,56 +389,58 @@ eventBus.on('failed', (payload) => {
   }
 });
 
-eventBus.on('job.retrying', (payload) => {
+eventBus.on("job.retrying", (payload) => {
   // Payload type: { jobId, queueName, attempts, status, maxAttempts?, attempt? }
   console.log(`Retrying job ${payload.jobId}`);
 });
 
 // Queue events
-eventBus.on('queue.error', (payload) => {
+eventBus.on("queue.error", (payload) => {
   console.error(`Queue error on ${payload.queueName}:`, payload.error);
 });
 
-eventBus.on('queue.paused', (payload) => {
+eventBus.on("queue.paused", (payload) => {
   console.log(`Queue ${payload.queueName} paused`);
 });
 
-eventBus.on('queue.resumed', (payload) => {
+eventBus.on("queue.resumed", (payload) => {
   console.log(`Queue ${payload.queueName} resumed`);
 });
 
-eventBus.on('queue.drained', (payload) => {
+eventBus.on("queue.drained", (payload) => {
   console.log(`Queue ${payload.queueName} has no more jobs`);
 });
 
 // Processor events
-eventBus.on('processor.shutting_down', () => {
-  console.log('Worker shutdown initiated');
+eventBus.on("processor.shutting_down", () => {
+  console.log("Worker shutdown initiated");
 });
 
-eventBus.on('processor.shutdown_timeout', (payload) => {
-  console.warn(`Shutdown timeout on ${payload.queueName}: ${payload.activeJobs} jobs still active`);
+eventBus.on("processor.shutdown_timeout", (payload) => {
+  console.warn(
+    `Shutdown timeout on ${payload.queueName}: ${payload.activeJobs} jobs still active`,
+  );
 });
 
 // Pass eventBus to Queue and Worker
-const queue = new Queue('emails', provider, { eventBus });
-const worker = new Worker('emails', handler, provider, { eventBus });
+const queue = new Queue("emails", provider, { eventBus });
+const worker = new Worker("emails", handler, provider, { eventBus });
 ```
 
 **Available Events:**
 
-| Event | When Emitted | Payload |
-|-------|--------------|---------|
-| `active` | Job starts processing | `{ jobId, queueName, attempts, status, workerId?, metadata? }` |
-| `completed` | Job completes successfully | `{ jobId, queueName, attempts, status, duration, metadata? }` |
-| `failed` | Job fails (may retry) | `{ jobId, queueName, error, errorType, attempts, status, duration, willRetry, structuredError? }` |
-| `job.retrying` | Job will be retried | `{ jobId, queueName, attempts, status, maxAttempts?, attempt? }` |
-| `queue.error` | Queue-level error | `{ queueName, error: QueueError }` |
-| `queue.drained` | No more jobs in queue | `{ queueName }` |
-| `queue.paused` | Queue paused | `{ queueName }` |
-| `queue.resumed` | Queue resumed | `{ queueName }` |
-| `processor.shutting_down` | Worker shutdown starts | `{}` |
-| `processor.shutdown_timeout` | Shutdown timeout exceeded | `{ queueName, timeout, activeJobs, message }` |
+| Event                        | When Emitted               | Payload                                                                                           |
+| ---------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------- |
+| `active`                     | Job starts processing      | `{ jobId, queueName, attempts, status, workerId?, metadata? }`                                    |
+| `completed`                  | Job completes successfully | `{ jobId, queueName, attempts, status, duration, metadata? }`                                     |
+| `failed`                     | Job fails (may retry)      | `{ jobId, queueName, error, errorType, attempts, status, duration, willRetry, structuredError? }` |
+| `job.retrying`               | Job will be retried        | `{ jobId, queueName, attempts, status, maxAttempts?, attempt? }`                                  |
+| `queue.error`                | Queue-level error          | `{ queueName, error: QueueError }`                                                                |
+| `queue.drained`              | No more jobs in queue      | `{ queueName }`                                                                                   |
+| `queue.paused`               | Queue paused               | `{ queueName }`                                                                                   |
+| `queue.resumed`              | Queue resumed              | `{ queueName }`                                                                                   |
+| `processor.shutting_down`    | Worker shutdown starts     | `{}`                                                                                              |
+| `processor.shutdown_timeout` | Shutdown timeout exceeded  | `{ queueName, timeout, activeJobs, message }`                                                     |
 
 **Migration:** Replace EventEmitter usage with EventBus. All event names and payloads are now strongly typed.
 
@@ -410,43 +455,47 @@ const worker = new Worker('emails', handler, provider, { eventBus });
 The `JobIdGenerators` namespace export has been removed. Only `uuidId` is exported as the recommended default.
 
 **OLD API (v1):**
-```typescript
-import { JobIdGenerators } from '@satoshibits/queue';
 
-const queue = new Queue('emails', {
+```typescript
+import { JobIdGenerators } from "@satoshibits/queue";
+
+const queue = new Queue("emails", {
   defaultJobOptions: {
-    jobId: JobIdGenerators.uuid // or .timestamp, .nano, etc.
-  }
+    jobId: JobIdGenerators.uuid, // or .timestamp, .nano, etc.
+  },
 });
 ```
 
 **NEW API (v2):**
-```typescript
-import { uuidId } from '@satoshibits/queue';
 
-const queue = new Queue('emails', provider, {
+```typescript
+import { uuidId } from "@satoshibits/queue";
+
+const queue = new Queue("emails", provider, {
   defaultJobOptions: {
-    jobId: uuidId // wrapper for crypto.randomUUID()
-  }
+    jobId: uuidId, // wrapper for crypto.randomUUID()
+  },
 });
 
 // Or bring your own
-import { nanoid } from 'nanoid';
+import { nanoid } from "nanoid";
 
-const queue = new Queue('emails', provider, {
+const queue = new Queue("emails", provider, {
   defaultJobOptions: {
-    jobId: () => nanoid()
-  }
+    jobId: () => nanoid(),
+  },
 });
 ```
 
 **Removed Exports:**
+
 - `JobIdGenerators` namespace
 - `timestampId`
 - `sequentialIdFactory`
 - `nanoId`
 
 **Kept Export:**
+
 - `uuidId` - Production-safe UUID generator using `crypto.randomUUID()`
 
 **Rationale:** Following the "userland owns policy" principle, the library provides sensible defaults without imposing framework-like batteries. Users needing specific ID strategies can easily provide their own.
@@ -516,15 +565,15 @@ Providers declare their feature support via the `ProviderCapabilities` interface
 
 ```typescript
 interface ProviderCapabilities {
-  supportsDelayedJobs: boolean;    // Scheduled jobs
-  supportsPriority: boolean;        // Job prioritization
-  supportsLongPolling: boolean;     // Efficient polling (SQS, etc.)
-  supportsBatching: boolean;        // Batch operations
-  supportsRetries: boolean;         // Automatic retry logic
-  supportsDLQ: boolean;             // Dead-letter queue
-  maxJobSize: number;               // Max job payload size (bytes, 0 = unlimited)
-  maxBatchSize: number;             // Max batch size (0 = unlimited)
-  maxDelaySeconds: number;          // Max delay duration (seconds, 0 = unlimited)
+  supportsDelayedJobs: boolean; // Scheduled jobs
+  supportsPriority: boolean; // Job prioritization
+  supportsLongPolling: boolean; // Efficient polling (SQS, etc.)
+  supportsBatching: boolean; // Batch operations
+  supportsRetries: boolean; // Automatic retry logic
+  supportsDLQ: boolean; // Dead-letter queue
+  maxJobSize: number; // Max job payload size (bytes, 0 = unlimited)
+  maxBatchSize: number; // Max batch size (0 = unlimited)
+  maxDelaySeconds: number; // Max delay duration (seconds, 0 = unlimited)
 }
 ```
 
@@ -538,7 +587,7 @@ Queue and Worker automatically adapt based on provider capabilities. Unsupported
 
 ```typescript
 await queue.close({
-  disconnectProvider: false  // Set true if queue owns the provider
+  disconnectProvider: false, // Set true if queue owns the provider
 });
 ```
 
@@ -546,9 +595,9 @@ await queue.close({
 
 ```typescript
 await worker.close({
-  timeout: 30000,           // Max wait time for active jobs (ms)
-  finishActiveJobs: true,   // Wait for active jobs to complete
-  disconnectProvider: false // Set true if worker owns the provider
+  timeout: 30000, // Max wait time for active jobs (ms)
+  finishActiveJobs: true, // Wait for active jobs to complete
+  disconnectProvider: false, // Set true if worker owns the provider
 });
 ```
 
@@ -557,9 +606,9 @@ await worker.close({
 ```typescript
 const provider = new BullMQProvider({ connection: redisConfig });
 
-const queue1 = new Queue('emails', provider);
-const queue2 = new Queue('jobs', provider);
-const worker = new Worker('emails', handler, provider);
+const queue1 = new Queue("emails", provider);
+const queue2 = new Queue("jobs", provider);
+const worker = new Worker("emails", handler, provider);
 
 // Close without disconnecting (provider is shared)
 await worker.close({ disconnectProvider: false });
@@ -577,8 +626,8 @@ await provider.disconnect();
 For providers supporting long-polling (SQS, etc.), Worker automatically uses efficient long-polling:
 
 ```typescript
-const worker = new Worker('queue', handler, sqsProvider, {
-  longPollMs: 20000  // 20-second long-polling (SQS max)
+const worker = new Worker("queue", handler, sqsProvider, {
+  longPollMs: 20000, // 20-second long-polling (SQS max)
 });
 ```
 
@@ -594,15 +643,24 @@ Worker manages fetch loop, calls provider's `fetch()`, `ack()`, `nack()` primiti
 
 ```typescript
 class MemoryProvider implements IQueueProvider {
-  async fetch<T>(batchSize: number, waitTimeMs?: number): Promise<Result<ActiveJob<T>[], QueueError>> {
+  async fetch<T>(
+    batchSize: number,
+    waitTimeMs?: number,
+  ): Promise<Result<ActiveJob<T>[], QueueError>> {
     // Fetch jobs from storage
   }
 
-  async ack<T>(job: ActiveJob<T>, result?: unknown): Promise<Result<void, QueueError>> {
+  async ack<T>(
+    job: ActiveJob<T>,
+    result?: unknown,
+  ): Promise<Result<void, QueueError>> {
     // Mark job complete
   }
 
-  async nack<T>(job: ActiveJob<T>, error: Error): Promise<Result<void, QueueError>> {
+  async nack<T>(
+    job: ActiveJob<T>,
+    error: Error,
+  ): Promise<Result<void, QueueError>> {
     // Handle failure, retry, or DLQ
   }
 }
@@ -616,7 +674,7 @@ Provider manages job fetching using native blocking operations:
 class BullMQProvider implements IQueueProvider {
   async process<T>(
     handler: (job: ActiveJob<T>) => Promise<void>,
-    options: ProcessOptions
+    options: ProcessOptions,
   ): Promise<() => Promise<void>> {
     // Register BullMQ worker with native blocking fetch
     // Returns shutdown function
@@ -633,11 +691,11 @@ Worker detects which model the provider supports and adapts automatically.
 Reusable test suite for provider implementations:
 
 ```typescript
-import { runProviderContractTests } from '../__shared__/provider-contract.suite.mts';
+import { runProviderContractTests } from "../__shared__/provider-contract.suite.mts";
 
-describe('MyProvider Contract', () => {
+describe("MyProvider Contract", () => {
   runProviderContractTests({
-    providerName: 'MyProvider',
+    providerName: "MyProvider",
     createProvider: () => new MyProvider(config),
     cleanup: async (provider) => {
       await provider.disconnect();
@@ -646,7 +704,7 @@ describe('MyProvider Contract', () => {
       supportsDelayedJobs: true,
       supportsPriority: true,
       // ... declare capabilities
-    }
+    },
   });
 });
 ```
@@ -662,20 +720,24 @@ Ensures all providers meet the `IQueueProvider` contract with 800+ lines of comp
 **ConstructorValidator** utility for fail-fast validation:
 
 ```typescript
-import { ConstructorValidator } from './core/validators.mjs';
+import { ConstructorValidator } from "./core/validators.mjs";
 
 class Queue {
   constructor(name: string, provider: unknown, options?: QueueOptions) {
-    const validator = new ConstructorValidator('Queue', name);
+    const validator = new ConstructorValidator("Queue", name);
 
-    validator.requireString('name', name);
-    validator.requireFunction('defaultJobOptions.jobId', options?.defaultJobOptions?.jobId);
+    validator.requireString("name", name);
+    validator.requireFunction(
+      "defaultJobOptions.jobId",
+      options?.defaultJobOptions?.jobId,
+    );
     // ... more validations
   }
 }
 ```
 
 **Benefits:**
+
 - Fails immediately with clear error messages
 - Prevents silent failures and runtime crashes
 - Type assertion signatures enable TypeScript type narrowing
@@ -689,7 +751,7 @@ class Queue {
 **ProviderHelper** resolves providers from multiple formats:
 
 ```typescript
-import { ProviderHelper } from './core/provider-helpers.mjs';
+import { ProviderHelper } from "./core/provider-helpers.mjs";
 
 // Accepts:
 // 1. IQueueProvider instance (already bound to queue)
@@ -703,15 +765,15 @@ Enables flexible Queue/Worker construction:
 
 ```typescript
 // Direct provider instance
-new Queue('emails', new MemoryProvider());
+new Queue("emails", new MemoryProvider());
 
 // Factory instance (shared connection)
 const factory = new BullMQProvider({ connection: redis });
-new Queue('emails', factory);
-new Queue('jobs', factory);
+new Queue("emails", factory);
+new Queue("jobs", factory);
 
 // Provider constructor
-new Queue('emails', MemoryProvider);
+new Queue("emails", MemoryProvider);
 ```
 
 **Files:** `src/core/provider-helpers.mts`, `src/core/provider-helpers.test.mts`
@@ -727,8 +789,13 @@ new Queue('emails', MemoryProvider);
 **Fix:** Added runtime validation to reject explicit `undefined`:
 
 ```typescript
-if (options?.defaultJobOptions?.jobId !== undefined && typeof options.defaultJobOptions.jobId !== "function") {
-  throw new TypeError('[Queue:test] defaultJobOptions.jobId must be a function, got undefined');
+if (
+  options?.defaultJobOptions?.jobId !== undefined &&
+  typeof options.defaultJobOptions.jobId !== "function"
+) {
+  throw new TypeError(
+    "[Queue:test] defaultJobOptions.jobId must be a function, got undefined",
+  );
 }
 ```
 
@@ -745,8 +812,8 @@ if (options?.defaultJobOptions?.jobId !== undefined && typeof options.defaultJob
 **Fix:** Added validation for timing parameters:
 
 ```typescript
-validator.requireFiniteNonNegativeNumber('pollInterval', pollInterval);
-validator.requireFiniteNonNegativeNumber('errorBackoff', errorBackoff);
+validator.requireFiniteNonNegativeNumber("pollInterval", pollInterval);
+validator.requireFiniteNonNegativeNumber("errorBackoff", errorBackoff);
 ```
 
 **Impact:** Prevents silent performance death that can bring services to their knees.
@@ -766,7 +833,7 @@ if (typeof sanitizedOptions.jobId !== "string" || !sanitizedOptions.jobId) {
   return Result.err({
     type: "DataError",
     code: "INVALID_JOB_DATA",
-    message: `jobId must be a non-empty string`
+    message: `jobId must be a non-empty string`,
   });
 }
 ```
@@ -782,6 +849,7 @@ if (typeof sanitizedOptions.jobId !== "string" || !sanitizedOptions.jobId) {
 ### ARCHITECTURE.md (1,669 lines)
 
 Comprehensive architectural documentation covering:
+
 - Design principles and philosophy
 - Provider abstraction layer
 - Job vs ActiveJob architecture
@@ -796,6 +864,7 @@ Comprehensive architectural documentation covering:
 ### README.md (1,691 lines)
 
 Complete user guide with:
+
 - Quick start examples
 - Provider configuration guides (Memory, BullMQ, SQS)
 - Job handler patterns
@@ -817,6 +886,7 @@ Tracking document for 18 documentation fixes ensuring docs match implementation.
 ## Test Coverage
 
 **New Test Files:**
+
 - `src/api/queue.test.mts` - Queue API tests (578 lines)
 - `src/api/worker.test.mts` - Worker API tests (937 lines)
 - `src/core/events.test.mts` - Event system tests (265 lines)
@@ -828,10 +898,12 @@ Tracking document for 18 documentation fixes ensuring docs match implementation.
 - `src/providers/__shared__/provider-contract.suite.mts` - Contract test suite (842 lines)
 
 **Integration Tests:**
+
 - `src/providers/bullmq/bullmq.provider.contract.integration.test.mts`
 - `src/providers/sqs/sqs.provider.contract.integration.test.mts`
 
 **Test Utilities:**
+
 - `src/test-utils.mts` - Mock providers and test helpers (576 lines)
 
 ---
@@ -839,10 +911,12 @@ Tracking document for 18 documentation fixes ensuring docs match implementation.
 ## New Dependencies
 
 **Production:**
+
 - `bullmq` - BullMQ provider support
 - `@aws-sdk/client-sqs` - SQS provider support
 
 **Development:**
+
 - Updated test framework configuration for integration tests
 
 ---
@@ -850,6 +924,7 @@ Tracking document for 18 documentation fixes ensuring docs match implementation.
 ## Files Changed
 
 **New Files (27):**
+
 - `ARCHITECTURE.md`, `README.md`, `DOCUMENTATION_FIXES_SUMMARY.md`
 - `src/api/queue.mts`, `src/api/queue.test.mts`
 - `src/api/worker.mts`, `src/api/worker.test.mts`
@@ -869,6 +944,7 @@ Tracking document for 18 documentation fixes ensuring docs match implementation.
 - `src/test-utils.mts`
 
 **Modified Files (6):**
+
 - `src/index.mts` - Updated exports for v2 API
 - `package.json` - Added provider dependencies
 - `CHANGELOG.md` - This file
@@ -877,6 +953,7 @@ Tracking document for 18 documentation fixes ensuring docs match implementation.
 - `tsconfig.node.json` - TypeScript configuration
 
 **Deleted Files (2):**
+
 - `src/dev-loader.mjs` - No longer needed
 - `src/index.test.mts` - Replaced by specific API tests
 
@@ -885,6 +962,7 @@ Tracking document for 18 documentation fixes ensuring docs match implementation.
 ## Migration Guide Summary
 
 1. **Install provider dependencies:**
+
    ```bash
    # For BullMQ
    npm install bullmq ioredis
@@ -894,15 +972,17 @@ Tracking document for 18 documentation fixes ensuring docs match implementation.
    ```
 
 2. **Update imports:**
+
    ```typescript
    // OLD
-   import { Queue, JobIdGenerators } from '@satoshibits/queue';
+   import { Queue, JobIdGenerators } from "@satoshibits/queue";
 
    // NEW
-   import { Queue, Worker, MemoryProvider, uuidId } from '@satoshibits/queue';
+   import { Queue, Worker, MemoryProvider, uuidId } from "@satoshibits/queue";
    ```
 
 3. **Instantiate provider:**
+
    ```typescript
    const provider = new MemoryProvider();
    // or new BullMQProvider({ connection: redisConfig })
@@ -910,47 +990,55 @@ Tracking document for 18 documentation fixes ensuring docs match implementation.
    ```
 
 4. **Update Queue usage:**
+
    ```typescript
-   const queue = new Queue('emails', provider, {
-     defaultJobOptions: { jobId: uuidId }
+   const queue = new Queue("emails", provider, {
+     defaultJobOptions: { jobId: uuidId },
    });
 
-   const result = await queue.add('send-email', emailData);
+   const result = await queue.add("send-email", emailData);
    if (result.isErr()) {
-     console.error('Failed:', result.error);
+     console.error("Failed:", result.error);
      return;
    }
    ```
 
 5. **Update Worker usage:**
+
    ```typescript
-   const worker = new Worker('emails', async (data, job) => {
-     try {
-       await processEmail(data);
-       return Result.ok(undefined);
-     } catch (error) {
-       return Result.err(error as Error);
-     }
-   }, provider);
+   const worker = new Worker(
+     "emails",
+     async (data, job) => {
+       try {
+         await processEmail(data);
+         return Result.ok(undefined);
+       } catch (error) {
+         return Result.err(error as Error);
+       }
+     },
+     provider,
+   );
 
    await worker.start();
    ```
 
 6. **Handle Result types:**
+
    ```typescript
    // Check result.isOk() or result.isErr()
    // Access result.value or result.error
    ```
 
 7. **Set up events (optional):**
+
    ```typescript
    const eventBus = new EventBus();
-   eventBus.on('completed', (payload) => {
+   eventBus.on("completed", (payload) => {
      console.log(`Job ${payload.jobId} completed`);
    });
 
-   const queue = new Queue('emails', provider, { eventBus });
-   const worker = new Worker('emails', handler, provider, { eventBus });
+   const queue = new Queue("emails", provider, { eventBus });
+   const worker = new Worker("emails", handler, provider, { eventBus });
    ```
 
 For complete migration guide, see README.md.
