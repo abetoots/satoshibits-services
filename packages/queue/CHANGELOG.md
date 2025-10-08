@@ -1,5 +1,11 @@
 # @satoshibits/queue
 
+## 2.0.1
+
+### Patch Changes
+
+- 21d9518: use the recently published functional lib
+
 ## 2.0.0
 
 ### Major Changes
