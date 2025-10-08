@@ -506,28 +506,35 @@ describe('ReaderResult', () => {
     });
 
     it('uses exponential backoff', async () => {
-      const delays: number[] = [];
-      let lastTime = Date.now();
-      
+      vi.useFakeTimers();
+
+      let attempts = 0;
+
       const base = ReaderResult.tryCatch<TestDeps, string, number>(
         () => Promise.resolve().then(() => {
-          const now = Date.now();
-          delays.push(now - lastTime);
-          lastTime = now;
+          attempts++;
           throw new Error('fail');
         }),
         () => 'error'
       );
       const rr = ReaderResult.retry<TestDeps, string, number>(3, 10)(base);
-      
-      await ReaderResult.run(mockDeps)(rr);
-      
-      // First attempt has no delay, subsequent attempts have exponential delays
-      expect(delays.length).toBe(3);
-      expect(delays[1]).toBeGreaterThanOrEqual(10);
-      expect(delays[1]).toBeLessThan(20);
-      expect(delays[2]).toBeGreaterThanOrEqual(20);
-      expect(delays[2]).toBeLessThan(40);
+
+      const promise = ReaderResult.run(mockDeps)(rr);
+
+      // wait for first attempt to complete
+      await vi.waitFor(() => expect(attempts).toBe(1));
+
+      // advance by 10ms for first retry (10 * 2^0)
+      await vi.advanceTimersByTimeAsync(10);
+      await vi.waitFor(() => expect(attempts).toBe(2));
+
+      // advance by 20ms for second retry (10 * 2^1)
+      await vi.advanceTimersByTimeAsync(20);
+      await vi.waitFor(() => expect(attempts).toBe(3));
+
+      await promise;
+
+      vi.useRealTimers();
     });
 
     it('fails after a single attempt if maxAttempts is 1', async () => {
