@@ -3,7 +3,11 @@
   "version": "2.0.1",
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
-  "exports": "./dist/index.mjs",
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./providers/bullmq": "./dist/providers/bullmq/bullmq.provider.mjs",
+    "./providers/sqs": "./dist/providers/sqs/sqs.provider.mjs"
+  },
   "type": "module",
   "private": false,
   "scripts": {
@@ -55,6 +59,19 @@
     "generic-pool": "^3.9.0"
   },
   "peerDependencies": {
-    "tsx": ">= 4.19.0"
+    "bullmq": "^5.58.7",
+    "@aws-sdk/client-sqs": "^3.899.0",
+    "ioredis": "^5.8.0"
+  },
+  "peerDependenciesMeta": {
+    "bullmq": {
+      "optional": true
+    },
+    "@aws-sdk/client-sqs": {
+      "optional": true
+    },
+    "ioredis": {
+      "optional": true
+    }
   }
 }

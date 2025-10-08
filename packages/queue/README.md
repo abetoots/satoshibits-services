@@ -704,38 +704,72 @@ await emailWorker.start();
 console.log('Worker started, waiting for jobs...');
 ```
 
-### Production Usage (Redis/BullMQ)
+## Providers
 
-When ready for production, switch to a persistent provider:
+The queue package supports multiple providers. Each provider has optional peer dependencies that you only install if you use that provider.
+
+### Available Providers
+
+| Provider | Import Path | Peer Dependencies | Best For |
+|----------|------------|-------------------|----------|
+| **Memory** | `@satoshibits/queue` (default) | None | Development, testing |
+| **BullMQ** | `@satoshibits/queue/providers/bullmq` | `bullmq`, `ioredis` | Production workhorse |
+| **SQS** | `@satoshibits/queue/providers/sqs` | `@aws-sdk/client-sqs` | Serverless, AWS ecosystem |
+
+### Installing Provider Dependencies
+
+**For BullMQ (Redis-backed):**
+```bash
+npm install bullmq ioredis
+# or
+pnpm add bullmq ioredis
+```
+
+**For SQS (AWS):**
+```bash
+npm install @aws-sdk/client-sqs
+# or
+pnpm add @aws-sdk/client-sqs
+```
+
+**For Memory (default):**
+```bash
+# No additional dependencies needed
+```
+
+### Production Usage (BullMQ)
 
 ```typescript
 import { Queue, Worker } from '@satoshibits/queue';
-import { RedisProvider } from '@satoshibits/queue-redis';
+import { BullMQProvider } from '@satoshibits/queue/providers/bullmq';
 import { Result } from '@satoshibits/functional';
 
 // ========================================
 // Configure Provider (once per app)
 // ========================================
-const redisProvider = new RedisProvider({
+const providerFactory = new BullMQProvider({
   connection: {
     host: process.env.REDIS_HOST || 'localhost',
     port: parseInt(process.env.REDIS_PORT || '6379')
   }
+  // For full config options, see BullMQProviderConfig in src/providers/bullmq/bullmq.provider.mts
 });
 
 // ========================================
 // Producer Side (API Server)
 // ========================================
-const queue = new Queue('emails', { provider: redisProvider });
+const queue = new Queue('emails', {
+  provider: providerFactory.forQueue('emails')
+});
 
 await queue.add('send-welcome', {
   userId: 123,
   email: 'user@example.com'
 }, {
-  attempts: 3,           // retry up to 3 times
-  priority: 1,           // higher priority
-  delay: 5000,           // wait 5s before processing
-  timeout: 30000         // fail if takes > 30s
+  attempts: 3,
+  priority: 1,
+  delay: 5000,
+  timeout: 30000
 });
 
 // ========================================
@@ -747,9 +781,9 @@ const worker = new Worker('emails',
     return Result.ok(undefined);
   },
   {
-    provider: redisProvider,
-    concurrency: 10,      // process 10 jobs in parallel
-    pollInterval: 100     // check for jobs every 100ms
+    provider: providerFactory.forQueue('emails'),
+    concurrency: 10,
+    pollInterval: 100
   }
 );
 
@@ -762,8 +796,61 @@ process.on('SIGTERM', async () => {
 await worker.start();
 ```
 
+### Production Usage (SQS)
+
+```typescript
+import { Queue, Worker } from '@satoshibits/queue';
+import { SQSProvider } from '@satoshibits/queue/providers/sqs';
+import { Result } from '@satoshibits/functional';
+
+// ========================================
+// Configure Provider
+// ========================================
+const providerFactory = new SQSProvider({
+  region: 'us-east-1',
+  // Map queue names to their full SQS URLs upfront
+  queueUrls: {
+    'emails': 'https://sqs.us-east-1.amazonaws.com/123/emails',
+    'notifications': 'https://sqs.us-east-1.amazonaws.com/123/notifications'
+  }
+  // Credentials loaded from environment/IAM role by default
+  // For full config options, see SQSProviderConfig in src/providers/sqs/sqs.provider.mts
+});
+
+// ========================================
+// Producer Side
+// ========================================
+const queue = new Queue('emails', {
+  provider: providerFactory.forQueue('emails')
+});
+
+await queue.add('send-welcome', {
+  userId: 123,
+  email: 'user@example.com'
+}, {
+  attempts: 3,
+  delay: 5000
+});
+
+// ========================================
+// Consumer Side
+// ========================================
+const worker = new Worker('emails',
+  async (data, job) => {
+    await sendEmail(data.email, 'Welcome!');
+    return Result.ok(undefined);
+  },
+  {
+    provider: providerFactory.forQueue('emails'),
+    concurrency: 10
+  }
+);
+
+await worker.start();
+```
+
 **Key Differences from Development:**
-1. **Provider**: `new RedisProvider()` instead of default in-memory
+1. **Provider**: Import from subpath, instantiate with config, use `forQueue()` method
 2. **Processes**: Queue and Worker run in separate processes (API vs worker)
 3. **Configuration**: Set retries, timeouts, concurrency
 4. **Shutdown**: Implement graceful shutdown for deployments
@@ -864,7 +951,7 @@ await queue.add('send', {
 
 const worker = new Worker<EmailJob>('emails', async (data, job) => {
   // data is fully typed as EmailJob
-  // job is typed as ActiveJob<EmailJob> (includes persistent state + runtime metadata)
+  // job is typed as ActiveJob<EmailJob>
   await sendEmail(data.to, data.subject, data.body);
   return Result.ok(undefined);
 });
@@ -874,7 +961,7 @@ await worker.start();
 
 **Job Handler Signature:**
 
-Job handlers receive two parameters:
+Job handlers receive two parameters: the job's data payload and an `ActiveJob` object, which contains the data plus persistent state and runtime metadata.
 
 ```typescript
 type JobHandler<T> = (
@@ -883,45 +970,15 @@ type JobHandler<T> = (
 ) => Promise<Result<void, QueueError | Error>>;
 ```
 
-**ActiveJob<T> vs Job<T>:**
+**`ActiveJob<T>` vs `Job<T>`:**
 
-The library separates **persistent state** (Job) from **runtime metadata** (ActiveJob):
+The library separates a job's **persistent state** (`Job`) from its **runtime metadata** (`ActiveJob`). `Job` represents what is stored in the queue provider, while `ActiveJob` is what your worker receives when processing. This separation allows for provider-specific runtime details (like SQS receipt handles) without polluting the core job model.
 
-```typescript
-// Job<T> - Persistent state only (what gets stored)
-interface Job<T> {
-  readonly id: string;
-  readonly name: string;
-  readonly queueName: string;
-  readonly data: T;
-  readonly status: JobStatus;
-  readonly attempts: number;
-  readonly maxAttempts: number;
-  readonly createdAt: Date;
-  readonly priority?: number;
-  readonly metadata?: Record<string, unknown>;
-  // ... other persistent fields
-}
+For full details on these interfaces, see `src/core/types.mts`.
 
-// ActiveJob<T> - Job + Runtime Metadata (what handlers receive)
-interface ActiveJob<T> extends Job<T> {
-  readonly providerMetadata?: {
-    readonly receiptHandle?: string;  // SQS: needed for acknowledgment
-    readonly lockToken?: string;      // other providers: lock identifiers
-    readonly [key: string]: unknown;  // provider-specific runtime data
-  };
-}
-```
+**When You Need the `job` Object:**
 
-**Why This Separation?**
-
-- **Provider Independence**: Runtime metadata (receiptHandle, lockToken) is provider-specific and ephemeral
-- **Type Safety**: Handlers always receive `ActiveJob<T>` with all data needed for processing
-- **Clear Contracts**: `Queue.add()` takes Job (what to store), handlers receive ActiveJob (what to process)
-
-**When You Need Runtime Metadata:**
-
-Most handlers only use `data` and ignore `job`. However, you might need `job` for:
+Most handlers only use `data`. However, you might need the full `job` object for:
 
 ```typescript
 // accessing job metadata
@@ -993,49 +1050,30 @@ process.on('SIGTERM', async () => {
 });
 ```
 
-**Worker.close() Options:**
+**`Worker.close()` Options:**
 
-```typescript
-interface CloseOptions {
-  timeout?: number;              // max time to wait for active jobs (default: 30s)
-  finishActiveJobs?: boolean;    // wait for active jobs to complete (default: true)
-  disconnectProvider?: boolean;  // disconnect provider after close (default: false)
-}
-```
-
-- **`disconnectProvider: true`**: Use when the worker owns the provider (not shared)
-- **`disconnectProvider: false`**: Use when the provider is shared across multiple queues/workers
+- **`timeout`**: `number` (ms) - Max time to wait for active jobs to finish (default: 30s).
+- **`finishActiveJobs`**: `boolean` - Whether to wait for active jobs to complete (default: true).
+- **`disconnectProvider`**: `boolean` - Whether to disconnect the provider after closing (default: false). Use `true` only when the provider instance is not shared.
 
 **Example with Shared Provider:**
 
 ```typescript
-// shared provider across multiple queues/workers
-const provider = new BullMQProviderFactory({ connection: redis });
+// shared provider factory across multiple queues/workers
+const providerFactory = new BullMQProvider({ connection: redis });
 
-const emailQueue = new Queue('emails', { provider });
-const emailWorker = new Worker('emails', emailHandler, { provider });
+const emailQueue = new Queue('emails', { provider: providerFactory.forQueue('emails') });
+const emailWorker = new Worker('emails', emailHandler, { provider: providerFactory.forQueue('emails') });
 
-const smsQueue = new Queue('sms', { provider });
-const smsWorker = new Worker('sms', smsHandler, { provider });
+const smsQueue = new Queue('sms', { provider: providerFactory.forQueue('sms') });
+const smsWorker = new Worker('sms', smsHandler, { provider: providerFactory.forQueue('sms') });
 
 // shutdown workers - keep provider connected
 await emailWorker.close({ disconnectProvider: false });
 await smsWorker.close({ disconnectProvider: false });
 
 // user explicitly manages shared provider lifecycle
-await provider.disconnect();
-```
-
-**Example with Owned Provider:**
-
-```typescript
-// worker owns provider instance
-const worker = new Worker('emails', emailHandler, {
-  provider: new MemoryProvider('emails')
-});
-
-// shutdown worker and disconnect provider
-await worker.close({ disconnectProvider: true });
+await providerFactory.disconnect();
 ```
 
 ### Queue Lifecycle Management
@@ -1043,26 +1081,15 @@ await worker.close({ disconnectProvider: true });
 ```typescript
 const queue = new Queue('emails', { provider });
 
-// close queue
-await queue.close({
-  disconnectProvider: false  // default: false (keep provider connected)
-});
-
 // close queue and disconnect owned provider
 await queue.close({
-  disconnectProvider: true   // disconnect provider (for owned providers)
+  disconnectProvider: true   // disconnect provider (for non-shared providers)
 });
 ```
 
-**Queue.close() Options:**
+**`Queue.close()` Options:**
 
-```typescript
-interface CloseOptions {
-  disconnectProvider?: boolean;  // disconnect provider after close (default: false)
-}
-```
-
-Same shared vs owned provider pattern as Worker.close().
+- **`disconnectProvider`**: `boolean` - Disconnect the provider after closing (default: false).
 
 ### Observability (Userland Responsibility)
 
@@ -1186,12 +1213,16 @@ for (const job of failed) {
 
 ## Supported Providers
 
-| Provider | Status | Retries | Priority | Delay | DLQ | Best For |
-|----------|--------|---------|----------|-------|-----|----------|
-| **In-Memory** | ✅ | ✅ | ✅ | ✅ | ✅ | Development, testing |
-| **Redis (BullMQ)** | ✅ | ✅ | ✅ | ✅ | ✅ | Production workhorse |
-| **AWS SQS** | ✅ | ✅ | ❌ | ✅ | ✅ | Serverless, AWS ecosystem |
-| **RabbitMQ** | ✅ | ✅ | ✅ | ✅ | ✅ | High throughput |
+| Provider | Import Path | Retries | Priority | Delay | DLQ | Best For |
+|----------|-------------|---------|----------|-------|-----|----------|
+| **In-Memory** | `@satoshibits/queue` (default) | ✅ | ✅ | ✅ | ✅ | Development, testing |
+| **BullMQ** | `@satoshibits/queue/providers/bullmq` | ✅ | ✅ | ✅ | ✅ | Production workhorse |
+| **SQS** | `@satoshibits/queue/providers/sqs` | ✅ | ❌ | ✅ | ✅ | Serverless, AWS ecosystem |
+
+**Peer Dependencies:**
+- **BullMQ**: Requires `bullmq` and `ioredis`
+- **SQS**: Requires `@aws-sdk/client-sqs`
+- **Memory**: No dependencies
 
 **Note**: We focus on providers with strong native queue capabilities. We don't ship degraded providers (e.g., PostgreSQL) that lack critical features.
 
@@ -1356,11 +1387,10 @@ it('processes payment correctly', async () => {
 
 ### Using the In-Memory Provider
 
-The library includes an in-memory provider perfect for testing:
+The library includes an in-memory provider perfect for testing. It's the default, so no imports needed:
 
 ```typescript
 import { Queue, Worker } from '@satoshibits/queue';
-import { InMemoryProvider } from '@satoshibits/queue/in-memory';
 
 describe('Order Processing', () => {
   let queue: Queue;
@@ -1431,14 +1461,20 @@ Test with real providers in CI:
 
 ```typescript
 // test/integration/queue.test.ts
-describe('Queue with Redis', () => {
+import { Queue } from '@satoshibits/queue';
+import { BullMQProvider } from '@satoshibits/queue/providers/bullmq';
+import { Redis } from 'ioredis';
+
+describe('Queue with BullMQ', () => {
   let redis: Redis;
   let queue: Queue;
+  let providerFactory: BullMQProvider;
 
   beforeAll(async () => {
     redis = new Redis(process.env.REDIS_URL);
+    providerFactory = new BullMQProvider({ connection: redis });
     queue = new Queue('test', {
-      provider: new RedisProvider({ connection: redis })
+      provider: providerFactory.forQueue('test')
     });
   });
 
@@ -1455,7 +1491,7 @@ describe('Queue with Redis', () => {
 
     // reconnect
     const newQueue = new Queue('test', {
-      provider: new RedisProvider({ connection: redis })
+      provider: providerFactory.forQueue('test')
     });
 
     const metrics = await newQueue.getMetrics();
@@ -1517,65 +1553,49 @@ See [7-TEST_QUALITY_AUDIT.md](./7-TEST_QUALITY_AUDIT.md) for detailed test quali
 
 Understanding what each provider supports helps you choose the right one:
 
-| Feature | In-Memory | BullMQ | SQS | RabbitMQ |
-|---------|-----------|--------|-----|----------|
-| **Retries** | ✅ In-process | ✅ Native | ✅ Redrive Policy | ✅ Dead letter exchange |
-| **Backoff** | ✅ Configurable | ✅ Exponential | ❌ Fixed visibility | ✅ Configurable |
-| **Priority** | ✅ Heap-based | ✅ Native | ❌ Use separate queues | ✅ Native |
-| **Delay** | ✅ setTimeout | ✅ Delayed ZSET | ✅ DelaySeconds | ✅ Delayed exchange |
-| **DLQ** | ✅ In-memory | ✅ Failed queue | ✅ Redrive to DLQ | ✅ Dead letter exchange |
-| **Batch Fetch** | ✅ | ✅ LRANGE | ✅ ReceiveMessage | ✅ basic.get |
-| **Concurrency** | ✅ In-process | ✅ Multiple workers | ✅ Multiple consumers | ✅ Multiple consumers |
-| **Max Payload** | ✅ Unlimited | ✅ 512MB (Redis) | ❌ 256KB | ✅ Configurable |
+| Feature | In-Memory | BullMQ | SQS |
+|---------|-----------|--------|-----|
+| **Retries** | ✅ In-process | ✅ Native | ✅ Redrive Policy |
+| **Backoff** | ✅ Configurable | ✅ Exponential | ❌ Fixed visibility |
+| **Priority** | ✅ Heap-based | ✅ Native | ❌ Use separate queues |
+| **Delay** | ✅ setTimeout | ✅ Delayed ZSET | ✅ DelaySeconds |
+| **DLQ** | ✅ In-memory | ✅ Failed queue | ✅ Redrive to DLQ |
+| **Batch Fetch** | ✅ | ✅ LRANGE | ✅ ReceiveMessage |
+| **Concurrency** | ✅ In-process | ✅ Multiple workers | ✅ Multiple consumers |
+| **Max Payload** | ✅ Unlimited | ✅ 512MB (Redis) | ❌ 256KB |
 
 ## Configuration Reference
 
 ### Queue Options
 
+Options passed to the `new Queue('name', options)` constructor.
+
 ```typescript
-interface QueueOptions {
-  provider?: IQueueProvider;     // default: in-memory
-
-  defaults?: {
-    attempts?: number;            // default: 3
-    backoff?: {
-      type: 'exponential' | 'linear';
-      delay: number;              // ms
-    };
-    priority?: number;            // higher = more priority
-    delay?: number;               // ms
-    removeOnComplete?: boolean;
-    removeOnFail?: boolean;
-  };
-
-  deadLetter?: {
-    queue: string;                // DLQ name
-    maxAttempts: number;
-  };
-
-  metrics?: {
-    register: Registry;           // prom-client registry
-  };
-
-  providerOptions?: {
-    [provider: string]: any;      // provider-specific config
-  };
-}
+const queue = new Queue('emails', {
+  provider: myProvider, // required for production
+  defaults: {
+    attempts: 5,
+    backoff: { type: 'exponential', delay: 1000 }
+  },
+  deadLetter: {
+    queue: 'failed-emails',
+    maxAttempts: 5
+  }
+});
 ```
+For a full list of options, see the `QueueOptions` interface in `src/api/queue.mts`.
 
 ### Worker Options
 
+Options passed to the `new Worker('name', handler, options)` constructor.
 ```typescript
-interface WorkerOptions {
-  concurrency?: number;           // default: 1
-  batchSize?: number;             // default: 1
-}
-
-interface ShutdownOptions {
-  timeout?: number;               // ms, default: 30000
-  finishActiveJobs?: boolean;     // wait for active jobs to complete, default: true
-}
+const worker = new Worker('emails', handler, {
+  provider: myProvider,
+  concurrency: 10,
+  batchSize: 5
+});
 ```
+For a full list of options, see the `WorkerOptions` interface in `src/api/worker.mts`.
 
 ## Architecture Philosophy
 
@@ -1613,18 +1633,18 @@ const worker = new Worker('jobs', async (job) => {
 
 // After (@satoshibits/queue)
 import { Queue, Worker } from '@satoshibits/queue';
-import { RedisProvider } from '@satoshibits/queue-redis';
+import { BullMQProvider } from '@satoshibits/queue/providers/bullmq';
 import { Result } from '@satoshibits/functional';
 
-const provider = new RedisProvider({ connection: redis });
+const providerFactory = new BullMQProvider({ connection: redis });
 
-const queue = new Queue('jobs', { provider });
+const queue = new Queue('jobs', { provider: providerFactory.forQueue('jobs') });
 await queue.add('process', data, { attempts: 3 });
 
 const worker = new Worker('jobs', async (data, job) => {
   await processJob(data);
   return Result.ok(undefined);
-}, { provider });
+}, { provider: providerFactory.forQueue('jobs') });
 
 await worker.start();
 ```
@@ -1643,13 +1663,17 @@ await sqs.send(new SendMessageCommand({
 
 // After (@satoshibits/queue)
 import { Queue } from '@satoshibits/queue';
-import { SQSProvider } from '@satoshibits/queue-sqs';
+import { SQSProvider } from '@satoshibits/queue/providers/sqs';
+
+const providerFactory = new SQSProvider({
+  region: 'us-east-1',
+  queueUrls: {
+    'jobs': 'https://sqs.us-east-1.amazonaws.com/123/jobs'
+  }
+});
 
 const queue = new Queue('jobs', {
-  provider: new SQSProvider({
-    region: 'us-east-1',
-    queueUrl: 'https://sqs.us-east-1.amazonaws.com/123/jobs'
-  })
+  provider: providerFactory.forQueue('jobs')
 });
 await queue.add('process', data);
 ```

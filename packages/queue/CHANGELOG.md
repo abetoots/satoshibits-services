@@ -143,6 +143,8 @@ interface IQueueProvider {
   delete(): Promise<Result<void, QueueError>>;
   getStats(): Promise<Result<QueueStats, QueueError>>;
   getHealth(): Promise<Result<HealthStatus, QueueError>>;
+  // Returns raw health metrics - userland determines "healthy" based on SLAs
+  // HealthStatus: { activeWorkers, queueDepth, errorRate, completedCount, failedCount, isPaused }
 
   // DLQ operations (optional)
   getDLQJobs?<T>(limit?: number): Promise<Result<Job<T>[], QueueError>>;
@@ -298,7 +300,65 @@ const handler: JobHandler<EmailData> = async (data, job) => {
 
 ---
 
-### 4. Job Type Separation: Job<T> vs ActiveJob<T>
+### 4. Timeout Removed from JobOptions
+
+**What Changed:**
+
+The `timeout` field has been removed from `JobOptions`. Timeouts are now a **userland responsibility**.
+
+**OLD API (v1):**
+
+```typescript
+await queue.add('job', data, {
+  timeout: 30000  // ❌ No longer supported
+});
+```
+
+**Why Removed:**
+
+Promise.race-based timeouts don't actually cancel handler execution - they just abandon the promise while the handler continues running in the background. This creates:
+- Resource leaks (handlers keep consuming resources)
+- Unpredictable behavior (handlers may complete after "timeout")
+- False sense of cancellation
+
+**NEW Pattern - AbortController:**
+
+```typescript
+import { JobHandler } from '@satoshibits/queue';
+
+const handler: JobHandler<EmailData> = async (data, job) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+  try {
+    await sendEmail(data, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    return Result.ok(undefined);
+  } catch (error) {
+    clearTimeout(timeoutId);
+
+    if (error.name === 'AbortError') {
+      return Result.err({
+        type: 'RuntimeError',
+        code: 'TIMEOUT',
+        message: 'Operation timed out after 30000ms',
+        retryable: true
+      });
+    }
+
+    return Result.err(error as Error);
+  }
+};
+```
+
+**Migration:**
+- Remove `timeout` from `queue.add()` options
+- Implement timeout logic in job handlers using AbortController
+- This gives you proper cancellation with cleanup
+
+---
+
+### 5. Job Type Separation: Job<T> vs ActiveJob<T>
 
 **What Changed:**
 
@@ -366,6 +426,10 @@ const handler = async (data: EmailData, job: ActiveJob<EmailData>) => {
 **What Changed:**
 
 New `EventBus` class provides strongly-typed events for comprehensive observability.
+
+**Observability is Userland Responsibility:**
+
+The library emits comprehensive lifecycle events - **how you collect, aggregate, and export metrics is your policy decision**. This allows integration with your organization's observability stack (OpenTelemetry, Prometheus, Datadog, etc.) while keeping the library lightweight and unopinionated.
 
 **Event System:**
 
@@ -548,10 +612,10 @@ new Worker(
   queueName: string,
   handler: JobHandler<T>,
   provider: IQueueProvider | IProviderFactory | ProviderConstructor,
-  options?: {
+  options: {  // ⚠️ Required (no ?)
+    pollInterval: number;  // ⚠️ Required - timing parameter to prevent CPU spin-loops
+    errorBackoff: number;  // ⚠️ Required - timing parameter for error recovery
     concurrency?: number;
-    pollInterval?: number;
-    errorBackoff?: number;
     batchSize?: number;
     longPollMs?: number;
     eventBus?: EventBus;
@@ -559,7 +623,10 @@ new Worker(
 )
 ```
 
-**Migration:** Update constructors to accept provider and new options structure.
+**Migration:**
+- Update constructors to accept provider as separate parameter
+- Queue: options are optional with sensible defaults (attempts: 3, jobId: uuidId, onUnsupportedFeature: console.warn)
+- Worker: **options are required** - must provide `pollInterval` and `errorBackoff`
 
 ---
 
@@ -1056,11 +1123,12 @@ For complete migration guide, see README.md.
 - ✅ Complete API redesign (Queue + Worker separation)
 - ✅ Provider abstraction layer required
 - ✅ Result<T, E> error handling (no thrown errors)
+- ✅ **Timeout removed from JobOptions** (use AbortController in handlers)
 - ✅ Job<T> vs ActiveJob<T> type separation
 - ✅ Type-safe event system
 - ✅ Removed JobIdGenerators namespace
-- ✅ Constructor signature changes
-- ✅ Job handler signature changes
+- ✅ Constructor signature changes (Worker options now required)
+- ✅ Job handler signature changes (returns Result, receives ActiveJob)
 
 ## New Features Summary
 

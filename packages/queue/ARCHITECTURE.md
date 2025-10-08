@@ -150,439 +150,81 @@ The system is organized into three clean layers:
 
 The provider interface defines the minimal contract all providers must implement.
 
-### Core Interface
+### Design Decisions
 
-The provider interface uses `Result<T, E>` for explicit error handling and separates **Job** (persistent state) from **ActiveJob** (runtime metadata).
+**Result<T, E> for Error Handling**
+We use Result types instead of throwing exceptions for predictable error handling. This forces consumers to explicitly handle failure cases at the type level, preventing silent failures in production.
 
-```typescript
-/**
- * IQueueProvider - Queue-scoped provider interface
- * All operations are for the bound queue (no queueName parameter needed)
- */
-interface IQueueProvider {
-  // ========================================
-  // Core Job Operations
-  // ========================================
+**Dual Processing Models**
+The interface supports both pull (fetch/ack/nack) and push (process) models because different providers have different strengths:
+- **Pull Model**: Simple, predictable, works everywhere (Memory, SQS, Postgres)
+- **Push Model**: More efficient for providers with native worker mechanisms (BullMQ, RabbitMQ)
 
-  /**
-   * Add a job to this queue
-   * @param job Job persistent state (id, name, data, status, etc.)
-   * @param options Optional job creation options
-   * @returns Result with added job or error
-   */
-  add<T>(job: Job<T>, options?: JobOptions): Promise<Result<Job<T>, QueueError>>;
+Methods marked with `?` are optional because not all providers support all patterns. See src/providers/provider.interface.mts:IQueueProvider for the complete interface definition.
 
-  /**
-   * Get a specific job by ID
-   * @returns Result with job (null if not found) or error
-   */
-  getJob<T>(jobId: string): Promise<Result<Job<T> | null, QueueError>>;
+**Queue-Scoped Providers**
+Providers are bound to a specific queue (no queueName parameter in methods). This prevents routing errors and allows providers to optimize connections per queue. The factory pattern (IProviderFactory.forQueue()) handles the binding.
 
-  // ========================================
-  // Pull Model (for simple providers like Memory, SQS)
-  // ========================================
+**Complete Interface**: See src/providers/provider.interface.mts:IQueueProvider for all methods, including:
+- Core operations (add, getJob)
+- Pull model (fetch, ack, nack)
+- Push model (process)
+- Management (pause, resume, delete, getStats, getHealth)
+- DLQ operations (getDLQJobs, retryJob)
+- Lifecycle (connect, disconnect)
+- Capability declaration
 
-  /**
-   * Fetch jobs for processing
-   * Returns ActiveJob with runtime metadata (receiptHandle, lockToken, etc.)
-   * needed for subsequent ack/nack operations
-   */
-  fetch?<T>(
-    batchSize: number,
-    waitTimeMs?: number,
-  ): Promise<Result<ActiveJob<T>[], QueueError>>;
-
-  /**
-   * Acknowledge successful job completion
-   * @param job ActiveJob with runtime metadata
-   */
-  ack?<T>(job: ActiveJob<T>, result?: unknown): Promise<Result<void, QueueError>>;
-
-  /**
-   * Negative acknowledge - job failed
-   * Provider handles retry logic, DLQ movement, etc.
-   * @param job ActiveJob with runtime metadata
-   */
-  nack?<T>(job: ActiveJob<T>, error: Error): Promise<Result<void, QueueError>>;
-
-  // ========================================
-  // Push Model (for efficient providers like BullMQ)
-  // ========================================
-
-  /**
-   * Register a job processor (push model)
-   * Provider fetches jobs and calls handler using native mechanisms
-   * @param handler Function to process each ActiveJob
-   * @param options Processing options (concurrency, error callback)
-   * @returns Shutdown function to stop processing
-   */
-  process?<T>(
-    handler: (job: ActiveJob<T>) => Promise<void>,
-    options: {
-      concurrency?: number;
-      onError?: (error: QueueError) => void;
-    },
-  ): () => Promise<void>;
-
-  // ========================================
-  // Queue Management
-  // ========================================
-
-  pause(): Promise<Result<void, QueueError>>;
-  resume(): Promise<Result<void, QueueError>>;
-  delete(): Promise<Result<void, QueueError>>;
-  getStats(): Promise<Result<QueueStats, QueueError>>;
-  getHealth(): Promise<Result<HealthStatus, QueueError>>;
-
-  // ========================================
-  // Dead Letter Queue Operations (optional)
-  // ========================================
-
-  getDLQJobs?<T>(limit?: number): Promise<Result<Job<T>[], QueueError>>;
-  retryJob?(jobId: string): Promise<Result<void, QueueError>>;
-
-  // ========================================
-  // Lifecycle
-  // ========================================
-
-  connect(): Promise<void>;
-  disconnect(): Promise<void>;
-
-  // ========================================
-  // Capabilities Declaration
-  // ========================================
-
-  readonly capabilities: ProviderCapabilities;
-}
-
-interface HealthStatus {
-  activeWorkers: number;
-  queueDepth: number;
-  errorRate: number;  // error rate as percentage
-  completedCount: number;
-  failedCount: number;
-  isPaused: boolean;
-}
-
-interface ProviderCapabilities {
-  supportsDelayedJobs: boolean;
-  supportsPriority: boolean;
-  supportsBatching: boolean;
-  supportsRetries: boolean;
-  supportsDLQ: boolean;
-  supportsLongPolling: boolean;  // can fetch() wait for jobs?
-  maxJobSize: number;            // bytes, 0 = unlimited
-  maxBatchSize: number;          // max jobs per fetch, 0 = unlimited
-  maxDelaySeconds: number;       // max delay in seconds, 0 = unlimited
-}
-```
+**Capability Declaration**: See src/core/types.mts:ProviderCapabilities for the complete structure. Providers must honestly declare what they support (delays, priorities, batching, retries, DLQ, etc.) to enable warn-and-degrade behavior.
 
 ### Job vs ActiveJob Architecture
 
-The library separates **persistent state** (Job) from **runtime metadata** (ActiveJob):
+**Why Separate Persistent State from Runtime Metadata?**
 
-**Job<T> - Persistent State Only:**
-```typescript
-interface Job<T = unknown> {
-  readonly id: string;
-  readonly name: string;
-  readonly queueName: string;
-  readonly data: T;
-  readonly status: JobStatus;
-  readonly attempts: number;
-  readonly maxAttempts: number;
-  readonly createdAt: Date;
-  readonly processedAt?: Date;
-  readonly completedAt?: Date;
-  readonly failedAt?: Date;
-  readonly scheduledFor?: Date;
-  readonly error?: string;
-  readonly priority?: number;
-  readonly metadata?: Record<string, unknown>;
-}
-```
+The library separates **persistent state** (Job) from **runtime metadata** (ActiveJob) to maintain provider independence and clear contracts.
 
-**ActiveJob<T> - Job + Runtime Metadata:**
-```typescript
-interface ActiveJob<T = unknown> extends Job<T> {
-  readonly providerMetadata?: {
-    readonly receiptHandle?: string;  // SQS: needed to acknowledge message
-    readonly lockToken?: string;      // other providers: needed to release locks
-    readonly [key: string]: unknown;  // other provider-specific data
-  };
-}
-```
+**Design Rationale:**
+1. **Provider Independence**: Runtime metadata (SQS receiptHandle, Redis lockToken) is provider-specific and ephemeral. It should never be persisted alongside job data.
+2. **Clear Contracts**: Type signatures make intent explicit:
+   - `add(job: Job<T>)` - "Here's what to store"
+   - `fetch() → ActiveJob<T>[]` - "Here's what to process (with runtime metadata)"
+   - `ack(job: ActiveJob<T>)` - "Here's what to acknowledge (needs metadata)"
+3. **Type Safety**: Handlers receive `ActiveJob<T>` with all data needed for both processing and acknowledgment. No need to separately track receipt handles or lock tokens.
 
-**Why This Separation?**
+**Trade-off**: Slightly more complex types, but prevents mixing concerns (persistent data vs. ephemeral runtime state) and enables clean provider implementations.
 
-1. **Provider Independence**: Runtime metadata (receiptHandle, lockToken) is provider-specific and should not be persisted
-2. **Clear Contracts**: `add()` takes Job (what to store), `fetch()` returns ActiveJob (what to process), `ack/nack()` take ActiveJob (what to acknowledge)
-3. **Type Safety**: Handler receives `ActiveJob<T>` with all data needed for processing and acknowledgment
+**Complete Definitions**: See src/core/types.mts:Job and src/core/types.mts:ActiveJob for full interface definitions.
 
 **Data Flow:**
 ```
-Queue.add(job: Job<T>)
-  → Provider.add(job: Job<T>)
-    → Store in backend
-
-Provider.fetch()
-  → Retrieve from backend
-    → Add runtime metadata (receiptHandle, etc.)
-      → Return ActiveJob<T>[]
-
-Worker calls handler(data: T, job: ActiveJob<T>)
-  → Handler processes data
-    → Worker calls Provider.ack(job: ActiveJob<T>)
-      → Provider uses job.providerMetadata.receiptHandle to acknowledge
+add() → Provider stores Job<T>
+fetch() → Provider retrieves Job<T>, adds providerMetadata, returns ActiveJob<T>[]
+handler() → Processes ActiveJob<T>
+ack()/nack() → Provider uses providerMetadata to acknowledge/reject
 ```
 
-### Provider Implementation Example
+### Provider Implementation Patterns
 
-Here's how a memory provider implements the pull model:
+**Reference Implementation**: See src/providers/memory/memory.provider.mts for a complete working example of the pull model.
 
-```typescript
-class MemoryProvider implements IQueueProvider {
-  private jobs = new Map<string, Job>();
-  private activeJobs = new Map<string, ActiveJob>();
+**Key Implementation Patterns:**
 
-  capabilities = {
-    supportsDelayedJobs: true,
-    supportsPriority: true,
-    supportsBatching: true,
-    supportsRetries: true,
-    supportsDLQ: true,
-    supportsLongPolling: false,  // no blocking in memory
-    maxJobSize: 0,               // unlimited
-    maxBatchSize: 0,             // unlimited
-    maxDelaySeconds: 0           // unlimited
-  };
+1. **Job → ActiveJob Transformation**:
+   - `fetch()` must add provider-specific runtime metadata (lockToken, receiptHandle, etc.) to Job objects
+   - This metadata is used later by `ack()`/`nack()` to acknowledge with the provider's backend
 
-  /**
-   * Add job - stores persistent state
-   */
-  async add<T>(job: Job<T>, options?: JobOptions): Promise<Result<Job<T>, QueueError>> {
-    try {
-      // check for duplicate IDs
-      if (this.jobs.has(job.id)) {
-        return Result.err({
-          type: "DataError",
-          code: "DUPLICATE",
-          message: `Job with ID ${job.id} already exists`,
-          retryable: false,
-          jobId: job.id,
-          queueName: job.queueName,
-        });
-      }
+2. **Runtime Metadata Usage**:
+   - `ack()` and `nack()` use `job.providerMetadata` to validate active jobs and communicate with backend
+   - Example: SQS needs receiptHandle to delete messages, Redis needs lockToken to release locks
 
-      // store persistent state
-      this.jobs.set(job.id, job);
+3. **Persistent State Updates**:
+   - `ack()` and `nack()` update the stored Job (status, timestamps), NOT the ActiveJob metadata
+   - Runtime metadata is ephemeral and discarded after acknowledgment
 
-      return Result.ok(job);
-    } catch (error) {
-      return Result.err({
-        type: "RuntimeError",
-        code: "ENQUEUE",
-        message: `Failed to add job: ${error.message}`,
-        retryable: true,
-        cause: error,
-      });
-    }
-  }
+4. **Result Type**:
+   - All operations return `Result<T, QueueError>` for explicit error handling
+   - Forces callers to handle failures at the type level, preventing silent errors
 
-  /**
-   * Fetch jobs - returns ActiveJob with runtime metadata
-   */
-  async fetch<T>(
-    batchSize: number,
-    waitTimeMs?: number
-  ): Promise<Result<ActiveJob<T>[], QueueError>> {
-    try {
-      const waitingJobs = Array.from(this.jobs.values())
-        .filter(job => job.status === 'waiting')
-        .slice(0, batchSize);
-
-      // convert to ActiveJob by adding runtime metadata
-      const activeJobs: ActiveJob<T>[] = waitingJobs.map(job => ({
-        ...job,
-        providerMetadata: {
-          lockToken: `lock-${job.id}-${Date.now()}`,  // in-memory lock
-        },
-      } as ActiveJob<T>));
-
-      // track as active
-      activeJobs.forEach(job => this.activeJobs.set(job.id, job));
-
-      return Result.ok(activeJobs);
-    } catch (error) {
-      return Result.err({
-        type: "RuntimeError",
-        code: "CONNECTION",
-        message: `Fetch failed: ${error.message}`,
-        retryable: true,
-        cause: error,
-      });
-    }
-  }
-
-  /**
-   * Acknowledge - uses runtime metadata from ActiveJob
-   */
-  async ack<T>(job: ActiveJob<T>, result?: unknown): Promise<Result<void, QueueError>> {
-    try {
-      // validate lock token from runtime metadata
-      const activeJob = this.activeJobs.get(job.id);
-      if (!activeJob) {
-        return Result.err({
-          type: "RuntimeError",
-          code: "PROCESSING",
-          message: `Job ${job.id} is not active`,
-          retryable: false,
-          jobId: job.id,
-        });
-      }
-
-      // update persistent state
-      const persistedJob = this.jobs.get(job.id);
-      if (persistedJob) {
-        this.jobs.set(job.id, {
-          ...persistedJob,
-          status: 'completed',
-          completedAt: new Date(),
-        });
-      }
-
-      // remove from active tracking
-      this.activeJobs.delete(job.id);
-
-      return Result.ok(undefined);
-    } catch (error) {
-      return Result.err({
-        type: "RuntimeError",
-        code: "PROCESSING",
-        message: `Ack failed: ${error.message}`,
-        retryable: true,
-        jobId: job.id,
-        cause: error,
-      });
-    }
-  }
-
-  /**
-   * Negative acknowledge - handles retry/DLQ logic
-   */
-  async nack<T>(job: ActiveJob<T>, error: Error): Promise<Result<void, QueueError>> {
-    try {
-      const persistedJob = this.jobs.get(job.id);
-      if (!persistedJob) {
-        return Result.err({
-          type: "NotFoundError",
-          code: "JOB_NOT_FOUND",
-          message: `Job ${job.id} not found`,
-          retryable: false,
-          resourceId: job.id,
-          resourceType: "job",
-        });
-      }
-
-      // increment attempts
-      const newAttempts = persistedJob.attempts + 1;
-
-      if (newAttempts >= persistedJob.maxAttempts) {
-        // move to DLQ (failed state)
-        this.jobs.set(job.id, {
-          ...persistedJob,
-          status: 'failed',
-          attempts: newAttempts,
-          failedAt: new Date(),
-          error: error.message,
-        });
-      } else {
-        // retry - move back to waiting
-        this.jobs.set(job.id, {
-          ...persistedJob,
-          status: 'waiting',
-          attempts: newAttempts,
-          error: error.message,
-        });
-      }
-
-      // remove from active tracking
-      this.activeJobs.delete(job.id);
-
-      return Result.ok(undefined);
-    } catch (err) {
-      return Result.err({
-        type: "RuntimeError",
-        code: "PROCESSING",
-        message: `Nack failed: ${err.message}`,
-        retryable: true,
-        jobId: job.id,
-        cause: err,
-      });
-    }
-  }
-
-  async getDLQJobs<T>(limit: number = 100): Promise<Result<Job<T>[], QueueError>> {
-    try {
-      const failedJobs = Array.from(this.jobs.values())
-        .filter(job => job.status === 'failed')
-        .slice(0, limit);
-
-      return Result.ok(failedJobs as Job<T>[]);
-    } catch (error) {
-      return Result.err({
-        type: "RuntimeError",
-        code: "PROVIDER_ERROR",
-        message: `Failed to get DLQ jobs: ${error.message}`,
-        retryable: true,
-        cause: error,
-      });
-    }
-  }
-
-  async retryJob(jobId: string): Promise<Result<void, QueueError>> {
-    try {
-      const job = this.jobs.get(jobId);
-      if (!job) {
-        return Result.err({
-          type: "NotFoundError",
-          code: "JOB_NOT_FOUND",
-          message: `Job ${jobId} not found`,
-          retryable: false,
-          resourceId: jobId,
-          resourceType: "job",
-        });
-      }
-
-      // move from failed back to waiting
-      this.jobs.set(jobId, {
-        ...job,
-        status: 'waiting',
-        attempts: 0,  // reset attempts
-      });
-
-      return Result.ok(undefined);
-    } catch (error) {
-      return Result.err({
-        type: "RuntimeError",
-        code: "PROVIDER_ERROR",
-        message: `Failed to retry job: ${error.message}`,
-        retryable: true,
-        cause: error,
-      });
-    }
-  }
-
-  // ... other methods (pause, resume, getStats, etc.)
-}
-```
-
-**Key Patterns:**
-
-1. **Job → ActiveJob Transformation**: `fetch()` adds runtime metadata (lockToken, receiptHandle) to convert Job to ActiveJob
-2. **Runtime Metadata Usage**: `ack()` and `nack()` use `job.providerMetadata` to validate/track active jobs
-3. **Persistent State Updates**: `ack()` and `nack()` update the stored Job, not the ActiveJob
-4. **Result Type**: All operations return `Result<T, QueueError>` for explicit error handling
+**Alternative Implementation**: See src/providers/bullmq/bullmq.provider.mts for push model using BullMQ's native worker mechanism.
 
 ### The `nack()` Contract
 
@@ -667,216 +309,60 @@ class Queue<T = unknown> {
 
 ### ProviderHelper Pattern
 
-Resolves provider instances from various input formats.
+**Purpose**: Resolve flexible provider input (instance, factory, or undefined) into a bound IQueueProvider.
 
-**Purpose**:
-- Accept flexible provider input (instance, factory, undefined)
-- Default to MemoryProvider for zero-config development
-- Bind provider to queue name (queue-scoped providers)
+**Design Decisions:**
+- **Zero-config default**: When no provider specified, defaults to MemoryProvider for immediate usability
+- **Factory pattern support**: Accepts IProviderFactory to enable shared connections across multiple queues
+- **Type safety**: Uses type guards to distinguish factory from instance at compile-time
 
-**Usage Example:**
-```typescript
-import { ProviderHelper } from '../core/provider-helpers.mjs';
+**Why Multiple Input Formats?**
+- Developer experience: `new Queue('emails')` should just work (development)
+- Production efficiency: Factory pattern allows sharing Redis/database connections across queues
+- Flexibility: Direct instance injection for testing or custom providers
 
-class Queue<T = unknown> {
-  private readonly boundProvider: IQueueProvider;
-
-  constructor(
-    public readonly name: string,
-    options?: { provider?: IQueueProvider | IProviderFactory }
-  ) {
-    // resolve provider (default to MemoryProvider if not specified)
-    this.boundProvider = ProviderHelper.resolveBoundProvider(
-      options?.provider,
-      name
-    );
-  }
-}
-```
-
-**Supported Input Formats:**
-```typescript
-// 1. No provider - uses MemoryProvider (development default)
-const queue = new Queue('emails');
-
-// 2. IQueueProvider instance (already bound to queue)
-const queue = new Queue('emails', {
-  provider: new MemoryProvider('emails')
-});
-
-// 3. IProviderFactory (creates queue-scoped provider)
-const factory = new BullMQProviderFactory({ connection: redis });
-const queue = new Queue('emails', { provider: factory });
-// calls factory.forQueue('emails') internally
-```
-
-**Key Methods:**
-- `resolveBoundProvider(provider, queueName)`: Resolves any provider format to `IQueueProvider`
-- `isProviderFactory(provider)`: Type guard for factory vs instance
-
-**Why This Matters**:
-- **Zero-config**: `new Queue('emails')` just works (defaults to memory)
-- **Shared connections**: Use factory for multiple queues with same backend
-- **Type safety**: Compile-time checks for provider compatibility
+**Implementation**: See src/core/provider-helpers.mts:ProviderHelper for the resolution logic.
 
 ---
 
 ## Security Considerations
 
+**Design Philosophy**: Security is a userland responsibility. This library is a thin translator and does not implement security features like authentication, authorization, encryption, or audit logging.
+
 ### Provider Authentication
 
-The library does not implement authentication logic. Instead, credentials are passed directly to the provider's native SDK through the provider constructor.
+**Decision**: Pass credentials directly to provider SDKs.
 
-**Redis/BullMQ Authentication**:
-```typescript
-const provider = new RedisProvider({
-  connection: {
-    host: process.env.REDIS_HOST,
-    port: parseInt(process.env.REDIS_PORT),
-    password: process.env.REDIS_PASSWORD,  // use environment variables
-    tls: {                                  // enable TLS for production
-      rejectUnauthorized: true
-    }
-  }
-});
-```
+**Why?** Each provider has its own authentication mechanism (Redis password, AWS IAM, RabbitMQ credentials). Abstracting authentication would create a leaky abstraction that adds complexity without providing value.
 
-**AWS SQS Authentication**:
-```typescript
-const provider = new SQSProvider({
-  region: process.env.AWS_REGION,
-  // uses AWS SDK credential chain (IAM roles, env vars, ~/.aws/credentials)
-  queueUrl: process.env.SQS_QUEUE_URL
-});
-
-// minimum IAM permissions required:
-// {
-//   "Effect": "Allow",
-//   "Action": [
-//     "sqs:SendMessage",
-//     "sqs:ReceiveMessage",
-//     "sqs:DeleteMessage",
-//     "sqs:GetQueueAttributes"
-//   ],
-//   "Resource": "arn:aws:sqs:region:account:queue-name"
-// }
-```
-
-**RabbitMQ Authentication**:
-```typescript
-const provider = new RabbitMQProvider({
-  url: process.env.RABBITMQ_URL,  // amqps://user:pass@host:port
-  // or explicit credentials
-  connection: {
-    hostname: process.env.RABBITMQ_HOST,
-    port: 5671,  // use 5671 for TLS
-    username: process.env.RABBITMQ_USER,
-    password: process.env.RABBITMQ_PASSWORD,
-    protocol: 'amqps'  // enable TLS
-  }
-});
-```
+**Consequence**: Users must configure authentication according to each provider's requirements. See provider-specific documentation (BullMQ, SQS, RabbitMQ) for authentication setup.
 
 ### Data Encryption
 
-**In-Transit Encryption**:
-- Always use TLS-enabled connections in production
-- Redis: Use `tls` option in connection config
-- SQS: Enforced by AWS (HTTPS only)
-- RabbitMQ: Use `amqps://` protocol
+**Decision**: No built-in payload encryption.
 
-**At-Rest Encryption**:
-- Redis: Configure Redis with encryption at rest (Redis Enterprise, AWS ElastiCache encryption)
-- SQS: Enable server-side encryption via AWS KMS in queue settings
-- RabbitMQ: Configure disk encryption at the infrastructure level
+**Why?** Encryption requirements vary (symmetric vs asymmetric, key management strategies, compliance requirements). A one-size-fits-all solution would be opinionated and limiting.
 
-**Payload Encryption** (if handling sensitive data):
-```typescript
-// userland responsibility - encrypt before queueing
-const encrypted = await encrypt(jobData, encryptionKey);
-await queue.add('process', { encrypted });
-
-// decrypt in worker
-worker.process(async (job) => {
-  const decrypted = await decrypt(job.data.encrypted, encryptionKey);
-  return processData(decrypted);
-});
-```
-
-### Secret Management
-
-**Best Practices**:
-- Store credentials in environment variables, never in code
-- Use secret management services (AWS Secrets Manager, HashiCorp Vault, Kubernetes Secrets)
-- Rotate credentials regularly
-- Use IAM roles when running on cloud platforms (AWS, GCP, Azure)
-
-**Example with AWS Secrets Manager**:
-```typescript
-const secrets = await secretsManager.getSecretValue({ SecretId: 'queue-credentials' }).promise();
-const creds = JSON.parse(secrets.SecretString);
-
-const provider = new RedisProvider({
-  connection: {
-    host: creds.redis_host,
-    password: creds.redis_password,
-    tls: { rejectUnauthorized: true }
-  }
-});
-```
+**Consequence**:
+- **In-Transit**: Users must configure TLS at the provider level (Redis tls option, amqps:// for RabbitMQ, HTTPS for SQS)
+- **At-Rest**: Users must configure provider backend encryption (Redis Enterprise, AWS KMS for SQS, disk encryption for RabbitMQ)
+- **Payload**: Users must encrypt sensitive data before queueing and decrypt in handlers if needed
 
 ### Payload Validation
 
-**Userland Responsibility**: The library passes payloads opaquely. Applications must validate and sanitize job data.
+**Decision**: Pass job payloads opaquely (no validation).
 
-```typescript
-import { z } from 'zod';
+**Why?** Validation logic is application-specific. The library can't know what constitutes valid data for your domain.
 
-const JobSchema = z.object({
-  userId: z.string().uuid(),
-  action: z.enum(['email', 'sms', 'push']),
-  data: z.record(z.unknown())
-});
-
-worker.process(async (job) => {
-  // validate before processing
-  const validated = JobSchema.parse(job.data);
-  return processJob(validated);
-});
-```
+**Consequence**: Users must validate job payloads in their handlers before processing (recommended: use schema validation libraries like Zod, Joi, or Yup).
 
 ### Audit Logging
 
-**Use events for audit trails**:
-```typescript
-worker.on('active', (payload) => {
-  auditLog.info('Job started', {
-    jobId: payload.jobId,
-    queueName: payload.queueName,
-    attempts: payload.attempts,
-    timestamp: Date.now()
-  });
-});
+**Decision**: Emit comprehensive events, but don't log them.
 
-worker.on('completed', (payload) => {
-  auditLog.info('Job completed', {
-    jobId: payload.jobId,
-    queueName: payload.queueName,
-    duration: payload.duration,
-    timestamp: Date.now()
-  });
-});
+**Why?** Logging strategies vary (structured logs, audit trails, compliance requirements, PII considerations). Built-in logging would force opinions on format, destination, and retention.
 
-worker.on('failed', (payload) => {
-  auditLog.error('Job failed', {
-    jobId: payload.jobId,
-    queueName: payload.queueName,
-    error: payload.error,
-    willRetry: payload.willRetry,
-    timestamp: Date.now()
-  });
-});
-```
+**Consequence**: Users must attach event listeners to Worker/Queue instances and integrate with their logging infrastructure. See Observability section for available events.
 
 ---
 
@@ -890,299 +376,57 @@ The worker manages the client-side job processing loop.
 
 ### Worker Architecture
 
-```typescript
-class Worker<T = any> extends TypedEventEmitter {
-  private running = false;
-  private activeJobs = 0;
-  private concurrency: number;
-  private batchSize: number;
-  private pollInterval: number;
-  private errorBackoff: number;
+**Implementation**: See src/api/worker.mts:Worker for complete implementation.
 
-  constructor(
-    queueName: string,
-    private readonly handler: JobHandler<T>,  // receives (data: T, job: ActiveJob<T>)
-    options?: WorkerOptions
-  ) {
-    this.concurrency = options?.concurrency || 1;
-    this.batchSize = options?.batchSize || 1;
-    this.pollInterval = options?.pollInterval || 100;
-    this.errorBackoff = options?.errorBackoff || 1000;
-  }
+**Key Design Decisions:**
 
-  async start(): Promise<void> {
-    this.running = true;
-    this.fetchLoop();
-  }
+**1. Managed Fetch Loop**
+- Worker runs a continuous fetch loop that respects concurrency limits
+- Handles backpressure automatically (doesn't fetch more than it can process)
+- Implements error backoff to avoid hammering failing providers
 
-  private async fetchLoop(): Promise<void> {
-    while (this.running) {
-      try {
-        // backpressure: respect concurrency limit
-        if (this.activeJobs >= this.concurrency) {
-          await this.wait(this.pollInterval);
-          continue;
-        }
+**2. Event Emission at Lifecycle Points**
+- Emits `active`, `completed`, `failed`, `job.retrying` for observability hooks
+- Emits `queue.error` for operational issues (fetch failures, ack/nack failures)
+- Emits `processor.shutting_down`, `processor.shutdown_timeout` for graceful shutdown tracking
 
-        const availableSlots = this.concurrency - this.activeJobs;
-        const fetchCount = Math.min(this.batchSize, availableSlots);
+**3. Handler Signature**
+- Handler receives `(data: T, job: ActiveJob<T>)` not just data
+- Provides access to job metadata (attempts, id, timestamps) for conditional logic
+- ActiveJob includes providerMetadata for advanced use cases (though rarely needed by handlers)
 
-        // fetch batch of jobs (returns ActiveJob with runtime metadata)
-        const result = await this.provider.fetch<T>(fetchCount);
+**4. Dual Result Handling**
+- Worker automatically calls `ack()` on success, `nack()` on handler errors
+- Result type from handler is ignored (provider handles retry logic)
+- Handler errors are passed to `nack()` which delegates to provider's retry mechanism
 
-        if (!result.success) {
-          // emit error and backoff
-          this.emit('queue.error', {
-            queueName: this.queueName,
-            error: result.error,
-          });
-          await this.wait(this.errorBackoff);
-          continue;
-        }
+### Graceful Shutdown Design
 
-        const jobs = result.data;
+**Key Decision**: `finishActiveJobs` waits for **in-flight jobs only**, NOT the entire queue.
 
-        if (jobs.length === 0) {
-          await this.wait(this.pollInterval);
-          continue;
-        }
+**Why?** Different semantics suit different deployment scenarios:
+- **Graceful shutdown** (finishActiveJobs: true): Wait for jobs currently being processed. Use for rolling deployments.
+- **Immediate shutdown** (finishActiveJobs: false): Abandon in-flight jobs. Use when jobs are idempotent or for emergency shutdowns.
 
-        // process jobs concurrently
-        for (const job of jobs) {
-          this.processJob(job); // fire and forget
-        }
-      } catch (error) {
-        // unexpected error in fetch loop
-        this.emit('queue.error', {
-          queueName: this.queueName,
-          error,
-        });
-        await this.wait(this.errorBackoff);
-      }
-    }
-  }
+**Trade-off**: Clearer semantics but requires understanding of "active" vs "waiting" jobs. Does NOT drain the entire queue—that would be unpredictable in high-throughput systems.
 
-  private async processJob(job: ActiveJob<T>): Promise<void> {
-    this.activeJobs++;
-    const startTime = Date.now();
+**Provider Lifecycle Management**:
+- `disconnectProvider: false` (default): Worker doesn't own the provider, keeps connection alive (shared provider pattern)
+- `disconnectProvider: true`: Worker owns the provider, disconnects on close (dedicated provider pattern)
 
-    try {
-      this.emit('active', {
-        jobId: job.id,
-        queueName: this.queueName,
-        attempts: job.attempts,
-        status: job.status,
-      });
+**Why separate flag?** Allows multiple workers to share a provider (common in production). Last worker to shut down doesn't orphan the provider connection.
 
-      // call handler with data and ActiveJob
-      const result = await this.handler(job.data, job);
-
-      if (!result.success) {
-        throw result.error;
-      }
-
-      // acknowledge with ActiveJob (includes runtime metadata)
-      const ackResult = await this.provider.ack(job);
-
-      if (!ackResult.success) {
-        this.emit('queue.error', {
-          queueName: this.queueName,
-          error: ackResult.error,
-        });
-      }
-
-      const duration = Date.now() - startTime;
-      this.emit('completed', {
-        jobId: job.id,
-        queueName: this.queueName,
-        duration,
-        attempts: job.attempts,
-        status: 'completed',
-      });
-    } catch (error) {
-      // nack with ActiveJob (includes runtime metadata)
-      const nackResult = await this.provider.nack(job, error);
-
-      if (!nackResult.success) {
-        this.emit('queue.error', {
-          queueName: this.queueName,
-          error: nackResult.error,
-        });
-      }
-
-      const duration = Date.now() - startTime;
-      const willRetry = job.attempts + 1 < job.maxAttempts;
-
-      this.emit('failed', {
-        jobId: job.id,
-        queueName: this.queueName,
-        error: error.message,
-        errorType: error.type || 'Error',
-        attempts: job.attempts + 1,
-        status: willRetry ? 'waiting' : 'failed',
-        duration,
-        willRetry,
-      });
-
-      if (willRetry) {
-        this.emit('job.retrying', {
-          jobId: job.id,
-          queueName: this.queueName,
-          attempts: job.attempts + 1,
-          status: 'waiting',
-          maxAttempts: job.maxAttempts,
-        });
-      }
-    } finally {
-      this.activeJobs--;
-    }
-  }
-
-  /**
-   * Gracefully shutdown worker
-   *
-   * @param options.timeout - Max time to wait for active jobs (default: 30s)
-   * @param options.finishActiveJobs - Wait for active jobs to complete (default: true)
-   * @param options.disconnectProvider - Disconnect provider after shutdown (default: false)
-   */
-  async close(options?: {
-    timeout?: number;
-    finishActiveJobs?: boolean;
-    disconnectProvider?: boolean;
-  }): Promise<void> {
-    const {
-      timeout = 30000,
-      finishActiveJobs = true,
-      disconnectProvider = false,
-    } = options || {};
-
-    // stop fetching new jobs
-    this.running = false;
-
-    this.emit('processor.shutting_down', {});
-
-    // wait for currently active jobs to complete
-    if (finishActiveJobs) {
-      const deadline = Date.now() + timeout;
-      while (this.activeJobs > 0 && Date.now() < deadline) {
-        await this.wait(100);
-      }
-
-      // if timeout exceeded, emit event (userland decides how to handle)
-      if (this.activeJobs > 0) {
-        this.emit('processor.shutdown_timeout', {
-          queueName: this.queueName,
-          timeout,
-          activeJobs: this.activeJobs,
-          message: `Shutdown timeout exceeded after ${timeout}ms. ${this.activeJobs} jobs still active.`,
-        });
-      }
-    }
-
-    // optionally disconnect provider (for owned providers)
-    if (disconnectProvider) {
-      await this.provider.disconnect();
-    }
-  }
-}
-```
-
-### Graceful Shutdown Behavior
-
-**Important Clarification**: The `finishActiveJobs` option (formerly called `drain`) controls whether the worker waits for **currently active jobs only**, not the entire queue.
-
-**What It Does**:
-- `finishActiveJobs: true` (default): Wait for jobs that are **already being processed** to complete
-- `finishActiveJobs: false`: Immediately disconnect, abandoning active jobs
-
-**What It Does NOT Do**:
-- ❌ Does NOT fetch new jobs from the queue
-- ❌ Does NOT process all remaining jobs in the entire queue
-- ❌ Does NOT guarantee zero jobs left in queue after shutdown
-
-**Example**:
-```typescript
-// graceful shutdown - finish active jobs, keep provider connected
-await worker.close({
-  timeout: 30000,           // wait up to 30s
-  finishActiveJobs: true,   // let active jobs complete
-  disconnectProvider: false // keep provider connected (for shared providers)
-});
-
-// graceful shutdown - finish active jobs and disconnect owned provider
-await worker.close({
-  timeout: 30000,
-  finishActiveJobs: true,
-  disconnectProvider: true  // disconnect provider (for owned providers)
-});
-
-// immediate shutdown - abandon active jobs
-await worker.close({
-  finishActiveJobs: false,  // disconnect immediately
-  disconnectProvider: true
-});
-```
-
-**Use Cases**:
-- `finishActiveJobs: true`: Production deployments, rolling updates, graceful restarts
-- `finishActiveJobs: false`: Emergency shutdown, development, when jobs are idempotent and can be retried
-- `disconnectProvider: true`: Worker owns the provider instance (not shared with other queues/workers)
-- `disconnectProvider: false`: Provider is shared across multiple queues/workers (user manages lifecycle)
-
-**Shared Provider Pattern**:
-```typescript
-// shared provider across multiple queues/workers
-const provider = new BullMQProviderFactory({ connection: redis });
-
-const emailQueue = new Queue('emails', { provider });
-const emailWorker = new Worker('emails', emailHandler, { provider });
-
-const smsQueue = new Queue('sms', { provider });
-const smsWorker = new Worker('sms', smsHandler, { provider });
-
-// shutdown workers - keep provider connected
-await emailWorker.close({ disconnectProvider: false });
-await smsWorker.close({ disconnectProvider: false });
-
-// user explicitly disconnects shared provider
-await provider.disconnect();
-```
+**Shutdown Timeout**: If active jobs exceed timeout, emits `processor.shutdown_timeout` event rather than forcing termination. Userland decides whether to kill the process or wait longer.
 
 ### Backpressure Mechanism
 
-The worker implements **automatic backpressure** to prevent memory exhaustion:
+**Design**: Automatic backpressure to prevent memory exhaustion from fetching faster than processing.
 
-**How It Works**:
-1. Track `activeJobs` count (jobs currently being processed)
-2. Before fetching new jobs, check: `if (activeJobs >= concurrency) { wait() }`
-3. Only fetch when slots are available: `fetchCount = min(batchSize, concurrency - activeJobs)`
+**How**: Track active job count. Before fetching, check `if (activeJobs >= concurrency) { wait() }`. Only fetch `min(batchSize, concurrency - activeJobs)` jobs.
 
-**Why This Matters**:
-```typescript
-// without backpressure (BAD):
-while (running) {
-  const jobs = await fetch(100);  // always fetch 100
-  for (job of jobs) process(job); // activeJobs grows unbounded
-}
-// result: OOM if processing is slower than fetching
+**Why?** Without backpressure, fetch loop can outpace processing and cause OOM. With backpressure, memory usage is bounded by concurrency setting.
 
-// with backpressure (GOOD):
-while (running) {
-  if (activeJobs >= concurrency) { wait(); continue; }
-  const jobs = await fetch(concurrency - activeJobs);  // only fetch what we can handle
-  for (job of jobs) process(job);
-}
-// result: memory bounded by concurrency setting
-```
-
-**Configuration**:
-```typescript
-const worker = new Worker('jobs', handler, {
-  concurrency: 10  // max 10 jobs in memory simultaneously
-});
-```
-
-This ensures the worker never holds more jobs in memory than it can actively process.
+**Trade-off**: Slightly more complex fetch loop logic, but prevents catastrophic failure in high-throughput scenarios. Alternative (no backpressure) would require users to manually tune fetch intervals, which is error-prone.
 
 ### Concurrency Control
 
@@ -1200,70 +444,28 @@ This ensures the worker never holds more jobs in memory than it can actively pro
 
 ## Observability
 
-**Userland Responsibility**: This library does NOT provide built-in observability instrumentation. Instead, it emits events that allow you to integrate with your observability stack of choice.
+**Design Decision**: No built-in observability instrumentation. Emit comprehensive events instead.
 
-### Available Events
+**Why?** Observability requirements vary wildly:
+- Different telemetry backends (OpenTelemetry, Datadog, New Relic, Prometheus, custom)
+- Different metric naming conventions and cardinality concerns
+- Different sampling strategies and cost considerations
+- Different compliance requirements (PII, retention, audit trails)
 
-**Worker Events**:
-- `active`: Job processing started
-  - Payload: `{ jobId, queueName, attempts, status, workerId?, metadata? }`
-- `completed`: Job processing succeeded
-  - Payload: `{ jobId, queueName, attempts, status, duration, metadata? }`
-- `failed`: Job processing failed
-  - Payload: `{ jobId, queueName, error, errorType, attempts, status, duration, willRetry, retryDelay? }`
-- `job.retrying`: Job is being retried
-  - Payload: `{ jobId, queueName, attempts, status, maxAttempts?, attempt? }`
-- `processor.shutting_down`: Worker is shutting down
-  - Payload: `{}`
-- `processor.shutdown_timeout`: Graceful shutdown timeout exceeded (active jobs still running)
-  - Payload: `{ queueName, timeout, activeJobs, message }`
-
-**Queue Events**:
-- `queue.error`: Queue-level error occurred
-  - Payload: `{ queueName, error }`
-- `queue.drained`: Queue has no more jobs
-  - Payload: `{ queueName }`
-- `queue.paused`: Queue was paused
-  - Payload: `{ queueName }`
-- `queue.resumed`: Queue was resumed
-  - Payload: `{ queueName }`
-
-### Usage Examples
-
-```typescript
-// logging
-worker.on('active', (payload) => {
-  console.log(`Job ${payload.jobId} started on ${payload.queueName}`);
-});
-
-worker.on('completed', (payload) => {
-  console.log(`Job ${payload.jobId} completed in ${payload.duration}ms`);
-});
-
-worker.on('failed', (payload) => {
-  console.error(`Job ${payload.jobId} failed: ${payload.error}`);
-  if (payload.willRetry) {
-    console.log(`Will retry in ${payload.retryDelay}ms`);
-  }
-});
-
-// error tracking
-queue.on('queue.error', (payload) => {
-  errorTracker.captureException(payload.error, {
-    tags: { queue: payload.queueName }
-  });
-});
-```
-
-### Why Userland Observability?
-
-**Thin Abstraction Philosophy**: Observability strategies vary widely across organizations (OpenTelemetry, Datadog, New Relic, custom solutions). Building observability into the library would:
-- Increase bundle size with dependencies most users won't need
-- Force opinions on metric naming, sampling, and export strategies
+Building observability into the library would:
+- Add mandatory dependencies most users don't need
+- Force opinions on metric naming and structure
 - Create version lock-in with observability SDKs
-- Violate the "thin translation layer" principle
+- Increase bundle size significantly
+- Violate "thin translation layer" principle
 
-**Events Provide the Hook**: By emitting comprehensive events with rich payloads, we give you complete control to integrate with your existing observability stack
+**Trade-off**: Users must attach event listeners and integrate with their own observability stack. More setup work, but complete flexibility.
+
+**Available Events**: See src/core/events.mts:QueueEventMap for complete event types and payloads. Key events:
+- **Worker lifecycle**: `active`, `completed`, `failed`, `job.retrying`, `processor.shutting_down`, `processor.shutdown_timeout`
+- **Queue operations**: `queue.error`, `queue.drained`, `queue.paused`, `queue.resumed`
+
+Each event includes rich context (jobId, queueName, timestamps, error details, retry info) to enable detailed monitoring and alerting.
 
 ---
 
@@ -1593,62 +795,31 @@ for (const provider of providers) {
 
 ## Performance Considerations
 
+**Design Philosophy**: Performance optimization is primarily a deployment and configuration concern, not a library concern.
+
 ### Batch Fetching
 
-Use provider's native batching when available:
-```typescript
-// efficient
-const jobs = await provider.fetch(10);  // fetch 10 jobs in one call
+**Design**: Worker supports configurable batch size via `batchSize` option.
 
-// inefficient
-for (let i = 0; i < 10; i++) {
-  const job = await provider.fetch(1);  // 10 separate calls
-}
-```
+**Why?** Providers like SQS support fetching multiple messages in one API call (up to 10). Batching reduces network overhead and improves throughput.
 
-### Concurrency
+**Trade-off**: Larger batches improve throughput but increase latency (waiting for batch to fill). Users tune based on workload characteristics.
 
-Balance concurrency with memory:
-```typescript
-// reasonable for most workloads
-const worker = new Worker('jobs', handler, {
-  concurrency: 10  // process 10 jobs in parallel
-});
+### Concurrency Control
 
-// may cause OOM if jobs are memory-intensive
-const worker = new Worker('jobs', handler, {
-  concurrency: 1000  // probably too high
-});
-```
+**Design**: In-process concurrency via `concurrency` option, multi-process via deployment (Kubernetes replicas, ECS tasks, pm2).
 
-Monitor and adjust based on your application metrics:
-```typescript
-// userland monitoring
-setInterval(() => {
-  const memUsage = process.memoryUsage();
-  if (memUsage.rss > threshold) {
-    worker.setConcurrency(1);  // throttle
-  }
-}, 5000);
-```
+**Why separate concerns?** In-process concurrency is bounded by memory. Multi-process concurrency is bounded by infrastructure. Library handles the former, users handle the latter via deployment configuration.
+
+**Trade-off**: No auto-scaling or dynamic concurrency adjustment. Users must monitor and adjust based on their metrics.
 
 ### Connection Pooling
 
-Reuse provider connections:
-```typescript
-// good - single provider instance, shared connection
-const provider = new RedisProvider({ connection: redis });
-const queue1 = new Queue('emails', { provider });
-const queue2 = new Queue('jobs', { provider });
+**Design**: Factory pattern (`IProviderFactory.forQueue()`) enables sharing provider connections across multiple queues.
 
-// bad - separate connections
-const queue1 = new Queue('emails', {
-  provider: new RedisProvider({ connection: redis1 })
-});
-const queue2 = new Queue('jobs', {
-  provider: new RedisProvider({ connection: redis2 })
-});
-```
+**Why?** Database/Redis connections are expensive. Creating a connection per queue wastes resources. Factory pattern allows one connection pool to serve multiple queues.
+
+**Trade-off**: Slightly more complex provider setup (factory vs direct instance), but significant resource savings in multi-queue scenarios.
 
 ---
 
@@ -1656,15 +827,21 @@ const queue2 = new Queue('jobs', {
 
 This architecture delivers:
 
-✅ **Thin abstraction** - ~1,500-2,000 lines vs. 5,000+ for framework approach
-✅ **Honest behavior** - No hidden magic, clear capability communication
-✅ **Provider strengths** - Leverage native features instead of reimplementing
-✅ **Event-driven hooks** - Comprehensive events for userland observability integration
+✅ **Thin abstraction** - Translation layer, not a framework
+✅ **Honest behavior** - No feature virtualization, clear capability communication
+✅ **Provider strengths** - Delegates to native implementations (retries, state management, DLQ)
+✅ **Event-driven extensibility** - Comprehensive events for userland integration
 ✅ **Maintainability** - Simple codebase, clear responsibilities
-✅ **Extensibility** - Easy to add new providers
+✅ **Extensibility** - Easy to add new providers via IQueueProvider interface
 
 By staying focused on translation rather than reimplementation, we deliver genuine value without the complexity and brittleness of a framework approach.
 
+**Design Trade-offs Summary**:
+- ❌ No built-in observability → ✅ Complete flexibility for userland integration
+- ❌ No built-in security features → ✅ Uses battle-tested provider SDKs
+- ❌ No feature virtualization → ✅ Honest abstractions with warn-and-degrade
+- ❌ Managed Worker (framework-like) → ✅ Handles complex orchestration correctly
+
 ---
 
-**For detailed analysis and rationale, see [ARCHITECTURE_AUDIT.md](./ARCHITECTURE_AUDIT.md)**
+**Documentation Philosophy**: This document focuses on architecture decisions and trade-offs. For API usage and examples, see README.md. For documentation maintenance principles, see DOCUMENTATION_PRINCIPLES.md.
