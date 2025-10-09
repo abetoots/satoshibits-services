@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ReaderResult, liftDomain, liftAsync } from './reader-result.mjs';
 import { Result } from './result.mjs';
 
@@ -195,6 +195,14 @@ describe('ReaderResult', () => {
   });
 
   describe('zip', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     it('combines two successful ReaderResults', async () => {
       const rr1 = ReaderResult.of<TestDeps, string, number>(5);
       const rr2 = ReaderResult.of<TestDeps, string, string>('hello');
@@ -223,32 +231,42 @@ describe('ReaderResult', () => {
     });
 
     it('runs in parallel', async () => {
-      const start = Date.now();
       const rr1 = ReaderResult.tryCatch<TestDeps, string, number>(
-        async () => { 
+        async () => {
           await new Promise(resolve => setTimeout(resolve, 50));
           return 1;
         },
         () => 'error'
       );
       const rr2 = ReaderResult.tryCatch<TestDeps, string, number>(
-        async () => { 
+        async () => {
           await new Promise(resolve => setTimeout(resolve, 50));
           return 2;
         },
         () => 'error'
       );
-      
+
       const zipped = ReaderResult.zip(rr1, rr2);
-      const result = await ReaderResult.run(mockDeps)(zipped);
-      const duration = Date.now() - start;
-      
+      const promise = ReaderResult.run(mockDeps)(zipped);
+
+      // both operations run in parallel - advance time once by 50ms
+      await vi.advanceTimersByTimeAsync(50);
+
+      const result = await promise;
+
       expect(result).toEqual({ success: true, data: [1, 2] });
-      expect(duration).toBeLessThan(80); // Should run in parallel, not 100ms+
     });
   });
 
   describe('sequence', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     it('sequences all successful ReaderResults', async () => {
       const rrs = [
         ReaderResult.of<TestDeps, string, number>(1),
@@ -295,15 +313,21 @@ describe('ReaderResult', () => {
           return 2;
         }, () => 'error'),
       ];
-      
-      const start = Date.now();
+
       const sequenced = ReaderResult.sequence(rrs);
-      const result = await ReaderResult.run(mockDeps)(sequenced);
-      const duration = Date.now() - start;
-      
+      const promise = ReaderResult.run(mockDeps)(sequenced);
+
+      // first operation takes 30ms
+      await vi.advanceTimersByTimeAsync(30);
+      expect(executionOrder).toEqual([1]); // only first should be done
+
+      // second operation takes 10ms
+      await vi.advanceTimersByTimeAsync(10);
+      expect(executionOrder).toEqual([1, 2]); // both should be done now
+
+      const result = await promise;
+
       expect(result.success).toBe(true);
-      expect(executionOrder).toEqual([1, 2]); // Confirms order
-      expect(duration).toBeGreaterThanOrEqual(40); // Confirms sequential execution (30 + 10)
     });
   });
 
@@ -555,8 +579,15 @@ describe('ReaderResult', () => {
   });
 
   describe('sequencePar', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     it('sequences all successful ReaderResults in parallel', async () => {
-      const start = Date.now();
       const rrs = [
         ReaderResult.tryCatch<TestDeps, string, number>(
           async () => {
@@ -580,13 +611,16 @@ describe('ReaderResult', () => {
           () => 'error'
         ),
       ];
-      
+
       const sequenced = ReaderResult.sequencePar(rrs);
-      const result = await ReaderResult.run(mockDeps)(sequenced);
-      const duration = Date.now() - start;
-      
+      const promise = ReaderResult.run(mockDeps)(sequenced);
+
+      // all three operations run in parallel - advance time once by 20ms
+      await vi.advanceTimersByTimeAsync(20);
+
+      const result = await promise;
+
       expect(result).toEqual({ success: true, data: [1, 2, 3] });
-      expect(duration).toBeLessThan(40); // Should run in parallel
     });
 
     it('returns first error on failure', async () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Result } from "./result.mjs";
 import { Task } from "./task.mjs";
@@ -64,7 +64,7 @@ describe("Task", () => {
 
     it("should handle async functions", async () => {
       const asyncFn = async () => {
-        await new Promise(resolve => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 10));
         return "async result";
       };
       const task = Task.fromPromise(asyncFn);
@@ -73,6 +73,14 @@ describe("Task", () => {
   });
 
   describe("run", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     it("should execute a Task and return a Promise", async () => {
       const task = Task.of(100);
       const result = Task.run(task);
@@ -89,22 +97,28 @@ describe("Task", () => {
 
     it("should execute complex Task chains", async () => {
       const task = Task.chain((n: number) =>
-        Task.chain((doubled: number) =>
-          Task.of(doubled + 1)
-        )(Task.of(n * 2))
+        Task.chain((doubled: number) => Task.of(doubled + 1))(Task.of(n * 2)),
       )(Task.of(5));
 
       await expect(Task.run(task)).resolves.toBe(11);
     });
 
     it("should work with Task.delay", async () => {
-      const start = Date.now();
       const task = Task.chain(() => Task.of("done"))(Task.delay(20));
-      const result = await Task.run(task);
-      const duration = Date.now() - start;
+      const promise = Task.run(task);
+      const onDone = vi.fn();
+      void promise.then(onDone);
+
+      // at 19ms, should still be pending
+      await vi.advanceTimersByTimeAsync(19);
+      expect(onDone).not.toHaveBeenCalled();
+
+      // at 20ms, should resolve
+      await vi.advanceTimersByTimeAsync(1);
+      const result = await promise;
 
       expect(result).toBe("done");
-      expect(duration).toBeGreaterThanOrEqual(20);
+      expect(onDone).toHaveBeenCalledWith("done");
     });
   });
 
@@ -216,7 +230,7 @@ describe("Task", () => {
 
     it("should propagate rejection from the function task", async () => {
       const taskFn = Task.fromPromise<(n: number) => number>(() =>
-        Promise.reject(new Error("function error"))
+        Promise.reject(new Error("function error")),
       );
       const taskValue = Task.of(3);
       const result = Task.ap(taskValue)(taskFn);
@@ -227,7 +241,7 @@ describe("Task", () => {
     it("should propagate rejection from the value task", async () => {
       const taskFn = Task.of((n: number) => n * 2);
       const taskValue = Task.fromPromise<number>(() =>
-        Promise.reject(new Error("value error"))
+        Promise.reject(new Error("value error")),
       );
       const result = Task.ap(taskValue)(taskFn);
 
@@ -236,10 +250,10 @@ describe("Task", () => {
 
     it("should propagate first rejection when both reject", async () => {
       const taskFn = Task.fromPromise<(n: number) => number>(() =>
-        Promise.reject(new Error("function error"))
+        Promise.reject(new Error("function error")),
       );
       const taskValue = Task.fromPromise<number>(() =>
-        Promise.reject(new Error("value error"))
+        Promise.reject(new Error("value error")),
       );
       const result = Task.ap(taskValue)(taskFn);
 
@@ -249,6 +263,14 @@ describe("Task", () => {
   });
 
   describe("sequence", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     it("should convert array of tasks to task of array", async () => {
       const tasks = [Task.of(1), Task.of(2), Task.of(3)];
       const sequenced = Task.sequence(tasks);
@@ -264,14 +286,14 @@ describe("Task", () => {
         ),
       );
 
-      const start = Date.now();
-      const result = await Task.run(Task.sequence(tasks));
-      const duration = Date.now() - start;
+      const promise = Task.run(Task.sequence(tasks));
+
+      // all tasks run in parallel - advance time once by max delay (30ms)
+      await vi.advanceTimersByTimeAsync(30);
+
+      const result = await promise;
 
       expect(result).toEqual([30, 20, 10]);
-      // should take ~30ms (max delay), not 60ms (sum)
-      expect(duration).toBeLessThan(50);
-      expect(duration).toBeGreaterThanOrEqual(30);
     });
 
     it("should handle empty array", async () => {
@@ -291,6 +313,14 @@ describe("Task", () => {
   });
 
   describe("traverse", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     it("should map and sequence", async () => {
       const fn = (n: number) => Task.of(n * 2);
       const traverse = Task.traverse(fn);
@@ -315,14 +345,15 @@ describe("Task", () => {
         });
 
       const traverse = Task.traverse(fn);
-      const start = Date.now();
-      const result = await Task.run(traverse([3, 2, 1]));
-      const duration = Date.now() - start;
+      const promise = Task.run(traverse([3, 2, 1]));
+
+      // all tasks run in parallel - advance time once by max delay (3 * 10 = 30ms)
+      await vi.advanceTimersByTimeAsync(30);
+
+      const result = await promise;
 
       expect(result).toEqual([3, 2, 1]);
       expect(completed).toBe(3);
-      // should take ~30ms (max), not 60ms (sum)
-      expect(duration).toBeLessThan(50);
     });
   });
 
@@ -375,27 +406,45 @@ describe("Task", () => {
   });
 
   describe("delay", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     it("should delay execution", async () => {
-      const start = Date.now();
-      await Task.run(Task.delay(50));
-      const duration = Date.now() - start;
-      expect(duration).toBeGreaterThanOrEqual(50);
-      expect(duration).toBeLessThan(100);
+      const promise = Task.run(Task.delay(50));
+      const onDone = vi.fn();
+      void promise.then(onDone);
+
+      // at 49ms, should still be pending
+      await vi.advanceTimersByTimeAsync(49);
+      expect(onDone).not.toHaveBeenCalled();
+
+      // at 50ms, should resolve
+      await vi.advanceTimersByTimeAsync(1);
+      await promise;
+      expect(onDone).toHaveBeenCalled();
     });
 
     it("should handle zero delay", async () => {
-      const start = Date.now();
-      await Task.run(Task.delay(0));
-      const duration = Date.now() - start;
-      expect(duration).toBeLessThan(10);
+      const promise = Task.run(Task.delay(0));
+
+      // advance time by 0 to process microtasks
+      await vi.advanceTimersByTimeAsync(0);
+
+      await expect(promise).resolves.toBeUndefined();
     });
 
     it("should handle negative delay as zero delay", async () => {
-      const start = Date.now();
-      await Task.run(Task.delay(-100));
-      const duration = Date.now() - start;
+      const promise = Task.run(Task.delay(-100));
+
       // negative values are treated as 0 by setTimeout
-      expect(duration).toBeLessThan(10);
+      await vi.advanceTimersByTimeAsync(0);
+
+      await expect(promise).resolves.toBeUndefined();
     });
   });
 
