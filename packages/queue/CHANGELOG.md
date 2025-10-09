@@ -1,5 +1,11 @@
 # @satoshibits/queue
 
+## 2.0.4
+
+### Patch Changes
+
+- 956c1cb: add production-grade example demonstrating all 9 best practices
+
 ## 2.0.3
 
 ### Patch Changes
