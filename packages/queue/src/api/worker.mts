@@ -43,39 +43,31 @@ export class Worker<T = unknown> extends TypedEventEmitter {
    * @param options - Worker configuration options
    * @param options.provider - Queue provider instance (defaults to MemoryProvider)
    * @param options.concurrency - Maximum number of concurrent jobs (default: 1)
-   * @param options.pollInterval - REQUIRED: Polling interval in ms for pull model. Choose based on latency requirements.
    * @param options.batchSize - Number of jobs to fetch at once (default: 1)
-   * @param options.errorBackoff - REQUIRED: Backoff time in ms after errors. Choose based on error characteristics.
+   * @param options.pollInterval - Polling interval in ms. Required for pull-based providers (SQS). Not used for push-based providers (BullMQ, RabbitMQ).
+   * @param options.errorBackoff - Backoff time in ms after errors. Required for pull-based providers (SQS). Not used for push-based providers (BullMQ, RabbitMQ).
    *
    * **Note on Timeouts**:
    * This library does not provide built-in timeout functionality as it would be
    * incomplete (Promise.race doesn't cancel execution). Instead, implement timeout
    * handling in userland using AbortController for proper cancellation:
    *
-   * @example
+   * @example Push-based provider (BullMQ)
    * ```typescript
-   * const worker = new Worker('emails', async (data, job) => {
-   *   const controller = new AbortController();
-   *   const timeoutId = setTimeout(() => controller.abort(), 5000);
+   * const worker = new Worker('emails', emailHandler, {
+   *   provider: bullmqProvider,
+   *   concurrency: 5
+   *   // pollInterval and errorBackoff not needed - BullMQ uses push model
+   * });
+   * ```
    *
-   *   try {
-   *     const response = await fetch(url, { signal: controller.signal });
-   *     clearTimeout(timeoutId);
-   *     return Result.ok(response);
-   *   } catch (error) {
-   *     if (error.name === 'AbortError') {
-   *       return Result.err({
-   *         type: 'RuntimeError',
-   *         code: 'TIMEOUT',
-   *         message: 'Operation timed out after 5000ms',
-   *         retryable: true
-   *       });
-   *     }
-   *     throw error;
-   *   }
-   * }, {
-   *   pollInterval: 100,
-   *   errorBackoff: 1000,
+   * @example Pull-based provider (SQS)
+   * ```typescript
+   * const worker = new Worker('emails', emailHandler, {
+   *   provider: sqsProvider,
+   *   concurrency: 5,
+   *   pollInterval: 100,   // REQUIRED for pull-based providers
+   *   errorBackoff: 1000   // REQUIRED for pull-based providers
    * });
    * ```
    */
@@ -94,16 +86,6 @@ export class Worker<T = unknown> extends TypedEventEmitter {
     validator.requireNonEmptyString("queueName", queueName);
     validator.requireFunction("handler", handler);
 
-    // validate required timing options - prevent CPU spin-loop bugs
-    validator.requireFiniteNonNegativeNumber(
-      "pollInterval",
-      options.pollInterval,
-    );
-    validator.requireFiniteNonNegativeNumber(
-      "errorBackoff",
-      options.errorBackoff,
-    );
-
     this.handler = handler;
 
     // resolve provider (default to MemoryProvider if not specified)
@@ -114,8 +96,8 @@ export class Worker<T = unknown> extends TypedEventEmitter {
 
     this.maxConcurrency = options.concurrency ?? 1;
     this.batchSize = options.batchSize ?? 1;
-    this.pollInterval = options.pollInterval;
-    this.errorBackoff = options.errorBackoff;
+    this.pollInterval = options.pollInterval ?? 0; // validated at runtime for pull-based providers
+    this.errorBackoff = options.errorBackoff ?? 0; // validated at runtime for pull-based providers
   }
 
   /**
@@ -223,6 +205,21 @@ export class Worker<T = unknown> extends TypedEventEmitter {
    * Fixed: Don't await infinite loops - return immediately
    */
   private startPullModel(): void {
+    // Validate pull-mode requirements
+    if (typeof this.pollInterval !== "number" || this.pollInterval <= 0) {
+      throw new Error(
+        `Worker for queue '${this.queueName}' requires a valid pollInterval (>0) for pull-based providers. ` +
+          `Push-based providers like BullMQ don't need this parameter.`,
+      );
+    }
+
+    if (typeof this.errorBackoff !== "number" || this.errorBackoff <= 0) {
+      throw new Error(
+        `Worker for queue '${this.queueName}' requires a valid errorBackoff (>0) for pull-based providers. ` +
+          `Push-based providers like BullMQ don't need this parameter.`,
+      );
+    }
+
     // Start single fetch loop with error boundary
     this.fetchLoop().catch((error: unknown) => {
       // fatal error in fetch loop - emit error event and stop worker

@@ -222,22 +222,28 @@ export interface WorkerOptions {
    * Polling interval in milliseconds for pull-based providers.
    * How often to check for new jobs when queue is empty.
    *
+   * Required for pull-based providers (SQS, etc.).
+   * Not used for push-based providers (BullMQ, RabbitMQ).
+   *
    * Choose based on your latency requirements:
    * - Real-time (50-100ms): High responsiveness, higher CPU usage
    * - Standard (100-500ms): Balanced approach
    * - Batch processing (1000ms+): Lower overhead, higher latency
    */
-  readonly pollInterval: number;
+  readonly pollInterval?: number;
   /**
    * Backoff time in milliseconds after errors.
    * How long to wait before retrying after a fetch/processing error.
+   *
+   * Required for pull-based providers (SQS, etc.).
+   * Not used for push-based providers (BullMQ, RabbitMQ).
    *
    * Choose based on your error characteristics:
    * - Transient errors (1000ms): Quick recovery
    * - Rate limiting (5000ms+): Respect API limits
    * - Service degradation (10000ms+): Reduce load during incidents
    */
-  readonly errorBackoff: number;
+  readonly errorBackoff?: number;
 }
 
 /**

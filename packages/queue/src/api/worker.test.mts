@@ -1425,126 +1425,95 @@ describe("Worker - Hybrid Push/Pull Model", () => {
   // Users should implement timeouts using AbortController pattern in their handlers.
   // See: packages/queue/src/api/worker.mts for AbortController example
 
-  // TDD: Critical Bug Fixes - Constructor Validation (Bug #6)
-  describe("Constructor validation (HIGH bug - CPU spin-loop)", () => {
-    it("should reject explicit undefined for pollInterval", () => {
+  // TDD: Critical Bug Fixes - Runtime Validation for Pull-based Providers (Bug #6)
+  describe("Pull-based provider validation (HIGH bug - CPU spin-loop)", () => {
+    it("should reject missing pollInterval at start() for pull-based providers", () => {
+      const worker = new Worker("test-queue", handler, {
+        provider: mockProvider,
+        errorBackoff: 1000,
+        // pollInterval intentionally omitted
+      });
+
       expect(() => {
-        new Worker("test-queue", handler, {
-          provider: mockProvider,
-          //@ts-expect-error - testing runtime validation
-          pollInterval: undefined,
-          errorBackoff: 1000,
-        });
-      }).toThrow(TypeError);
-      expect(() => {
-        new Worker("test-queue", handler, {
-          provider: mockProvider,
-          //@ts-expect-error - testing runtime validation
-          pollInterval: undefined,
-          errorBackoff: 1000,
-        });
-      }).toThrow(/pollInterval must be a finite non-negative number/);
+        worker.start();
+      }).toThrow(/requires a valid pollInterval/);
     });
 
-    it("should reject explicit undefined for errorBackoff", () => {
+    it("should reject missing errorBackoff at start() for pull-based providers", () => {
+      const worker = new Worker("test-queue", handler, {
+        provider: mockProvider,
+        pollInterval: 1000,
+        // errorBackoff intentionally omitted
+      });
+
       expect(() => {
-        new Worker("test-queue", handler, {
-          provider: mockProvider,
-          pollInterval: 1000,
-          //@ts-expect-error - testing runtime validation
-          errorBackoff: undefined,
-        });
-      }).toThrow(TypeError);
-      expect(() => {
-        new Worker("test-queue", handler, {
-          provider: mockProvider,
-          pollInterval: 1000,
-          //@ts-expect-error - testing runtime validation
-          errorBackoff: undefined,
-        });
-      }).toThrow(/errorBackoff must be a finite non-negative number/);
+        worker.start();
+      }).toThrow(/requires a valid errorBackoff/);
     });
 
-    it("should reject negative pollInterval", () => {
+    it("should reject negative pollInterval at start() for pull-based providers", () => {
+      const worker = new Worker("test-queue", handler, {
+        provider: mockProvider,
+        pollInterval: -100,
+        errorBackoff: 1000,
+      });
+
       expect(() => {
-        new Worker("test-queue", handler, {
-          provider: mockProvider,
-          pollInterval: -100,
-          errorBackoff: 1000,
-        });
-      }).toThrow(/pollInterval must be a finite non-negative number/);
+        worker.start();
+      }).toThrow(/requires a valid pollInterval/);
     });
 
-    it("should reject negative errorBackoff", () => {
+    it("should reject negative errorBackoff at start() for pull-based providers", () => {
+      const worker = new Worker("test-queue", handler, {
+        provider: mockProvider,
+        pollInterval: 1000,
+        errorBackoff: -100,
+      });
+
       expect(() => {
-        new Worker("test-queue", handler, {
-          provider: mockProvider,
-          pollInterval: 1000,
-          errorBackoff: -100,
-        });
-      }).toThrow(/errorBackoff must be a finite non-negative number/);
+        worker.start();
+      }).toThrow(/requires a valid errorBackoff/);
     });
 
-    it("should reject non-number pollInterval", () => {
+    it("should reject zero pollInterval at start() for pull-based providers", () => {
+      const worker = new Worker("test-queue", handler, {
+        provider: mockProvider,
+        pollInterval: 0,
+        errorBackoff: 1000,
+      });
+
       expect(() => {
-        new Worker("test-queue", handler, {
-          provider: mockProvider,
-          //@ts-expect-error - testing runtime validation
-          pollInterval: "1000",
-          errorBackoff: 1000,
-        });
-      }).toThrow(/pollInterval must be a finite non-negative number/);
+        worker.start();
+      }).toThrow(/requires a valid pollInterval/);
     });
 
-    it("should reject non-number errorBackoff", () => {
+    it("should reject zero errorBackoff at start() for pull-based providers", () => {
+      const worker = new Worker("test-queue", handler, {
+        provider: mockProvider,
+        pollInterval: 1000,
+        errorBackoff: 0,
+      });
+
       expect(() => {
-        new Worker("test-queue", handler, {
-          provider: mockProvider,
-          pollInterval: 1000,
-          //@ts-expect-error - testing runtime validation
-          errorBackoff: "1000",
-        });
-      }).toThrow(/errorBackoff must be a finite non-negative number/);
+        worker.start();
+      }).toThrow(/requires a valid errorBackoff/);
     });
 
-    it("should reject Infinity for pollInterval", () => {
-      expect(() => {
-        new Worker("test-queue", handler, {
-          provider: mockProvider,
-          pollInterval: Infinity,
-          errorBackoff: 1000,
-        });
-      }).toThrow(/pollInterval must be a finite non-negative number/);
-    });
+    it("should NOT require pollInterval/errorBackoff for push-based providers", () => {
+      const pushProvider = {
+        ...mockProvider,
+        process: vi.fn().mockReturnValue(vi.fn()),
+      };
 
-    it("should reject NaN for pollInterval", () => {
-      expect(() => {
-        new Worker("test-queue", handler, {
-          provider: mockProvider,
-          pollInterval: NaN,
-          errorBackoff: 1000,
-        });
-      }).toThrow(/pollInterval must be a finite non-negative number/);
-    });
+      const worker = new Worker("test-queue", handler, {
+        provider: pushProvider,
+        // pollInterval and errorBackoff intentionally omitted
+      });
 
-    it("should accept valid pollInterval and errorBackoff", () => {
       expect(() => {
-        new Worker("test-queue", handler, {
-          provider: mockProvider,
-          pollInterval: 1000,
-          errorBackoff: 2000,
-        });
+        worker.start();
       }).not.toThrow();
     });
 
-    it("should accept 0 for pollInterval (edge case)", () => {
-      expect(() => {
-        new Worker("test-queue", handler, {
-          provider: mockProvider,
-          pollInterval: 0,
-          errorBackoff: 1000,
-        });
-      }).not.toThrow();
-    });
   });
 });
