@@ -1,5 +1,11 @@
 # @satoshibits/queue
 
+## 2.0.3
+
+### Patch Changes
+
+- 966449a: update validation for pull-based provider options and improve documentation
+
 ## 2.0.2
 
 ### Patch Changes
