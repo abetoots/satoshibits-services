@@ -1,5 +1,11 @@
 # functional
 
+## 1.1.3
+
+### Patch Changes
+
+- cdd777b: enhance timer handling in tests and improve async execution validation
+
 ## 1.1.2
 
 ### Patch Changes
