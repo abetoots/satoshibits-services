@@ -1,0 +1,61 @@
+{
+  "name": "@satoshibits/functional-errors",
+  "version": "1.0.0",
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "types": "./dist/index.d.mts"
+    }
+  },
+  "type": "module",
+  "private": false,
+  "scripts": {
+    "build": "rm -rf dist && tsc",
+    "lint": "pnpm exec eslint .",
+    "prepublishOnly": "npm run build",
+    "pre-commit": "pnpm exec lint-staged -c ./.lintstagedrc.mjs --concurrent false",
+    "test": "vitest --run"
+  },
+  "files": [
+    "./dist/**/*",
+    "!./dist/**/*.test.*"
+  ],
+  "keywords": [
+    "error-handling",
+    "result",
+    "functional",
+    "retry",
+    "circuit-breaker",
+    "typescript"
+  ],
+  "dependencies": {
+    "@satoshibits/functional": "workspace:^",
+    "cockatiel": "^3.2.1"
+  },
+  "author": {
+    "name": "Abe M. Caymo",
+    "email": "caymo.abesuni@gmail.com",
+    "url": "https://github.com/abetoots"
+  },
+  "license": "ISC",
+  "description": "Pure functional error handling with Result<T,E> pattern, retry and circuit breaker",
+  "devDependencies": {
+    "@eslint/compat": "^1.2.0",
+    "@repo/typescript-config": "workspace:^",
+    "@satoshibits/eslint-config": "workspace:^",
+    "@types/node": "^22.7.4",
+    "@typescript-eslint/utils": "^8.26.1",
+    "eslint": "^9.22.0",
+    "jiti": "^2.4.2",
+    "lint-staged": "^15.2.10",
+    "typescript": "^5.7.3",
+    "vitest": "^3.1.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/abetoots/satoshibits-services.git"
+  },
+  "homepage": "https://github.com/abetoots/satoshibits-services/packages/functional-errors"
+}
