@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0
+
+### Major Changes
+
+- 0d5eb9e: production-ready functional error handling library without reinventing the wheel
+
 All notable changes to `@satoshibits/functional-errors` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
@@ -21,22 +27,26 @@ This is a **complete rewrite** focused on our core value proposition: **type-saf
 ### 🔄 Changed
 
 - **Retry logic**: Replaced custom implementation with cockatiel wrapper
+
   - `retry()` - Now uses cockatiel's exponential backoff
   - `retrySync()` - Synchronous retry without delays
   - `withRetry()` - Create retryable functions
   - API remains similar but powered by production-grade library
 
 - **Circuit breaker**: Replaced custom implementation with cockatiel wrapper
+
   - `withCircuitBreaker()` - One-time circuit breaker
   - `createCircuitBreaker()` - Reusable circuit breaker
   - `CircuitBreakerManual` - Class-based manual control
 
 - **Validation**: Renamed `accumulator.mts` → `validation.mts`
+
   - Focused solely on form/field validation
   - Removed generic `ErrorAccumulator` (users can use arrays)
   - Kept `ValidationAccumulator` for field-level error collection
 
 - **Type Guards**: Merged `type-guards.mts` into `types.mts`
+
   - Single source of truth for all type guards
   - Both type-specific and structural guards in one place
 
@@ -56,32 +66,37 @@ This is a **complete rewrite** focused on our core value proposition: **type-saf
 ### ❌ Removed
 
 #### Error Types (Too Specific)
+
 - `RateLimitError` - Use `OperationalError` with context instead
 - `AuthenticationError` - Use `OperationalError` with context instead
 
 **Migration:**
+
 ```typescript
 // Before
-createRateLimitError('Rate limited', new Date(), 100)
+createRateLimitError("Rate limited", new Date(), 100);
 
 // After
-createOperationalError('Rate limited', true, {
+createOperationalError("Rate limited", true, {
   retryAfter: new Date(),
-  limit: 100
-})
+  limit: 100,
+});
 ```
 
 #### Functions (Removed from handlers.mts)
+
 - `categorizeError()` - Naive pattern matching, users should be explicit about error types
 - `errorToJSON()` / `errorFromJSON()` - Userland concern, applications should handle serialization
 - `filterError()` - Trivial utility, users can implement in 2 lines
 - `aggregateResults()` - Just use `Promise.all()` or array methods
 
 #### Utilities (Out of Scope)
+
 - `LRUCache` class - Use [lru-cache](https://www.npmjs.com/package/lru-cache) (40M+ weekly downloads)
 - Generic `ErrorAccumulator` - Just use arrays: `const errors: ErrorType[] = []`
 
 #### Runtime Overhead
+
 - Removed `Object.freeze()` from error constructors (TypeScript provides compile-time safety)
 - Removed runtime validation (rely on TypeScript's type system)
 
@@ -107,6 +122,7 @@ createOperationalError('Rate limited', true, {
 This is a **major version** with significant breaking changes. See the [Migration Guide](./README.md#migration-from-v1x) for details.
 
 **Key breaking changes:**
+
 1. Error types removed: `RateLimitError`, `AuthenticationError`
 2. Functions removed: `categorizeError`, `errorToJSON`, `errorFromJSON`, `filterError`, `aggregateResults`
 3. Utilities removed: `LRUCache`, generic `ErrorAccumulator`
@@ -129,6 +145,7 @@ This is a **major version** with significant breaking changes. See the [Migratio
 ---
 
 **Legend:**
+
 - ✨ Added: New features
 - 🔄 Changed: Changes in existing functionality
 - ❌ Removed: Removed features
