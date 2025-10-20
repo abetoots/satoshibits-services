@@ -30,7 +30,7 @@
     "circuit-breaker",
     "typescript"
   ],
-  "dependencies": {
+  "peerDependencies": {
     "@satoshibits/functional": "workspace:^",
     "cockatiel": "^3.2.1"
   },
