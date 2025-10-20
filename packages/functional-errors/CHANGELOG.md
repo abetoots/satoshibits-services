@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.1
+
+### Patch Changes
+
+- b3ac95b: make peerDependencies instead
+
 ## 2.0.0
 
 ### Major Changes
