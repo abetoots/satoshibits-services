@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.2
+
+### Patch Changes
+
+- 68dd5ce: fixed dependencies
+
 ## 2.0.1
 
 ### Patch Changes
