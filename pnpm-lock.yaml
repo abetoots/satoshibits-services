@@ -248,13 +248,6 @@ importers:
         version: 3.1.4(@types/node@22.13.4)(happy-dom@17.1.1)(jiti@2.4.2)(lightningcss@1.29.2)(tsx@4.19.3)(yaml@2.7.0)
 
   packages/functional-errors:
-    dependencies:
-      '@satoshibits/functional':
-        specifier: workspace:^
-        version: link:../functional
-      cockatiel:
-        specifier: ^3.2.1
-        version: 3.2.1
     devDependencies:
       '@eslint/compat':
         specifier: ^1.2.0
@@ -265,12 +258,18 @@ importers:
       '@satoshibits/eslint-config':
         specifier: workspace:^
         version: link:../../tooling/eslint-config
+      '@satoshibits/functional':
+        specifier: workspace:^
+        version: link:../functional
       '@types/node':
         specifier: ^22.7.4
         version: 22.13.4
       '@typescript-eslint/utils':
         specifier: ^8.26.1
         version: 8.26.1(eslint@9.22.0(jiti@2.4.2))(typescript@5.7.3)
+      cockatiel:
+        specifier: ^3.2.1
+        version: 3.2.1
       eslint:
         specifier: ^9.22.0
         version: 9.22.0(jiti@2.4.2)

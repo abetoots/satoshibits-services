@@ -42,6 +42,8 @@
   "license": "ISC",
   "description": "Pure functional error handling with Result<T,E> pattern, retry and circuit breaker",
   "devDependencies": {
+    "@satoshibits/functional": "workspace:^",
+    "cockatiel": "^3.2.1",
     "@eslint/compat": "^1.2.0",
     "@repo/typescript-config": "workspace:^",
     "@satoshibits/eslint-config": "workspace:^",
