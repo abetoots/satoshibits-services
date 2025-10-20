@@ -34,15 +34,16 @@ jobs:
       - name: ⬇️ Checkout repo
         uses: actions/checkout@v4
 
-      - name: ⎔ Setup node
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: "package.json"
-
       - name: Install pnpm package manager
         uses: pnpm/action-setup@v4
         with:
           run_install: false
+
+      - name: ⎔ Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: "package.json"
+          registry-url: "https://registry.npmjs.org"
 
       - uses: actions/cache@v4
         name: ⚡️ Cache pnpm store
@@ -59,6 +60,8 @@ jobs:
         id: changesets
         uses: changesets/action@v1
         with:
+          commit: "chore: update versions"
+          title: "chore: update versions"
           # This expects you to have a script called release which does a build for your packages and calls changeset publish
           publish: pnpm run ci:release
         env:
