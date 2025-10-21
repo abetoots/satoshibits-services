@@ -375,8 +375,8 @@ importers:
   packages/queue:
     dependencies:
       '@satoshibits/functional':
-        specifier: ^1.1.2
-        version: 1.1.2
+        specifier: workspace:^
+        version: link:../functional
       generic-pool:
         specifier: ^3.9.0
         version: 3.9.0
@@ -2326,9 +2326,6 @@ packages:
 
   '@rushstack/ts-command-line@4.23.5':
     resolution: {integrity: sha512-jg70HfoK44KfSP3MTiL5rxsZH7X1ktX3cZs9Sl8eDu1/LxJSbPsh0MOFRC710lIuYYSgxWjI5AjbCBAl7u3RxA==}
-
-  '@satoshibits/functional@1.1.2':
-    resolution: {integrity: sha512-GGAIB9JPx8f1qBxAt1SzvtYwD6rCKVxUbKiPUa09SHkTOlx/tRridSrZfR6zCHxebLLh1DuGaUS5ZJU31yxZiw==}
 
   '@sec-ant/readable-stream@0.4.1':
     resolution: {integrity: sha512-831qok9r2t8AlxLko40y2ebgSDhenenCatLVeW/uBtnHPyhHOvG0C7TvfgecV+wHzIm5KUICgzmVpWS+IMEAeg==}
@@ -7927,8 +7924,6 @@ snapshots:
       string-argv: 0.3.2
     transitivePeerDependencies:
       - '@types/node'
-
-  '@satoshibits/functional@1.1.2': {}
 
   '@sec-ant/readable-stream@0.4.1': {}
 
