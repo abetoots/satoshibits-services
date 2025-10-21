@@ -1,5 +1,11 @@
 # @satoshibits/queue
 
+## 2.0.5
+
+### Patch Changes
+
+- 3c7b65f: fix dependencies
+
 ## 2.0.4
 
 ### Patch Changes
