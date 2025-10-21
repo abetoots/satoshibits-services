@@ -55,10 +55,11 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
-    "@satoshibits/functional": "^1.1.2",
+    "@satoshibits/functional": "workspace:^",
     "generic-pool": "^3.9.0"
   },
   "peerDependencies": {
+    "@satoshibits/functional": "workspace:^",
     "bullmq": "^5.58.7",
     "@aws-sdk/client-sqs": "^3.899.0",
     "ioredis": "^5.8.0"
