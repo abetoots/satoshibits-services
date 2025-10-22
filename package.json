@@ -12,7 +12,8 @@
     "pre-commit": "turbo pre-commit",
     "test": "turbo test",
     "ci:release": "turbo run build lint test && pnpm publish -r --access public",
-    "package:add": "node ./bin/add-package.mjs"
+    "package:add": "node ./bin/add-package.mjs",
+    "clean": "bash clean.sh"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.9",
