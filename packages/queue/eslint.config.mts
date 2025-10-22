@@ -10,7 +10,7 @@ const configs: TSESLint.FlatConfig.ConfigArray = [
   includeIgnoreFile(gitignorePath),
   {
     name: "Global Ignores",
-    ignores: ["./examples/**"],
+    ignores: ["examples/**"],
   },
   ...satoshiConfig,
   {
