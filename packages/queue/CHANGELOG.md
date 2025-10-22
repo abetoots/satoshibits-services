@@ -1,5 +1,11 @@
 # @satoshibits/queue
 
+## 2.0.6
+
+### Patch Changes
+
+- 6ea1727: better types with commit 8f9a777d97e7
+
 ## 2.0.5
 
 ### Patch Changes
