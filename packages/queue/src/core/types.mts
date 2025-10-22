@@ -4,6 +4,10 @@
  */
 
 import type { Result } from "@satoshibits/functional";
+import type {
+  BullMQJobOptions,
+  SQSJobOptions,
+} from "../providers/provider-options.mjs";
 
 /**
  * Structured error types using discriminated unions
@@ -127,19 +131,24 @@ export interface JobOptions {
    * Provider-specific options (escape hatch)
    * Allows access to full provider feature set beyond normalized options
    *
+   * These types are strongly-typed using the native library types with
+   * dangerous options omitted via TypeScript's Omit utility. This provides
+   * full autocompletion and type safety while preventing overrides of
+   * critical properties managed by the abstraction layer.
+   *
    * Example:
    * ```typescript
    * providerOptions: {
-   *   bullmq: { stackTraceLimit: 0, lifo: true },
-   *   sqs: { MessageGroupId: 'group1' }
+   *   bullmq: { backoff: { type: 'exponential', delay: 5000 }, lifo: true },
+   *   sqs: { MessageGroupId: 'user-onboarding' }
    * }
    * ```
    */
   readonly providerOptions?: {
-    readonly bullmq?: Record<string, unknown>;
-    readonly sqs?: Record<string, unknown>;
-    readonly rabbitmq?: Record<string, unknown>;
-    readonly [provider: string]: Record<string, unknown> | undefined;
+    readonly bullmq?: BullMQJobOptions;
+    readonly sqs?: SQSJobOptions;
+    // Add other providers as they are implemented:
+    // readonly rabbitmq?: RabbitMQJobOptions;
   };
 }
 

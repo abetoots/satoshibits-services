@@ -17,6 +17,7 @@ import {
   ChangeMessageVisibilityCommand,
   GetQueueAttributesCommand,
   type Message,
+  type SQSClientConfig,
 } from "@aws-sdk/client-sqs";
 
 import type {
@@ -38,26 +39,28 @@ import type {
  */
 export interface SQSProviderConfig {
   /**
-   * Optional pre-configured SQS client
-   * If not provided, will be created from region/credentials
+   * Optional pre-configured SQS client.
+   * If provided, all other client-related options (`region`, `endpoint`,
+   * `credentials`, `clientConfig`) are ignored.
    */
   client?: SQSClient;
 
   /**
-   * AWS region (e.g., 'us-east-1')
-   * Required if client not provided
+   * AWS region (e.g., 'us-east-1').
+   * Required if `client` is not provided. This is a shortcut for the most
+   * common configuration property.
    */
   region?: string;
 
   /**
-   * AWS endpoint URL (e.g., for LocalStack: 'http://localhost:4566')
-   * Optional - defaults to AWS SQS endpoints
+   * AWS endpoint URL (e.g., for LocalStack: 'http://localhost:4566').
+   * Optional - defaults to AWS SQS endpoints.
    */
   endpoint?: string;
 
   /**
-   * AWS credentials
-   * Optional - falls back to AWS SDK default credential chain
+   * AWS credentials.
+   * Optional - falls back to AWS SDK default credential chain.
    */
   credentials?: {
     accessKeyId: string;
@@ -65,32 +68,50 @@ export interface SQSProviderConfig {
   };
 
   /**
-   * Queue URLs mapped by queue name
+   * Escape hatch for advanced `SQSClient` configurations.
+   * Allows setting any `SQSClientConfig` property not explicitly exposed above
+   * (e.g., `retryStrategy`, `logger`, `requestHandler`, `maxAttempts`).
+   *
+   * Note: `region`, `endpoint`, and `credentials` set at the top level
+   * of this config will override any values set here for discoverability.
+   *
+   * @example
+   * ```typescript
+   * clientConfig: {
+   *   maxAttempts: 5,
+   *   logger: customLogger,
+   *   retryStrategy: customRetryStrategy,
+   * }
+   * ```
+   */
+  clientConfig?: Omit<SQSClientConfig, "region" | "endpoint" | "credentials">;
+
+  /**
+   * Queue URLs mapped by queue name.
    * Example: { 'my-queue': 'https://sqs.us-east-1.amazonaws.com/123456789/my-queue' }
    */
   queueUrls: Record<string, string>;
 
   /**
-   * Optional DLQ URLs mapped by queue name
-   * Used for getDLQJobs() operations
+   * Optional DLQ URLs mapped by queue name.
+   * Used for `getDLQJobs()` operations.
    */
   dlqUrls?: Record<string, string>;
 
   /**
-   * Default visibility timeout in seconds (default: 30)
-   * How long a message is invisible after being received
+   * Default visibility timeout in seconds (default: 30).
+   * How long a message is invisible after being received.
    */
   defaultVisibilityTimeout?: number;
 
   /**
-   * Default wait time for long polling in seconds (default: 20, max: 20)
-   * ReceiveMessage will wait up to this time for messages to arrive
+   * Default wait time for long polling in seconds (default: 20, max: 20).
+   * `ReceiveMessage` will wait up to this time for messages to arrive.
    */
   defaultWaitTimeSeconds?: number;
 
   /**
-   * Health threshold for queue depth (default: 10000)
-   * Queue is considered healthy if depth is below this threshold
+   * @deprecated This property is not used. Health is determined by queue depth.
    */
   healthThreshold?: number;
 }
@@ -127,13 +148,6 @@ export class SQSProvider implements IProviderFactory {
   };
 
   constructor(config: SQSProviderConfig) {
-    // HIGH-002: validate client or region requirement
-    if (!config.client && !config.region) {
-      throw new Error(
-        "SQSProviderConfig requires either a `client` instance or an AWS `region`."
-      );
-    }
-
     // HIGH-002: validate at least one queue configured
     if (!config.queueUrls || Object.keys(config.queueUrls).length === 0) {
       throw new Error(
@@ -141,14 +155,25 @@ export class SQSProvider implements IProviderFactory {
       );
     }
 
-    // Build or use provided client
-    this.client =
-      config.client ??
-      new SQSClient({
-        region: config.region,
-        endpoint: config.endpoint,
-        credentials: config.credentials,
-      });
+    // build SQS client config, merging escape hatch options with top-level shortcuts
+    // top-level properties take precedence for discoverability
+    const clientConfig: SQSClientConfig = {
+      ...(config.clientConfig ?? {}),
+      // use conditional spreading to avoid adding undefined properties
+      ...(config.region && { region: config.region }),
+      ...(config.endpoint && { endpoint: config.endpoint }),
+      ...(config.credentials && { credentials: config.credentials }),
+    };
+
+    // HIGH-002: validate client or region requirement
+    if (!config.client && !clientConfig.region) {
+      throw new Error(
+        "SQSProviderConfig requires either a `client` instance or an AWS `region`."
+      );
+    }
+
+    // build or use provided client
+    this.client = config.client ?? new SQSClient(clientConfig);
 
     // Convert queue URLs to Map
     this.queueUrls = new Map(Object.entries(config.queueUrls));
@@ -381,28 +406,18 @@ export class SQSProvider implements IProviderFactory {
         });
       }
 
-      // allowlist safe FIFO-specific options from escape hatch
-      // only MessageGroupId and MessageDeduplicationId are allowed to prevent security issues
-      const sqsOptions = options?.providerOptions?.sqs ?? {};
-      const allowedSqsOptions: {
-        MessageGroupId?: string;
-        MessageDeduplicationId?: string;
-      } = {};
-
-      if (typeof sqsOptions.MessageGroupId === "string") {
-        allowedSqsOptions.MessageGroupId = sqsOptions.MessageGroupId;
-      }
-      if (typeof sqsOptions.MessageDeduplicationId === "string") {
-        allowedSqsOptions.MessageDeduplicationId = sqsOptions.MessageDeduplicationId;
-      }
-
       // send message to SQS
+      // spread order matters: user options first, then library-managed overrides
       const command = new SendMessageCommand({
+        // spread safe, user-provided provider-specific options
+        // the SQSJobOptions type ensures dangerous options like QueueUrl are omitted
+        ...(options?.providerOptions?.sqs ?? {}),
+        // enforce library-managed options to prevent overrides
+        // these MUST come last to ensure user options cannot break core guarantees
         QueueUrl: queueUrl,
         MessageBody: messageBodyJson,
         MessageAttributes: messageAttributes,
         DelaySeconds: delaySeconds > 0 ? delaySeconds : undefined,
-        ...allowedSqsOptions, // only safe FIFO options
       });
 
       await this.client.send(command);

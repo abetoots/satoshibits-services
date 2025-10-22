@@ -38,27 +38,49 @@ import type {
   Job as BullJob,
   JobsOptions as BullJobsOptions,
   ConnectionOptions,
+  DefaultJobOptions,
 } from "bullmq";
 import type { Pool } from "generic-pool";
 
 import { QueueErrorFactory } from "../../core/utils.mjs";
+import type { BullMQDefaultJobOptions } from "../provider-options.mjs";
 
 /**
  * Configuration for BullMQ provider
  */
 export interface BullMQProviderConfig {
+  /**
+   * Redis connection options, passed directly to BullMQ.
+   * @see https://docs.bullmq.io/guide/connections
+   */
   connection: ConnectionOptions;
+
+  /**
+   * Optional prefix for all Redis keys created by BullMQ (default: 'bull').
+   * Useful for isolating multiple queue instances in the same Redis database.
+   */
   prefix?: string;
-  defaultJobOptions?: {
-    attempts?: number;
-    backoff?: {
-      type: "exponential" | "fixed";
-      delay: number;
-    };
-    removeOnComplete?: boolean | number;
-    removeOnFail?: boolean | number;
-  };
-  healthErrorRateThreshold?: number; // MED-BQ-002: configurable health threshold (default 50%)
+
+  /**
+   * Default job options for all jobs created by this provider instance.
+   * These can be overridden by per-job options.
+   *
+   * Uses BullMQ's native `DefaultJobOptions` type with `jobId` and `delay`
+   * omitted, as these are nonsensical as provider-wide defaults.
+   *
+   * Examples:
+   * - `attempts`: Default retry attempts for all jobs
+   * - `backoff`: Default retry strategy (exponential, fixed, custom)
+   * - `removeOnComplete`: Automatic cleanup of completed jobs
+   * - `removeOnFail`: Automatic cleanup of failed jobs
+   * - `stackTraceLimit`: Error stack trace depth
+   */
+  defaultJobOptions?: BullMQDefaultJobOptions;
+
+  /**
+   * @deprecated This property is not used. Health is determined by queue statistics.
+   */
+  healthErrorRateThreshold?: number;
 }
 
 /**
@@ -68,7 +90,7 @@ export interface BullMQProviderConfig {
 export class BullMQProvider implements IProviderFactory {
   private readonly connection: ConnectionOptions;
   private readonly prefix: string;
-  private readonly defaultJobOptions: BullJobsOptions;
+  private readonly defaultJobOptions: DefaultJobOptions;
   private readonly healthErrorRateThreshold: number; // MED-BQ-002
   private queues = new Map<string, BullQueue>();
   private workers = new Map<string, BullWorker>();
@@ -98,14 +120,20 @@ export class BullMQProvider implements IProviderFactory {
     this.connection = config.connection;
     this.prefix = config.prefix ?? "bull";
     this.healthErrorRateThreshold = config.healthErrorRateThreshold ?? 50; // MED-BQ-002: default 50%
+
+    // establish provider-level default job options, merging our opinionated
+    // defaults with any user-provided overrides
     this.defaultJobOptions = {
-      attempts: config.defaultJobOptions?.attempts ?? 3,
-      backoff: config.defaultJobOptions?.backoff ?? {
+      // opinionated defaults
+      attempts: 3,
+      backoff: {
         type: "exponential",
         delay: 1000,
       },
-      removeOnComplete: config.defaultJobOptions?.removeOnComplete ?? true,
-      removeOnFail: config.defaultJobOptions?.removeOnFail ?? false,
+      removeOnComplete: true,
+      removeOnFail: false,
+      // user-provided defaults take precedence
+      ...(config.defaultJobOptions ?? {}),
     };
   }
 
@@ -246,34 +274,31 @@ export class BullMQProvider implements IProviderFactory {
     try {
       const queue = this.getOrCreateQueue(queueName);
 
-      // CRIT-BQ-001 FIX: Allowlist safe provider-specific options
-      // Only allow options that don't break core provider guarantees
-      const providerOptions = options?.providerOptions?.bullmq ?? {};
-      const allowedBullMqOptions: Partial<BullJobsOptions> = {};
-
-      // Allow priority override if explicitly provided via providerOptions
-      // (job.priority is already set above, this allows override)
-      if (
-        providerOptions.priority !== undefined &&
-        typeof providerOptions.priority === "number"
-      ) {
-        allowedBullMqOptions.priority = providerOptions.priority;
-      }
-
       // translate normalized options to BullMQ options
+      // spread order matters for the override hierarchy:
+      // 1. provider defaults
+      // 2. normalized options (priority, removeOnComplete, removeOnFail)
+      // 3. provider-specific options (can override normalized options)
+      // 4. critical options (jobId, attempts, delay - cannot be overridden)
       const bullOptions: BullJobsOptions = {
+        // start with provider-level defaults
         ...this.defaultJobOptions,
-        jobId: job.id,
-        attempts: job.maxAttempts,
+        // apply normalized options
         priority: job.priority,
-        delay: job.scheduledFor
-          ? Math.max(0, job.scheduledFor.getTime() - Date.now())
-          : undefined,
         removeOnComplete:
           options?.removeOnComplete ?? this.defaultJobOptions.removeOnComplete,
         removeOnFail: options?.removeOnFail ?? this.defaultJobOptions.removeOnFail,
-        // safe escape hatch: only allowlisted options
-        ...allowedBullMqOptions,
+        // spread safe, user-provided provider-specific options
+        // the BullMQJobOptions type ensures dangerous options like jobId/attempts/delay are omitted
+        // these can override normalized options (priority, removeOnComplete, removeOnFail) for advanced use cases
+        ...(options?.providerOptions?.bullmq ?? {}),
+        // enforce critical options to prevent overrides
+        // these MUST come last to ensure core guarantees (job identity and retry) are maintained
+        jobId: job.id,
+        attempts: job.maxAttempts,
+        delay: job.scheduledFor
+          ? Math.max(0, job.scheduledFor.getTime() - Date.now())
+          : undefined,
       };
 
       // wrap job data and metadata

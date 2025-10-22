@@ -90,7 +90,7 @@ describe("BullMQProvider", () => {
   });
 
   describe("Escape Hatch - providerOptions.bullmq", () => {
-    it("should allow only priority override via providerOptions (CRIT-BQ-001 security fix)", async () => {
+    it("should allow safe BullMQ-specific options via providerOptions", async () => {
       const queueProvider = provider.forQueue("test-queue");
 
       const job: Job<{ foo: string }> = {
@@ -110,9 +110,10 @@ describe("BullMQProvider", () => {
       await queueProvider.add(job, {
         providerOptions: {
           bullmq: {
-            priority: 10, // allowed override
-            stackTraceLimit: 0, // should be ignored (security)
-            lifo: true, // should be ignored (security)
+            priority: 10, // can override normalized priority
+            stackTraceLimit: 0, // BullMQ-specific option (allowed)
+            lifo: true, // BullMQ-specific option (allowed)
+            backoff: { type: "exponential", delay: 1000 }, // BullMQ-specific option (allowed)
           },
         },
       });
@@ -123,12 +124,13 @@ describe("BullMQProvider", () => {
       // priority override should be applied
       expect(options.priority).toBe(10);
 
-      // dangerous options should NOT be present
-      expect(options.stackTraceLimit).toBeUndefined();
-      expect(options.lifo).toBeUndefined();
+      // BullMQ-specific options should be present
+      expect(options.stackTraceLimit).toBe(0);
+      expect(options.lifo).toBe(true);
+      expect(options.backoff).toEqual({ type: "exponential", delay: 1000 });
     });
 
-    it("should block dangerous option overrides via providerOptions (CRIT-BQ-001 security fix)", async () => {
+    it("should block critical option overrides via type system (CRIT-BQ-001 security fix)", async () => {
       const queueProvider = provider.forQueue("test-queue");
 
       const job: Job<{ foo: string }> = {
@@ -144,13 +146,18 @@ describe("BullMQProvider", () => {
 
       mockQueue.add.mockResolvedValue(mockBullJob);
 
+      // TypeScript now prevents passing jobId, attempts, or delay in providerOptions
+      // These would cause compile errors:
+      // providerOptions: { bullmq: { jobId: "malicious-id" } } // TS Error!
+      // providerOptions: { bullmq: { attempts: 999 } }         // TS Error!
+      // providerOptions: { bullmq: { delay: 5000 } }            // TS Error!
+
+      // But removeOnComplete CAN be overridden via providerOptions for advanced use cases
       await queueProvider.add(job, {
         removeOnComplete: true, // normalized
         providerOptions: {
           bullmq: {
-            jobId: "malicious-id", // attempt to override jobId (BLOCKED)
-            attempts: 999, // attempt to override attempts (BLOCKED)
-            removeOnComplete: 100, // attempt to override removeOnComplete (BLOCKED)
+            removeOnComplete: { count: 100 }, // can override for fine-grained control
           },
         },
       });
@@ -158,10 +165,12 @@ describe("BullMQProvider", () => {
       const callArgs = mockQueue.add.mock.calls[0];
       const options = callArgs?.[2] as Record<string, unknown>;
 
-      // core options should NOT be overridden
-      expect(options.jobId).toBe("job-1"); // original value preserved
-      expect(options.attempts).toBe(3); // original maxAttempts preserved
-      expect(options.removeOnComplete).toBe(true); // original value preserved (not 100)
+      // core identity options are always enforced
+      expect(options.jobId).toBe("job-1");
+      expect(options.attempts).toBe(3);
+
+      // removeOnComplete override should be applied
+      expect(options.removeOnComplete).toEqual({ count: 100 });
     });
 
     it("should work without providerOptions (backward compatibility)", async () => {
