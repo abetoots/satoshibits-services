@@ -1,5 +1,11 @@
 # @satoshibits/queue
 
+## 2.0.8
+
+### Patch Changes
+
+- 1ad0c9d: eagerly initialize bullmq queues
+
 ## 2.0.7
 
 ### Patch Changes
