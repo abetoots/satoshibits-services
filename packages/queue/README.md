@@ -796,6 +796,54 @@ process.on('SIGTERM', async () => {
 await worker.start();
 ```
 
+### Bull Board Integration (BullMQ Only)
+
+Bull Board is a popular UI dashboard for monitoring BullMQ queues. The `BullMQProvider` exposes underlying BullMQ Queue instances for this purpose:
+
+```typescript
+import { Queue } from '@satoshibits/queue';
+import { BullMQProvider } from '@satoshibits/queue/providers/bullmq';
+import { createBullBoard } from '@bull-board/api';
+import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
+import { ExpressAdapter } from '@bull-board/express';
+
+// ========================================
+// Create provider factory (keep reference!)
+// ========================================
+const providerFactory = new BullMQProvider({
+  connection: { host: 'localhost', port: 6379 }
+});
+
+// ========================================
+// Create your queues
+// ========================================
+const emailQueue = new Queue('emails', {
+  provider: providerFactory.forQueue('emails')
+});
+const smsQueue = new Queue('sms', {
+  provider: providerFactory.forQueue('sms')
+});
+
+// ========================================
+// Setup bull-board using the provider factory
+// ========================================
+const bullQueues = Array.from(providerFactory.getBullMQQueues().values());
+const serverAdapter = new ExpressAdapter();
+serverAdapter.setBasePath('/admin/queues');
+
+createBullBoard({
+  queues: bullQueues.map(q => new BullMQAdapter(q)),
+  serverAdapter
+});
+
+// ========================================
+// Mount in Express
+// ========================================
+app.use('/admin/queues', serverAdapter.getRouter());
+```
+
+**Important:** Keep a reference to your `BullMQProvider` instance. You'll need it to access the underlying BullMQ queues for monitoring tools.
+
 ### Production Usage (SQS)
 
 ```typescript

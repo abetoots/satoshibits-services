@@ -181,6 +181,68 @@ export class BullMQProvider implements IProviderFactory {
   }
 
   /**
+   * ADVANCED USAGE: Returns the underlying BullMQ Queue instance for a given queue name.
+   *
+   * This method is an escape hatch for accessing provider-specific features like bull-board.
+   * Use with caution, as it couples your application to BullMQ internals.
+   *
+   * @param name The name of the queue.
+   * @returns The BullMQ Queue instance, or undefined if not found.
+   *
+   * @example
+   * ```typescript
+   * const providerFactory = new BullMQProvider({ connection: redis });
+   * const queue = new Queue('emails', { provider: providerFactory.forQueue('emails') });
+   *
+   * // For bull-board integration
+   * const bullQueue = providerFactory.getBullMQQueue('emails');
+   * if (bullQueue) {
+   *   const adapter = new BullMQAdapter(bullQueue);
+   * }
+   * ```
+   */
+  public getBullMQQueue(name: string): BullQueue | undefined {
+    return this.queues.get(name);
+  }
+
+  /**
+   * ADVANCED USAGE: Returns all managed BullMQ Queue instances.
+   *
+   * Useful for integrating with monitoring tools like bull-board.
+   *
+   * @returns A read-only map of queue names to BullMQ Queue instances.
+   *
+   * @example
+   * ```typescript
+   * import { createBullBoard } from '@bull-board/api';
+   * import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
+   *
+   * const providerFactory = new BullMQProvider({ connection: redis });
+   * // ... create queues ...
+   *
+   * const bullQueues = Array.from(providerFactory.getBullMQQueues().values());
+   * const adapters = bullQueues.map(q => new BullMQAdapter(q));
+   * createBullBoard({ queues: adapters });
+   * ```
+   */
+  public getBullMQQueues(): ReadonlyMap<string, BullQueue> {
+    return this.queues;
+  }
+
+  /**
+   * ADVANCED USAGE: Returns the underlying BullMQ Worker instance for a given queue name.
+   *
+   * This method is an escape hatch for accessing provider-specific features.
+   * Useful for advanced monitoring or programmatic health checks.
+   *
+   * @param name The name of the queue.
+   * @returns The BullMQ Worker instance, or undefined if not found.
+   */
+  public getBullMQWorker(name: string): BullWorker | undefined {
+    return this.workers.get(name);
+  }
+
+  /**
    * Get or create a BullMQ Queue instance
    */
   private getOrCreateQueue(queueName: string): BullQueue {
