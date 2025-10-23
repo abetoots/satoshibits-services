@@ -139,8 +139,13 @@ export class BullMQProvider implements IProviderFactory {
 
   /**
    * Create a queue-scoped provider instance
+   *
+   * Eagerly creates the underlying BullMQ Queue instance to ensure it's
+   * immediately available for inspection (e.g., for bull-board integration).
    */
   forQueue(queueName: string): IQueueProvider {
+    // eagerly create the BullMQ Queue instance
+    this.getOrCreateQueue(queueName);
     return new BoundBullMQProvider(this, queueName);
   }
 
