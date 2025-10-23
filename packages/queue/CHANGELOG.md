@@ -1,5 +1,11 @@
 # @satoshibits/queue
 
+## 2.0.7
+
+### Patch Changes
+
+- 4d7caba: expose underlying BullMQ Queue and Worker instances
+
 ## 2.0.6
 
 ### Patch Changes
