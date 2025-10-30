@@ -22,18 +22,28 @@ import genericPool from "generic-pool";
 import { randomUUID } from "crypto";
 
 import type {
+  ActiveJob,
   HealthStatus,
   Job,
-  ActiveJob,
   JobOptions,
   ProviderCapabilities,
   QueueError,
   QueueStats,
 } from "../../core/types.mjs";
+import type { BullMQDefaultJobOptions } from "../provider-options.mjs";
 import type {
   IProviderFactory,
   IQueueProvider,
 } from "../provider.interface.mjs";
+/**
+ * BoundBullMQProvider - Queue-scoped wrapper around BullMQProvider
+ * Implements IQueueProvider interface with queue-specific operations
+ */
+import type {
+  IBullMQExtensions,
+  JobScheduler,
+  JobSchedulerOptions,
+} from "./bullmq-extensions.interface.mjs";
 import type {
   Job as BullJob,
   JobsOptions as BullJobsOptions,
@@ -43,7 +53,6 @@ import type {
 import type { Pool } from "generic-pool";
 
 import { QueueErrorFactory } from "../../core/utils.mjs";
-import type { BullMQDefaultJobOptions } from "../provider-options.mjs";
 
 /**
  * Configuration for BullMQ provider
@@ -235,6 +244,24 @@ export class BullMQProvider implements IProviderFactory {
   }
 
   /**
+   * Get the default job options configured for this provider
+   * Used internally by extensions to maintain consistent behavior
+   * @internal
+   */
+  public getDefaultJobOptions(): DefaultJobOptions {
+    return this.defaultJobOptions;
+  }
+
+  /**
+   * Map a provider error to a QueueError
+   * Used internally by extensions to maintain consistent error handling
+   * @internal
+   */
+  public mapProviderError(error: unknown, queueName: string): QueueError {
+    return this.mapError(error, queueName);
+  }
+
+  /**
    * ADVANCED USAGE: Returns the underlying BullMQ Worker instance for a given queue name.
    *
    * This method is an escape hatch for accessing provider-specific features.
@@ -354,7 +381,8 @@ export class BullMQProvider implements IProviderFactory {
         priority: job.priority,
         removeOnComplete:
           options?.removeOnComplete ?? this.defaultJobOptions.removeOnComplete,
-        removeOnFail: options?.removeOnFail ?? this.defaultJobOptions.removeOnFail,
+        removeOnFail:
+          options?.removeOnFail ?? this.defaultJobOptions.removeOnFail,
         // spread safe, user-provided provider-specific options
         // the BullMQJobOptions type ensures dangerous options like jobId/attempts/delay are omitted
         // these can override normalized options (priority, removeOnComplete, removeOnFail) for advanced use cases
@@ -1177,9 +1205,113 @@ export class BullMQProvider implements IProviderFactory {
 }
 
 /**
- * BoundBullMQProvider - Queue-scoped wrapper around BullMQProvider
- * Implements IQueueProvider interface with queue-specific operations
+ * BullMQExtensions - Implementation of BullMQ-specific advanced features
+ * Provides access to features like recurring job schedulers that are not available in other providers
  */
+class BullMQExtensions implements IBullMQExtensions {
+  constructor(
+    private readonly provider: BullMQProvider,
+    private readonly queueName: string,
+  ) {}
+
+  async upsertJobScheduler<T = unknown>(
+    id: string,
+    options: JobSchedulerOptions<T>,
+  ): Promise<Result<void, QueueError>> {
+    try {
+      const queue = this.provider.getBullMQQueue(this.queueName);
+      if (!queue) {
+        return Result.err({
+          type: "ConfigurationError",
+          code: "INVALID_CONFIG",
+          message: `Queue "${this.queueName}" not found`,
+          retryable: false,
+          details: { queueName: this.queueName },
+        });
+      }
+
+      // build BullMQ job options from our JobSchedulerOptions
+      // merge provider-level defaults with job-specific options for consistency with _addJob
+      const bullJobOptions: BullJobsOptions = {
+        // start with provider-level defaults
+        ...this.provider.getDefaultJobOptions(),
+        // apply user-provided options, which will override defaults
+        ...(options.jobOptions ?? {}),
+      };
+
+      // BullMQ's upsertJobScheduler takes: (id, repeatOpts, jobTemplate)
+      await queue.upsertJobScheduler(
+        id,
+        {
+          pattern: options.pattern,
+          ...(options.timezone ? { tz: options.timezone } : {}),
+        },
+        {
+          name: options.jobName,
+          data: options.data,
+          opts: bullJobOptions,
+        },
+      );
+
+      return Result.ok(undefined);
+    } catch (error) {
+      return Result.err(this.provider.mapProviderError(error, this.queueName));
+    }
+  }
+
+  async getJobSchedulers(): Promise<Result<JobScheduler[], QueueError>> {
+    try {
+      const queue = this.provider.getBullMQQueue(this.queueName);
+      if (!queue) {
+        return Result.err({
+          type: "ConfigurationError",
+          code: "INVALID_CONFIG",
+          message: `Queue "${this.queueName}" not found`,
+          retryable: false,
+          details: { queueName: this.queueName },
+        });
+      }
+
+      const bullSchedulers = await queue.getJobSchedulers();
+
+      const schedulers: JobScheduler[] = bullSchedulers
+        .filter((s) => s.id != null) // filter out schedulers without IDs
+        .map((s) => ({
+          id: s.id!, // safe to assert non-null due to filter
+          pattern: s.pattern ?? "",
+          jobName: s.name ?? "",
+          next: s.next ? new Date(s.next) : undefined,
+          timezone: s.tz,
+        }));
+
+      return Result.ok(schedulers);
+    } catch (error) {
+      return Result.err(this.provider.mapProviderError(error, this.queueName));
+    }
+  }
+
+  async removeJobScheduler(id: string): Promise<Result<void, QueueError>> {
+    try {
+      const queue = this.provider.getBullMQQueue(this.queueName);
+      if (!queue) {
+        return Result.err({
+          type: "ConfigurationError",
+          code: "INVALID_CONFIG",
+          message: `Queue "${this.queueName}" not found`,
+          retryable: false,
+          details: { queueName: this.queueName },
+        });
+      }
+
+      await queue.removeJobScheduler(id);
+
+      return Result.ok(undefined);
+    } catch (error) {
+      return Result.err(this.provider.mapProviderError(error, this.queueName));
+    }
+  }
+}
+
 class BoundBullMQProvider implements IQueueProvider {
   constructor(
     private readonly provider: BullMQProvider,
@@ -1198,7 +1330,10 @@ class BoundBullMQProvider implements IQueueProvider {
     return this.provider.disconnect();
   }
 
-  async add<T>(job: Job<T>, options?: JobOptions): Promise<Result<Job<T>, QueueError>> {
+  async add<T>(
+    job: Job<T>,
+    options?: JobOptions,
+  ): Promise<Result<Job<T>, QueueError>> {
     return this.provider._addJob(this.queueName, job, options);
   }
 
@@ -1220,7 +1355,10 @@ class BoundBullMQProvider implements IQueueProvider {
     return this.provider._ackJob(this.queueName, job, result);
   }
 
-  async nack<T>(job: ActiveJob<T>, error: Error): Promise<Result<void, QueueError>> {
+  async nack<T>(
+    job: ActiveJob<T>,
+    error: Error,
+  ): Promise<Result<void, QueueError>> {
     return this.provider._nackJob(this.queueName, job, error);
   }
 
@@ -1260,5 +1398,25 @@ class BoundBullMQProvider implements IQueueProvider {
 
   async retryJob(jobId: string): Promise<Result<void, QueueError>> {
     return this.provider._retryJob(this.queueName, jobId);
+  }
+
+  /**
+   * Get BullMQ-specific extensions for advanced features
+   * Access provider-specific methods like recurring job schedulers
+   *
+   * @returns BullMQ extensions instance
+   *
+   * @example
+   * ```typescript
+   * const extensions = boundProvider.getBullMQExtensions();
+   * await extensions.upsertJobScheduler('daily-cleanup', {
+   *   pattern: '0 2 * * *',
+   *   jobName: 'cleanup',
+   *   data: { type: 'daily' }
+   * });
+   * ```
+   */
+  getBullMQExtensions(): IBullMQExtensions {
+    return new BullMQExtensions(this.provider, this.queueName);
   }
 }

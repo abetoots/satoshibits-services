@@ -18,6 +18,7 @@ import type {
   QueueOptions,
   QueueStats,
 } from "../core/types.mjs";
+import type { IBullMQExtensions } from "../providers/bullmq/bullmq-extensions.interface.mjs";
 import type {
   IProviderFactory,
   IQueueProvider,
@@ -31,6 +32,7 @@ import { ConstructorValidator } from "../core/validators.mjs";
 export class Queue<T = unknown> extends TypedEventEmitter {
   private readonly boundProvider: IQueueProvider;
   private readonly options: QueueOptions;
+  private _bullmqExtensions: IBullMQExtensions | undefined | null = null; // use null to signify "not checked yet"
 
   constructor(
     public readonly name: string,
@@ -328,5 +330,62 @@ export class Queue<T = unknown> extends TypedEventEmitter {
     if (shouldDisconnect) {
       await this.boundProvider.disconnect();
     }
+  }
+
+  /**
+   * Access BullMQ-specific features (only available when using BullMQ provider)
+   *
+   * This namespace provides access to advanced BullMQ features like recurring
+   * job schedulers that are not available in other queue providers.
+   *
+   * @returns BullMQ extensions interface, or undefined if not using BullMQ provider
+   *
+   * @example
+   * ```typescript
+   * // Create recurring job scheduler
+   * const extensions = queue.bullmq;
+   * if (extensions) {
+   *   await extensions.upsertJobScheduler('daily-cleanup', {
+   *     pattern: '0 2 * * *',  // 2 AM daily
+   *     jobName: 'cleanup',
+   *     data: { type: 'daily' },
+   *     timezone: 'America/New_York'
+   *   });
+   *
+   *   // List schedulers
+   *   const result = await extensions.getJobSchedulers();
+   *   if (result.success) {
+   *     const schedulers = result.data;
+   *     schedulers.forEach(s => console.log(`${s.id}: ${s.pattern}`));
+   *   }
+   *
+   *   // Remove scheduler
+   *   await extensions.removeJobScheduler('daily-cleanup');
+   * }
+   * ```
+   */
+  get bullmq(): IBullMQExtensions | undefined {
+    // check if we've already resolved this (memoization)
+    if (this._bullmqExtensions !== null) {
+      return this._bullmqExtensions ?? undefined;
+    }
+
+    // type guard: check if the bound provider has getBullMQExtensions method
+    // we use a type assertion here because getBullMQExtensions is not part of IQueueProvider
+    // it's a provider-specific method that only exists on BullMQ providers
+    if (
+      "getBullMQExtensions" in this.boundProvider &&
+      typeof (
+        this.boundProvider as { getBullMQExtensions?: () => IBullMQExtensions }
+      ).getBullMQExtensions === "function"
+    ) {
+      this._bullmqExtensions = (
+        this.boundProvider as { getBullMQExtensions: () => IBullMQExtensions }
+      ).getBullMQExtensions();
+      return this._bullmqExtensions;
+    }
+
+    this._bullmqExtensions = undefined;
+    return undefined;
   }
 }

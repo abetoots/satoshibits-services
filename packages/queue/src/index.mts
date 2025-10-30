@@ -48,6 +48,13 @@ export type {
   IProviderFactory,
 } from "./providers/provider.interface.mjs";
 
+// BullMQ-specific extensions (provider-specific features)
+export type {
+  IBullMQExtensions,
+  JobSchedulerOptions,
+  JobScheduler,
+} from "./providers/bullmq/bullmq-extensions.interface.mjs";
+
 // Built-in Providers
 export { MemoryProvider } from "./providers/memory/memory.provider.mjs";
 

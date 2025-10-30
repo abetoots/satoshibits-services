@@ -251,6 +251,105 @@ When a job fails processing, calling `nack(jobId, error)` signals the failure to
 
 ---
 
+### Provider-Specific Namespaces
+
+**Architecture Decision**: For features that exist in only one provider (or a subset of providers) and cannot be meaningfully abstracted, we use **typed namespaces** rather than adding optional methods to the core `IQueueProvider` interface.
+
+**Problem**: Some providers have advanced features with no equivalents in other backends:
+- BullMQ: Recurring job schedulers (cron-like scheduling)
+- SQS: FIFO message groups and deduplication
+- RabbitMQ: Exchange routing patterns
+
+**Anti-Pattern**: Adding optional methods to `IQueueProvider` for provider-specific features
+```typescript
+// ❌ DON'T: Pollutes core interface with provider-specific methods
+interface IQueueProvider {
+  // ... core methods ...
+  upsertJobScheduler?(id: string, options: SchedulerOptions): Promise<Result<void>>;  // BullMQ only
+  setMessageGroup?(groupId: string): Promise<Result<void>>;  // SQS only
+}
+```
+
+**Recommended Pattern**: Provider-specific typed namespaces
+```typescript
+// ✅ DO: Use typed namespaces for provider-specific features
+class Queue<T = unknown> {
+  // core methods available for all providers
+  async add(name: string, data: T): Promise<Result<Job<T>, QueueError>>;
+
+  // provider-specific namespace (returns undefined for unsupported providers)
+  get bullmq(): IBullMQExtensions | undefined;
+  get sqs(): ISQSExtensions | undefined;
+}
+```
+
+**Implementation Guidelines**:
+
+1. **Create Extension Interface** (`bullmq-extensions.interface.mts`):
+```typescript
+export interface IBullMQExtensions {
+  upsertJobScheduler<T>(id: string, options: JobSchedulerOptions<T>): Promise<Result<void, QueueError>>;
+  getJobSchedulers(): Promise<Result<JobScheduler[], QueueError>>;
+  removeJobScheduler(id: string): Promise<Result<void, QueueError>>;
+}
+```
+
+2. **Implement Extension Class** (in provider file):
+```typescript
+class BullMQExtensions implements IBullMQExtensions {
+  constructor(
+    private readonly provider: BullMQProvider,
+    private readonly queueName: string
+  ) {}
+
+  async upsertJobScheduler<T>(id: string, options: JobSchedulerOptions<T>) {
+    const queue = this.provider.getBullMQQueue(this.queueName);
+    // ... implementation using BullMQ's native API
+  }
+}
+```
+
+3. **Add Method to Bound Provider**:
+```typescript
+class BoundBullMQProvider implements IQueueProvider {
+  getBullMQExtensions(): IBullMQExtensions {
+    return new BullMQExtensions(this.provider, this.queueName);
+  }
+}
+```
+
+4. **Expose via Queue Class**:
+```typescript
+class Queue<T = unknown> {
+  get bullmq(): IBullMQExtensions | undefined {
+    if ('getBullMQExtensions' in this.boundProvider &&
+        typeof (this.boundProvider as any).getBullMQExtensions === 'function') {
+      return (this.boundProvider as any).getBullMQExtensions();
+    }
+    return undefined;
+  }
+}
+```
+
+**Benefits**:
+- **Clean separation**: Core interface remains provider-agnostic
+- **Type safety**: TypeScript enforces existence checks (`if (queue.bullmq)`)
+- **Discoverability**: IDE autocomplete shows available provider extensions
+- **Explicit non-portability**: Namespace signals "this code is BullMQ-specific"
+- **No interface pollution**: Adding SQS-specific features won't bloat the BullMQ interface
+
+**When to Use**:
+- ✅ Features with no equivalent in other providers (e.g., cron schedulers)
+- ✅ Provider-specific optimizations or advanced features
+- ✅ Features that would require "virtualization" to abstract
+
+**When NOT to Use**:
+- ❌ Per-job options (use `providerOptions` escape hatch instead)
+- ❌ Features common across providers (abstract into core interface)
+- ❌ Features that violate the "thin translation layer" principle
+
+---
+
 ## Provider Development Patterns
 
 The library provides utilities to help maintain consistency across the codebase.

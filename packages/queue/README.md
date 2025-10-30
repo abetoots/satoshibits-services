@@ -1075,6 +1075,70 @@ await queue.add('send-email', data, {
 });
 ```
 
+### 5. Provider-Specific Namespaces
+
+For advanced provider-specific features that don't exist across all providers, use the typed namespace pattern:
+
+#### BullMQ-Specific Features
+
+Access BullMQ-specific features through the `queue.bullmq` namespace:
+
+```typescript
+import { Queue } from '@satoshibits/queue';
+import { BullMQProvider } from '@satoshibits/queue/providers/bullmq';
+
+const providerFactory = new BullMQProvider({
+  connection: { host: 'localhost', port: 6379 }
+});
+
+const queue = new Queue('emails', {
+  provider: providerFactory.forQueue('emails')
+});
+
+// recurring job scheduler (BullMQ only)
+const extensions = queue.bullmq;
+if (extensions) {
+  // create a daily recurring job
+  await extensions.upsertJobScheduler('daily-report', {
+    pattern: '0 9 * * *',  // cron pattern: 9 AM daily
+    jobName: 'generate-report',
+    data: { reportType: 'daily' },
+    timezone: 'America/New_York',
+    jobOptions: {
+      priority: 10,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5000 }
+    }
+  });
+
+  // list all recurring jobs
+  const result = await extensions.getJobSchedulers();
+  if (result.success) {
+    const schedulers = result.data;
+    schedulers.forEach(s => {
+      console.log(`Scheduler: ${s.id}`);
+      console.log(`Pattern: ${s.pattern}`);
+      console.log(`Next run: ${s.next}`);
+    });
+  }
+
+  // remove a scheduler
+  await extensions.removeJobScheduler('daily-report');
+}
+```
+
+**Key Points:**
+- Provider-specific namespaces are **optional** - they return `undefined` for unsupported providers
+- Always check if the namespace exists before using it (TypeScript will enforce this)
+- Code using provider namespaces is **not portable** across providers
+- Use the escape hatch pattern when you need features that don't have multi-provider equivalents
+
+**When to use provider namespaces:**
+- ✅ BullMQ's recurring job schedulers (no SQS equivalent)
+- ✅ Provider-specific advanced features that don't map across backends
+- ❌ Per-job options (use `providerOptions` instead)
+- ❌ Features that could be abstracted across providers
+
 ## Production Features
 
 ### Worker Lifecycle Management
