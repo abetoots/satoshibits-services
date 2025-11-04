@@ -55,6 +55,9 @@ export type {
   JobScheduler,
 } from "./providers/bullmq/bullmq-extensions.interface.mjs";
 
+// BullMQ-specific worker extensions
+export type { IBullMQWorkerExtensions } from "./providers/bullmq/bullmq-worker-extensions.interface.mjs";
+
 // Built-in Providers
 export { MemoryProvider } from "./providers/memory/memory.provider.mjs";
 

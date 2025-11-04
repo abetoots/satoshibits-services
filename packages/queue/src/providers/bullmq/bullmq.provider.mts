@@ -44,6 +44,7 @@ import type {
   JobScheduler,
   JobSchedulerOptions,
 } from "./bullmq-extensions.interface.mjs";
+import type { IBullMQWorkerExtensions } from "./bullmq-worker-extensions.interface.mjs";
 import type {
   Job as BullJob,
   JobsOptions as BullJobsOptions,
@@ -271,7 +272,14 @@ export class BullMQProvider implements IProviderFactory {
    * @returns The BullMQ Worker instance, or undefined if not found.
    */
   public getBullMQWorker(name: string): BullWorker | undefined {
-    return this.workers.get(name);
+    // workers are stored with keys like "${queueName}-${timestamp}"
+    // so we need to search for a worker whose name matches the queue name
+    for (const worker of this.workers.values()) {
+      if (worker.name === name) {
+        return worker;
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -1312,6 +1320,28 @@ class BullMQExtensions implements IBullMQExtensions {
   }
 }
 
+/**
+ * BullMQWorkerExtensions - Implementation of BullMQ-specific worker features
+ * Provides access to the underlying BullMQ Worker instance for advanced use cases
+ */
+class BullMQWorkerExtensions implements IBullMQWorkerExtensions {
+  constructor(
+    private readonly provider: BullMQProvider,
+    private readonly queueName: string,
+  ) {}
+
+  getBullMQWorker(): Result<BullWorker | undefined, QueueError> {
+    try {
+      // query provider for current worker instance
+      // returns undefined if worker hasn't been started yet or has been closed
+      const worker = this.provider.getBullMQWorker(this.queueName);
+      return Result.ok(worker);
+    } catch (error) {
+      return Result.err(this.provider.mapProviderError(error, this.queueName));
+    }
+  }
+}
+
 class BoundBullMQProvider implements IQueueProvider {
   constructor(
     private readonly provider: BullMQProvider,
@@ -1418,5 +1448,25 @@ class BoundBullMQProvider implements IQueueProvider {
    */
   getBullMQExtensions(): IBullMQExtensions {
     return new BullMQExtensions(this.provider, this.queueName);
+  }
+
+  /**
+   * Get BullMQ-specific worker extensions for advanced features
+   * Access the underlying BullMQ Worker instance for provider-specific operations
+   *
+   * @returns BullMQ worker extensions instance
+   *
+   * @example
+   * ```typescript
+   * const extensions = boundProvider.getBullMQWorkerExtensions();
+   * const result = extensions.getBullMQWorker();
+   * if (result.success && result.data) {
+   *   const worker = result.data;
+   *   const isPaused = await worker.isPaused();
+   * }
+   * ```
+   */
+  getBullMQWorkerExtensions(): IBullMQWorkerExtensions {
+    return new BullMQWorkerExtensions(this.provider, this.queueName);
   }
 }

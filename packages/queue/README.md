@@ -1139,6 +1139,79 @@ if (extensions) {
 - ❌ Per-job options (use `providerOptions` instead)
 - ❌ Features that could be abstracted across providers
 
+#### BullMQ Worker Extensions
+
+Access BullMQ Worker-specific features through the `worker.bullmq` namespace:
+
+```typescript
+import { Worker } from '@satoshibits/queue';
+import { BullMQProvider } from '@satoshibits/queue/providers/bullmq';
+
+const provider = new BullMQProvider({
+  connection: { host: 'localhost', port: 6379 }
+});
+
+const worker = new Worker('my-queue', async (data, job) => {
+  // process job
+  return { success: true, data: undefined };
+}, {
+  provider: provider.forQueue('my-queue'),
+  concurrency: 5
+});
+
+await worker.start();
+
+// access BullMQ-specific worker features
+const extensions = worker.bullmq;
+if (extensions) {
+  // get the underlying BullMQ Worker instance for advanced use cases
+  const result = extensions.getBullMQWorker();
+  if (result.success && result.data) {
+    const bullWorker = result.data;
+
+    // use native BullMQ Worker features not exposed by core API
+    const isPaused = await bullWorker.isPaused();
+    const isRunning = await bullWorker.isRunning();
+
+    // access worker events not exposed by core API
+    bullWorker.on('progress', (job, progress) => {
+      console.log(`Job ${job.id} progress: ${progress}%`);
+    });
+
+    // use advanced BullMQ Worker features
+    const metrics = await bullWorker.getMetrics();
+    console.log('Worker metrics:', metrics);
+  }
+}
+```
+
+**Lifecycle Behavior:**
+
+```typescript
+// before start() - extensions exist but worker instance is undefined
+const ext1 = worker.bullmq?.getBullMQWorker();
+// Result.ok(undefined) - no worker yet
+
+await worker.start();
+
+// after start() - worker instance is available
+const ext2 = worker.bullmq?.getBullMQWorker();
+// Result.ok(BullWorker) - native instance available
+
+await worker.close();
+
+// after close() - worker instance is destroyed
+const ext3 = worker.bullmq?.getBullMQWorker();
+// Result.ok(undefined) - worker cleaned up
+```
+
+**When to use worker extensions:**
+- ✅ You need access to BullMQ Worker features not in the core API
+- ✅ You're integrating with BullMQ-specific monitoring tools
+- ✅ You need fine-grained control over worker behavior
+- ✅ You're implementing custom event handlers for BullMQ events
+- ❌ Features available through the core Worker API (use core API instead)
+
 ## Production Features
 
 ### Worker Lifecycle Management

@@ -14,6 +14,7 @@ import type {
   QueueError,
   WorkerOptions,
 } from "../core/types.mjs";
+import type { IBullMQWorkerExtensions } from "../providers/bullmq/bullmq-worker-extensions.interface.mjs";
 import type {
   IProviderFactory,
   IQueueProvider,
@@ -34,6 +35,8 @@ export class Worker<T = unknown> extends TypedEventEmitter {
   private readonly pollInterval: number;
   private readonly errorBackoff: number;
   private readonly handler: JobHandler<T>;
+  private _bullmqWorkerExtensions: IBullMQWorkerExtensions | undefined | null =
+    null;
 
   /**
    * Create a worker to process jobs
@@ -98,6 +101,61 @@ export class Worker<T = unknown> extends TypedEventEmitter {
     this.batchSize = options.batchSize ?? 1;
     this.pollInterval = options.pollInterval ?? 0; // validated at runtime for pull-based providers
     this.errorBackoff = options.errorBackoff ?? 0; // validated at runtime for pull-based providers
+  }
+
+  /**
+   * BullMQ-specific worker extensions.
+   * Returns undefined for non-BullMQ providers.
+   *
+   * Provides access to BullMQ Worker features not available in the core Worker API.
+   * Note: The worker instance only exists after start() is called and before close().
+   *
+   * @returns BullMQ worker extensions or undefined
+   *
+   * @example
+   * ```typescript
+   * const worker = new Worker('my-queue', handler, { provider: bullmqProvider });
+   *
+   * // Extensions exist immediately
+   * const ext = worker.bullmq;
+   *
+   * // But worker instance only available after start()
+   * await worker.start();
+   *
+   * if (ext) {
+   *   const result = ext.getBullMQWorker();
+   *   if (result.success && result.data) {
+   *     const bullWorker = result.data;
+   *     const isPaused = await bullWorker.isPaused();
+   *   }
+   * }
+   * ```
+   */
+  get bullmq(): IBullMQWorkerExtensions | undefined {
+    // memoization: check if already resolved
+    if (this._bullmqWorkerExtensions !== null) {
+      return this._bullmqWorkerExtensions ?? undefined;
+    }
+
+    // type guard with proper type assertion (no `any`)
+    if (
+      "getBullMQWorkerExtensions" in this.boundProvider &&
+      typeof (
+        this.boundProvider as {
+          getBullMQWorkerExtensions?: () => IBullMQWorkerExtensions;
+        }
+      ).getBullMQWorkerExtensions === "function"
+    ) {
+      this._bullmqWorkerExtensions = (
+        this.boundProvider as {
+          getBullMQWorkerExtensions: () => IBullMQWorkerExtensions;
+        }
+      ).getBullMQWorkerExtensions();
+      return this._bullmqWorkerExtensions;
+    }
+
+    this._bullmqWorkerExtensions = undefined;
+    return undefined;
   }
 
   /**

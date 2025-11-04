@@ -348,6 +348,126 @@ class Queue<T = unknown> {
 - ❌ Features common across providers (abstract into core interface)
 - ❌ Features that violate the "thin translation layer" principle
 
+#### Worker-Specific Extensions
+
+Worker follows the same provider-specific namespace pattern as Queue, with important lifecycle considerations.
+
+**Implementation Pattern**:
+
+1. **Create Extension Interface** (`bullmq-worker-extensions.interface.mts`):
+```typescript
+export interface IBullMQWorkerExtensions {
+  getBullMQWorker(): Result<BullMQWorker | undefined, QueueError>;
+}
+```
+
+2. **Implement Extension Class** (in provider file):
+```typescript
+class BullMQWorkerExtensions implements IBullMQWorkerExtensions {
+  constructor(
+    private readonly provider: BullMQProvider,
+    private readonly queueName: string
+  ) {}
+
+  getBullMQWorker(): Result<BullMQWorker | undefined, QueueError> {
+    try {
+      // stateless query - always reflects current worker state
+      const worker = this.provider.getBullMQWorker(this.queueName);
+      return Result.ok(worker);
+    } catch (error) {
+      return Result.err(this.provider.mapProviderError(error, this.queueName));
+    }
+  }
+}
+```
+
+3. **Add Method to Bound Provider**:
+```typescript
+class BoundBullMQProvider implements IQueueProvider {
+  getBullMQWorkerExtensions(): IBullMQWorkerExtensions {
+    return new BullMQWorkerExtensions(this.provider, this.queueName);
+  }
+}
+```
+
+4. **Expose via Worker Class**:
+```typescript
+class Worker<T = unknown> extends TypedEventEmitter {
+  private _bullmqWorkerExtensions: IBullMQWorkerExtensions | undefined | null = null;
+
+  get bullmq(): IBullMQWorkerExtensions | undefined {
+    // memoization: check if already resolved
+    if (this._bullmqWorkerExtensions !== null) {
+      return this._bullmqWorkerExtensions === undefined
+        ? undefined
+        : this._bullmqWorkerExtensions;
+    }
+
+    // type guard with proper type assertion (no `any`)
+    if ('getBullMQWorkerExtensions' in this.boundProvider &&
+        typeof (this.boundProvider as { getBullMQWorkerExtensions?: () => IBullMQWorkerExtensions })
+          .getBullMQWorkerExtensions === 'function') {
+      this._bullmqWorkerExtensions = (
+        this.boundProvider as { getBullMQWorkerExtensions: () => IBullMQWorkerExtensions }
+      ).getBullMQWorkerExtensions();
+      return this._bullmqWorkerExtensions;
+    }
+
+    this._bullmqWorkerExtensions = undefined;
+    return undefined;
+  }
+}
+```
+
+**Key Differences from Queue Extensions**:
+
+1. **Lifecycle Awareness**: Worker extensions must handle the fact that worker instances don't exist until `start()` is called
+   - Before `start()`: `getBullMQWorker()` returns `Result.ok(undefined)`
+   - After `start()`: `getBullMQWorker()` returns `Result.ok(BullWorker)`
+   - After `close()`: `getBullMQWorker()` returns `Result.ok(undefined)`
+
+2. **Stateless Design**: Extensions query provider each time to get current worker state
+   - Worker can be destroyed via `close()` and recreated via `start()`
+   - Extensions don't hold stale references
+   - Thread-safe: no shared mutable state between extensions and worker
+
+3. **Return Values**: `getBullMQWorker()` returns `undefined` when worker doesn't exist (not an error)
+   - This allows users to check worker availability without error handling
+   - Errors are only returned for actual provider errors
+
+4. **Simpler API**: Worker extensions currently only provide escape hatch, not higher-level abstractions
+   - Queue extensions: Abstract BullMQ schedulers with simplified API
+   - Worker extensions: Direct access to native BullMQ Worker for advanced use cases
+
+**Design Rationale**:
+
+The stateless design ensures extensions always reflect current worker state:
+- Worker can be destroyed via `close()` and recreated via `start()`
+- Extensions don't hold stale references
+- Thread-safe: no shared mutable state between extensions and worker
+
+**Usage Example**:
+```typescript
+const worker = new Worker('my-queue', handler, { provider: bullmqProvider });
+
+// extensions exist immediately, but worker instance is undefined
+const ext = worker.bullmq;
+if (ext) {
+  let result = ext.getBullMQWorker();
+  // result.success === true, result.data === undefined
+
+  await worker.start();
+
+  result = ext.getBullMQWorker();
+  // result.success === true, result.data === BullWorker instance
+
+  if (result.success && result.data) {
+    const bullWorker = result.data;
+    const isPaused = await bullWorker.isPaused();
+  }
+}
+```
+
 ---
 
 ## Provider Development Patterns
