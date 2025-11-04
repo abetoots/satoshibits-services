@@ -9,15 +9,7 @@ export type LoggerLevels =
   | "error"
   | "fatal";
 export type LoggerMessage = string | Error;
-export type LoggerMeta = Record<
-  string,
-  | string
-  | boolean
-  | number
-  | Record<string, unknown>
-  | Record<string, unknown>[]
-  | string[]
->;
+export type LoggerMeta = Record<string, unknown>;
 
 export type BaseLogger = Record<
   LoggerLevels,
