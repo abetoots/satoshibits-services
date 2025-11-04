@@ -1,5 +1,12 @@
 # @satoshibits/queue
 
+## 2.1.0
+
+### Minor Changes
+
+- 652c182: adds provider-specific namespace for BullMQ advanced features
+- dc4bcb1: adds BullMQ worker extensions for advanced access
+
 ## 2.0.8
 
 ### Patch Changes
