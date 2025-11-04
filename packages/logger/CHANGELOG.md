@@ -1,5 +1,11 @@
 # @satoshibits/logger
 
+## 1.0.7
+
+### Patch Changes
+
+- d9d7e29: simplifies meta type definition for logger
+
 ## 1.0.6
 
 ### Patch Changes
