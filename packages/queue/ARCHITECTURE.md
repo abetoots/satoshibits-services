@@ -6,6 +6,7 @@ This document describes the architectural principles and implementation approach
 
 ## Table of Contents
 1. [Core Philosophy](#core-philosophy)
+   - [Architectural Decision: Job Cancellation](#architectural-decision-job-cancellation)
 2. [Architectural Layers](#architectural-layers)
 3. [Provider Interface](#provider-interface)
 4. [Worker Lifecycle](#worker-lifecycle)
@@ -91,6 +92,53 @@ logger.warn('SQS provider does not support job priorities. The "priority" option
 ```
 
 **Never**: Fake features that don't exist. No custom retry engines for Postgres. No simulated priorities for SQS.
+
+### Architectural Decision: Job Cancellation
+
+**Decision**: The library does NOT provide core API methods for job cancellation (removal or abortion).
+
+**Rationale**:
+
+Job "cancellation" maps to three distinct operations, each with different feasibility and architectural implications:
+
+1. **Pre-Execution Removal** (deleting waiting/delayed jobs)
+   - ✅ All providers support this natively via their own APIs
+   - ✗ Provides minimal **translation value** - would just be a thin wrapper
+   - ✗ Violates "thin translation layer" principle
+   - ✗ Sets bad precedent for wrapping every provider feature
+   - **Decision**: Users call provider-specific APIs directly
+
+2. **In-Execution Abortion** (stopping active jobs)
+   - ✗ No provider has native support (0% feasibility)
+   - ✗ Would require reimplementing complex patterns (IPC, state management)
+   - ✗ Cannot provide honest abstraction across providers
+   - ✗ Application-level concern, not library concern
+   - **Decision**: Document userland patterns comprehensively
+
+3. **Graceful Worker Shutdown** (deployments)
+   - ✅ Already implemented via `worker.close({ finishActiveJobs: true })`
+   - **Decision**: No changes needed
+
+**What We Provide Instead**:
+
+Comprehensive documentation that empowers users to implement the right patterns for their use case:
+- Provider-specific removal examples (BullMQ, SQS, RabbitMQ, Memory)
+- Timeout-based cancellation pattern (AbortController)
+- External cancellation pattern (Redis Pub/Sub for BullMQ)
+- Provider limitations reference
+- Working code examples users can adapt
+
+See [Job Cancellation Patterns](./docs/patterns/job-cancellation.md) for the complete guide.
+
+**Key Insight**:
+
+> "Job cancellation is not a 'translation' problem - it's either handled by providers natively (removal) or requires userland patterns (abortion). Adding core API methods would bloat the library without providing genuine translation value."
+
+This decision aligns with our core principles:
+- ✓ **Translation Over Reimplementation**: Pre-execution removal is already there in every provider
+- ✓ **Events Over Implementation**: Active job abortion patterns belong in userland
+- ✓ **Honest Abstractions**: We document provider limitations instead of faking capabilities
+- ✓ **Thin Layer**: We don't wrap provider APIs unnecessarily
 
 ---
 

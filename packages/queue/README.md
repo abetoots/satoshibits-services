@@ -268,6 +268,7 @@ These features are **available** but you must **configure** them. The library co
 | **Priorities** | `priority: 1` | Provider orders job processing | BullMQ, RabbitMQ (SQS: use separate queues) |
 | **DLQ** | Provider config | Provider moves exhausted jobs to DLQ. See [Ignoring the DLQ](#mistake-3-ignoring-the-dead-letter-queue) | All providers (provider-specific setup) |
 | **Timeouts** | `timeout: 5000` | Worker marks job as failed after timeout* | Library (all providers) |
+| **Job Cancellation** | See [Cancellation Guide](./docs/patterns/job-cancellation.md) | Remove queued jobs, abort active jobs (userland patterns), graceful shutdown | Provider-dependent |
 | **Graceful Shutdown** | `worker.close({ finishActiveJobs: true })` | Worker waits for active jobs. See [Forgetting Graceful Shutdown](#mistake-2-forgetting-graceful-shutdown) | Library (all providers) |
 | **Events** | `worker.on('failed', ...)` | Get notified at lifecycle points. See [Not Using Events](#mistake-7-not-using-worker-events) | Library (all providers) |
 | **Health Checks** | `queue.getHealth()` | Get queue depth, error rate | Provider-dependent |
@@ -1889,6 +1890,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
 
 - 📖 [Architecture Guide](./ARCHITECTURE.md)
 - 📝 [Architecture Audit](./ARCHITECTURE_AUDIT.md) - Deep analysis and rationale
+- 🚫 [Job Cancellation Patterns](./docs/patterns/job-cancellation.md) - Comprehensive guide to job cancellation (removal, abortion, timeouts)
 - 🐛 [Issue Tracker](https://github.com/satoshibits/queue/issues)
 - 💬 [Discussions](https://github.com/satoshibits/queue/discussions)
 
