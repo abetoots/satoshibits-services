@@ -1,5 +1,11 @@
 # @satoshibits/queue
 
+## 2.2.0
+
+### Minor Changes
+
+- 65682c1: feat(queue): adds native BullMQ provider options and documents config patterns
+
 ## 2.1.0
 
 ### Minor Changes
