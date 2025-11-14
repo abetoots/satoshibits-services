@@ -386,6 +386,7 @@ export function createBullMQMocks() {
     resume: vi.fn(),
     getNextJob: vi.fn(),
     isRunning: vi.fn(() => true),
+    run: vi.fn().mockResolvedValue(undefined),
   };
 
   const mockQueueEvents = {

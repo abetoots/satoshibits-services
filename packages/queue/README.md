@@ -1213,6 +1213,156 @@ const ext3 = worker.bullmq?.getBullMQWorker();
 - ✅ You're implementing custom event handlers for BullMQ events
 - ❌ Features available through the core Worker API (use core API instead)
 
+### Multiple Provider Instances Pattern
+
+When different queues or workers need different provider-specific configurations, create multiple provider instances instead of mixing configuration into the Queue/Worker layer.
+
+**Why**: Provider is the infrastructure configuration layer. Queue/Worker are the operation layer. Keeping them separate maintains clean architecture.
+
+#### Different Queue Configurations
+
+```typescript
+import { BullMQProvider, Queue } from '@satoshibits/queue';
+
+// High-throughput queue with larger event stream
+const highThroughputProvider = new BullMQProvider({
+  connection: { host: 'localhost', port: 6379 },
+  prefix: 'bull',
+  queueOptions: {
+    streams: {
+      events: { maxLen: 100000 }  // Keep more events for monitoring
+    }
+  }
+});
+
+// Memory-constrained queue with smaller event stream
+const lowMemoryProvider = new BullMQProvider({
+  connection: { host: 'localhost', port: 6379 },
+  prefix: 'bull',
+  queueOptions: {
+    streams: {
+      events: { maxLen: 1000 }  // Minimal event retention
+    }
+  }
+});
+
+const analyticsQueue = new Queue('analytics', {
+  provider: highThroughputProvider.forQueue('analytics')
+});
+
+const notificationsQueue = new Queue('notifications', {
+  provider: lowMemoryProvider.forQueue('notifications')
+});
+```
+
+#### Different Worker Configurations
+
+```typescript
+import { BullMQProvider, Worker } from '@satoshibits/queue';
+
+// Fast jobs with short lock duration
+const fastJobProvider = new BullMQProvider({
+  connection: { host: 'localhost', port: 6379 },
+  workerOptions: {
+    lockDuration: 30000,      // 30s lock
+    stalledInterval: 5000,    // Check every 5s
+    maxStalledCount: 2        // Max 2 stall recoveries
+  }
+});
+
+// Slow jobs with long lock duration
+const slowJobProvider = new BullMQProvider({
+  connection: { host: 'localhost', port: 6379 },
+  workerOptions: {
+    lockDuration: 300000,     // 5min lock
+    stalledInterval: 60000,   // Check every 1min
+    maxStalledCount: 5        // More tolerant of stalls
+  }
+});
+
+const emailWorker = new Worker('emails', emailHandler, {
+  provider: fastJobProvider.forQueue('emails'),
+  concurrency: 10
+});
+
+const reportWorker = new Worker('reports', reportHandler, {
+  provider: slowJobProvider.forQueue('reports'),
+  concurrency: 2
+});
+```
+
+#### Combined Configuration
+
+```typescript
+import { BullMQProvider, Queue, Worker } from '@satoshibits/queue';
+
+// Production-optimized provider
+const productionProvider = new BullMQProvider({
+  connection: {
+    host: process.env.REDIS_HOST,
+    port: 6379,
+    maxRetriesPerRequest: 3
+  },
+  prefix: 'prod',
+  defaultJobOptions: {
+    attempts: 5,
+    backoff: { type: 'exponential', delay: 2000 },
+    removeOnComplete: 1000,  // Keep last 1000 completed jobs
+    removeOnFail: 5000       // Keep last 5000 failed jobs
+  },
+  queueOptions: {
+    streams: { events: { maxLen: 10000 } }
+  },
+  workerOptions: {
+    lockDuration: 60000,
+    stalledInterval: 30000,
+    maxStalledCount: 3
+  }
+});
+
+// Development provider with looser settings
+const devProvider = new BullMQProvider({
+  connection: { host: 'localhost', port: 6379 },
+  prefix: 'dev',
+  defaultJobOptions: {
+    attempts: 1,  // Fail fast in development
+    removeOnComplete: false,  // Keep all jobs for debugging
+    removeOnFail: false
+  },
+  queueOptions: {
+    streams: { events: { maxLen: 100 } }  // Minimal for local dev
+  }
+});
+
+const provider = process.env.NODE_ENV === 'production'
+  ? productionProvider
+  : devProvider;
+
+const queue = new Queue('orders', { provider: provider.forQueue('orders') });
+const worker = new Worker('orders', processOrder, {
+  provider: provider.forQueue('orders'),
+  concurrency: process.env.NODE_ENV === 'production' ? 10 : 1
+});
+```
+
+**Key Benefits:**
+- ✅ **Explicit Configuration**: Each provider's purpose is clear from its name and settings
+- ✅ **Type Safety**: Full TypeScript support for native BullMQ options
+- ✅ **No Complexity**: No configuration merging or precedence rules to understand
+- ✅ **Better Testing**: Each provider can be tested independently
+- ✅ **Immutable**: Providers are configured once at startup, reducing runtime surprises
+
+**When to Use:**
+- Different queues need different performance characteristics (lock duration, stalled intervals)
+- Different queues need different resource limits (stream maxLen, memory settings)
+- Different environments need different configurations (prod vs dev)
+- Testing scenarios requiring isolated configurations
+
+**When NOT to Use:**
+- Per-job variations (use `JobOptions.providerOptions` instead)
+- Runtime configuration changes (providers are immutable)
+- Temporary overrides (providers represent stable infrastructure configuration)
+
 ## Production Features
 
 ### Worker Lifecycle Management

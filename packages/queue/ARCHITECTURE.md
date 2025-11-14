@@ -518,6 +518,78 @@ if (ext) {
 
 ---
 
+## Provider Configuration Patterns
+
+### The Multiple Provider Instances Pattern
+
+**Problem**: Different queues or workers may require different provider-specific configurations (e.g., varying lock durations, stream settings, or stalled job intervals).
+
+**Anti-Pattern**: Adding provider-specific configuration to Queue/Worker constructors
+
+```typescript
+// ❌ DON'T: Leaks provider configuration into operation layer
+const queue = new Queue('my-queue', {
+  provider: provider.forQueue('my-queue'),
+  providerOptions: {  // Wrong layer for configuration
+    bullmq: { lockDuration: 120000 }
+  }
+});
+```
+
+**Problems with this approach:**
+- Violates separation of concerns (Queue/Worker are operation layer, Provider is infrastructure layer)
+- Creates complex configuration merging logic and precedence rules
+- Mixes infrastructure configuration with application logic
+- Makes testing more complex
+- Pollutes the abstraction layer with implementation details
+
+**Recommended Pattern**: Create multiple provider instances with different configurations
+
+**Why This Works:**
+
+1. **Separation of Concerns**: Provider handles infrastructure configuration, Queue/Worker handles operations
+2. **Explicitness**: Each provider instance has a clear purpose and configuration
+3. **Type Safety**: Provider constructor is strongly typed with native options
+4. **No Merging Complexity**: No need to define or document precedence rules
+5. **Better Testing**: Each provider instance can be tested independently
+
+**Implementation**:
+
+The provider exposes native library options directly:
+
+- `queueOptions`: Native BullMQ Queue options (streams, settings, etc.)
+- `workerOptions`: Native BullMQ Worker options (lockDuration, stalledInterval, etc.)
+
+This allows full access to provider-specific configuration without abstraction overhead.
+
+**When to Use Multiple Providers**:
+
+- Different queues need different performance characteristics (lock duration, stalled intervals)
+- Different queues need different resource limits (stream maxLen, memory settings)
+- Different workers need different reliability guarantees (retry behavior, stalled job handling)
+- Testing scenarios requiring isolated configurations
+
+**When NOT to Use**:
+
+- Per-job variations (use `JobOptions.providerOptions` instead)
+- Runtime configuration changes (providers are immutable once created)
+- Temporary overrides (providers represent stable infrastructure configuration)
+
+### Complete Escape Hatch Strategy
+
+Our architecture provides escape hatches at the appropriate layers:
+
+| Scenario | Escape Hatch | Layer | Purpose |
+|----------|-------------|-------|---------|
+| Per-job options | `JobOptions.providerOptions` | Operation | Job-specific transient options |
+| Queue features | `queue.bullmq` namespace | Operation | Provider-specific queue actions |
+| Worker features | `worker.bullmq` namespace | Operation | Provider-specific worker actions |
+| Configuration | **Multiple Provider Instances** | **Infrastructure** | **Provider-level settings** |
+
+Each escape hatch is placed at the correct architectural layer, maintaining clean separation of concerns.
+
+---
+
 ## Provider Development Patterns
 
 The library provides utilities to help maintain consistency across the codebase.

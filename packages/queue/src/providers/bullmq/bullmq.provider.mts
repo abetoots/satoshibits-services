@@ -50,6 +50,8 @@ import type {
   JobsOptions as BullJobsOptions,
   ConnectionOptions,
   DefaultJobOptions,
+  QueueOptions as BullMQQueueOptions,
+  WorkerOptions as BullMQWorkerOptions,
 } from "bullmq";
 import type { Pool } from "generic-pool";
 
@@ -88,6 +90,43 @@ export interface BullMQProviderConfig {
   defaultJobOptions?: BullMQDefaultJobOptions;
 
   /**
+   * Native BullMQ Queue options.
+   * Passed directly to BullMQ Queue constructor. Allows full access to BullMQ-specific
+   * queue configuration without abstraction overhead.
+   *
+   * Common use cases:
+   * - `streams`: Configure Redis streams settings (e.g., maxLen for event retention)
+   * - `settings`: Queue-level settings (e.g., lockDuration, stalledInterval)
+   *
+   * Note: `connection`, `prefix`, and `defaultJobOptions` are omitted as they're handled
+   * by top-level config to avoid dual sources of truth.
+   *
+   * @see https://docs.bullmq.io/guide/queues/adding-jobs
+   */
+  queueOptions?: Omit<BullMQQueueOptions, "connection" | "prefix" | "defaultJobOptions">;
+
+  /**
+   * Native BullMQ Worker options.
+   * Passed directly to BullMQ Worker constructor. Allows full access to BullMQ-specific
+   * worker configuration without abstraction overhead.
+   *
+   * Common use cases:
+   * - `lockDuration`: How long a job can be locked before considered stalled
+   * - `stalledInterval`: How often to check for stalled jobs
+   * - `maxStalledCount`: Max times a job can be recovered from stalled state
+   * - `skipDelayCheck`: Skip delayed job check (optimization)
+   *
+   * Note: `connection`, `prefix`, `concurrency`, and `autorun` are omitted.
+   * The provider manages these options to ensure deterministic lifecycle control.
+   *
+   * @see https://docs.bullmq.io/guide/workers
+   */
+  workerOptions?: Omit<
+    BullMQWorkerOptions,
+    "connection" | "prefix" | "concurrency" | "autorun"
+  >;
+
+  /**
    * @deprecated This property is not used. Health is determined by queue statistics.
    */
   healthErrorRateThreshold?: number;
@@ -101,6 +140,11 @@ export class BullMQProvider implements IProviderFactory {
   private readonly connection: ConnectionOptions;
   private readonly prefix: string;
   private readonly defaultJobOptions: DefaultJobOptions;
+  private readonly queueOptions: Omit<BullMQQueueOptions, "connection" | "prefix" | "defaultJobOptions">;
+  private readonly workerOptions: Omit<
+    BullMQWorkerOptions,
+    "connection" | "prefix" | "concurrency" | "autorun"
+  >;
   private readonly healthErrorRateThreshold: number; // MED-BQ-002
   private queues = new Map<string, BullQueue>();
   private workers = new Map<string, BullWorker>();
@@ -145,6 +189,10 @@ export class BullMQProvider implements IProviderFactory {
       // user-provided defaults take precedence
       ...(config.defaultJobOptions ?? {}),
     };
+
+    // store native BullMQ options for queues and workers
+    this.queueOptions = config.queueOptions ?? {};
+    this.workerOptions = config.workerOptions ?? {};
   }
 
   /**
@@ -298,6 +346,7 @@ export class BullMQProvider implements IProviderFactory {
     queue = new BullQueue(queueName, {
       connection: this.connection,
       prefix: this.prefix,
+      ...this.queueOptions,
     });
 
     this.queues.set(queueName, queue);
@@ -328,11 +377,25 @@ export class BullMQProvider implements IProviderFactory {
       {
         // eslint-disable-next-line @typescript-eslint/require-await
         create: async () => {
-          // Create worker with null processor for manual fetching (no concurrency limit)
-          return new BullWorker(queueName, null, {
+          // create worker with null processor for manual fetching (no concurrency limit)
+          const worker = new BullWorker(queueName, null, {
             connection: this.connection,
             prefix: this.prefix,
+            ...this.workerOptions,
+            // explicit control over autorun to prevent race condition
+            autorun: false,
           });
+
+          // start worker asynchronously - don't wait for fetch workers
+          // fetch workers with null processors behave differently than processing workers
+          worker.run().catch((error) => {
+            console.error(
+              `[BullMQProvider] Fetch worker for queue '${queueName}' failed to start:`,
+              error,
+            );
+          });
+
+          return worker;
         },
         destroy: async (worker) => {
           await worker.close();
@@ -620,6 +683,7 @@ export class BullMQProvider implements IProviderFactory {
     }
 
     try {
+      const workerKey = `${queueName}-${Date.now()}`;
       const worker = new BullWorker(
         queueName,
         async (bullJob: BullJob) => {
@@ -642,14 +706,16 @@ export class BullMQProvider implements IProviderFactory {
           connection: this.connection,
           prefix: this.prefix,
           concurrency: options.concurrency ?? 1,
+          ...this.workerOptions,
+          // explicit control over autorun to prevent race condition
+          autorun: false,
         },
       );
 
-      // store worker
-      const workerKey = `${queueName}-${Date.now()}`;
+      // store worker before starting
       this.workers.set(workerKey, worker);
 
-      // handle errors
+      // attach error handler before starting
       worker.on("error", (error) => {
         const queueError = this.mapError(error, queueName);
         console.error(
@@ -661,10 +727,25 @@ export class BullMQProvider implements IProviderFactory {
         options.onError?.(queueError);
       });
 
+      // start worker asynchronously - don't wait for it to connect
+      worker.run().catch((error) => {
+        console.error(
+          `[BullMQProvider] Worker for queue '${queueName}' failed to start:`,
+          error,
+        );
+        options.onError?.(this.mapError(error, queueName));
+        // clean up failed worker from registry
+        this.workers.delete(workerKey);
+      });
+
       // return shutdown function
       return async () => {
-        await worker.close();
-        this.workers.delete(workerKey);
+        try {
+          await worker.close();
+        } finally {
+          // always remove worker from registry, even if close() fails
+          this.workers.delete(workerKey);
+        }
       };
     } catch (error) {
       // eslint-disable-next-line @typescript-eslint/only-throw-error -- QueueError is intentional design, should be Error subclass
