@@ -1,5 +1,11 @@
 # @satoshibits/queue
 
+## 2.4.0
+
+### Minor Changes
+
+- 038b553: Adds support for permanent job failures with retryable: false
+
 ## 2.3.0
 
 ### Minor Changes
