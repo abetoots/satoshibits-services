@@ -646,6 +646,25 @@ Object.defineProperty(bullmqMetadata, "job", {
 - ✅ Repeat job metadata (`job.repeatJobKey`)
 - ❌ Basic job data (use `job` parameter directly)
 
+**Accessing Jobs Outside of Processing:**
+
+For tests, monitoring, or admin tools that need job access outside of handler execution, use `getBullMQQueue()` instead:
+
+```typescript
+// outside of processing (tests, monitoring, admin tools)
+const result = queue.bullmq?.getBullMQQueue();
+if (result?.success && result.data) {
+  const bullQueue = result.data;
+  const job = await bullQueue.getJob('job-id');
+  const waitingJobs = await bullQueue.getWaiting();
+}
+```
+
+| Context | Access Method | Use Case |
+|---------|---------------|----------|
+| During processing | `job.providerMetadata?.bullmq?.job` | Progress updates, logging, flow control |
+| Outside processing | `queue.bullmq.getBullMQQueue()` | Tests, monitoring, admin tools |
+
 ---
 
 ## Provider Development Patterns

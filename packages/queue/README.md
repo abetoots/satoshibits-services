@@ -1293,6 +1293,72 @@ const worker = new Worker('my-queue', async (data, job) => {
 - ✅ Custom flow control features
 - ❌ Basic job data and metadata (use the `job` parameter directly)
 
+#### Accessing BullMQ Jobs Outside of Processing
+
+For accessing jobs outside of handler execution (e.g., in tests, monitoring, or admin tools), use `getBullMQQueue()` to access BullMQ's native Queue API:
+
+```typescript
+const extensions = queue.bullmq;
+if (extensions) {
+  const result = extensions.getBullMQQueue();
+  if (result.success && result.data) {
+    const bullQueue = result.data;
+
+    // get a specific job by ID
+    const job = await bullQueue.getJob('job-id');
+
+    // get jobs by state
+    const waitingJobs = await bullQueue.getWaiting();
+    const activeJobs = await bullQueue.getActive();
+    const completedJobs = await bullQueue.getCompleted();
+    const failedJobs = await bullQueue.getFailed();
+
+    // get job counts
+    const counts = await bullQueue.getJobCounts();
+  }
+}
+```
+
+**Testing Example:**
+
+```typescript
+import { Queue } from '@satoshibits/queue';
+import { BullMQProvider } from '@satoshibits/queue/providers/bullmq';
+
+describe('Job Processing', () => {
+  it('should update job progress during processing', async () => {
+    const provider = new BullMQProvider({ connection: { host: 'localhost', port: 6379 } });
+    const queue = new Queue('test-queue', { provider: provider.forQueue('test-queue') });
+
+    // add a job
+    const addResult = await queue.add('test-job', { data: 'test' });
+    const jobId = addResult.success ? addResult.data.id : null;
+
+    // ... start worker and process job ...
+
+    // verify job state using native BullMQ Queue
+    const extensions = queue.bullmq;
+    if (extensions && jobId) {
+      const result = extensions.getBullMQQueue();
+      if (result.success && result.data) {
+        const bullQueue = result.data;
+        const job = await bullQueue.getJob(jobId);
+
+        expect(job?.progress).toBe(100);
+        expect(job?.finishedOn).toBeDefined();
+      }
+    }
+  });
+});
+```
+
+**Key Distinction:**
+
+| Context | Access Method | Use Case |
+|---------|---------------|----------|
+| During processing | `job.providerMetadata?.bullmq?.job` | Progress updates, logging, flow control |
+| Outside processing | `queue.bullmq.getBullMQQueue()` | Tests, monitoring, admin tools, job inspection |
+
 ### Multiple Provider Instances Pattern
 
 When different queues or workers need different provider-specific configurations, create multiple provider instances instead of mixing configuration into the Queue/Worker layer.
