@@ -5,6 +5,7 @@
  */
 
 import type { Result } from '@satoshibits/functional';
+import type { Queue as BullMQQueue } from 'bullmq';
 import type { QueueError } from '../../core/types.mjs';
 
 /**
@@ -133,4 +134,25 @@ export interface IBullMQExtensions {
    * ```
    */
   removeJobScheduler(id: string): Promise<Result<void, QueueError>>;
+
+  /**
+   * Get the underlying BullMQ Queue instance.
+   * Returns undefined if the queue hasn't been initialized yet.
+   *
+   * This provides direct access to BullMQ Queue for advanced use cases
+   * not covered by the abstraction layer.
+   *
+   * @returns Result containing the BullMQ Queue instance or undefined
+   *
+   * @example
+   * ```typescript
+   * const result = queue.bullmq.getBullMQQueue();
+   * if (result.success && result.data) {
+   *   const bullQueue = result.data;
+   *   // Access BullMQ-specific methods
+   *   const isPaused = await bullQueue.isPaused();
+   * }
+   * ```
+   */
+  getBullMQQueue(): Result<BullMQQueue | undefined, QueueError>;
 }

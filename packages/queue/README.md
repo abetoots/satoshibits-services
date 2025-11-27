@@ -1080,26 +1080,38 @@ await queue.add('send-email', data, {
 
 For advanced provider-specific features that don't exist across all providers, use the typed namespace pattern:
 
-#### BullMQ-Specific Features
+#### BullMQ Queue Extensions
 
-Access BullMQ-specific features through the `queue.bullmq` namespace:
+Access BullMQ Queue-specific features through the `queue.bullmq` namespace:
 
 ```typescript
 import { Queue } from '@satoshibits/queue';
 import { BullMQProvider } from '@satoshibits/queue/providers/bullmq';
 
-const providerFactory = new BullMQProvider({
+const provider = new BullMQProvider({
   connection: { host: 'localhost', port: 6379 }
 });
 
-const queue = new Queue('emails', {
-  provider: providerFactory.forQueue('emails')
+const queue = new Queue('my-queue', {
+  provider: provider.forQueue('my-queue')
 });
 
-// recurring job scheduler (BullMQ only)
+// access BullMQ-specific queue features
 const extensions = queue.bullmq;
 if (extensions) {
-  // create a daily recurring job
+  // get the underlying BullMQ Queue instance
+  const queueResult = extensions.getBullMQQueue();
+  if (queueResult.success && queueResult.data) {
+    const bullQueue = queueResult.data;
+
+    // use native BullMQ Queue features not exposed by core API
+    const isPaused = await bullQueue.isPaused();
+
+    // access queue-level logs
+    const logs = await bullQueue.getJobLogs('job-id');
+  }
+
+  // recurring job scheduler (BullMQ only)
   await extensions.upsertJobScheduler('daily-report', {
     pattern: '0 9 * * *',  // cron pattern: 9 AM daily
     jobName: 'generate-report',
@@ -1134,7 +1146,8 @@ if (extensions) {
 - Code using provider namespaces is **not portable** across providers
 - Use the escape hatch pattern when you need features that don't have multi-provider equivalents
 
-**When to use provider namespaces:**
+**When to use queue extensions:**
+- ✅ Direct access to underlying BullMQ Queue instance
 - ✅ BullMQ's recurring job schedulers (no SQS equivalent)
 - ✅ Provider-specific advanced features that don't map across backends
 - ❌ Per-job options (use `providerOptions` instead)
@@ -1212,6 +1225,73 @@ const ext3 = worker.bullmq?.getBullMQWorker();
 - ✅ You need fine-grained control over worker behavior
 - ✅ You're implementing custom event handlers for BullMQ events
 - ❌ Features available through the core Worker API (use core API instead)
+
+#### Accessing the BullMQ Job During Processing
+
+For advanced use cases requiring direct access to the underlying BullMQ Job instance, the job is available via `providerMetadata` during processing:
+
+```typescript
+import type { Job as BullJob } from 'bullmq';
+
+const worker = new Worker('my-queue', async (data, job) => {
+  // access the underlying BullMQ Job instance
+  const bullJob = job.providerMetadata?.bullmq?.job as BullJob | undefined;
+
+  if (bullJob) {
+    // use native BullMQ Job features
+    await bullJob.updateProgress(50);
+    await bullJob.log('Processing started...');
+
+    // access BullMQ-specific job properties
+    const parentKey = bullJob.parentKey;
+    const repeatJobKey = bullJob.repeatJobKey;
+  }
+
+  await processData(data);
+  return Result.ok(undefined);
+});
+```
+
+**⚠️ Important Lifecycle Warnings:**
+
+1. **Valid Only During Processing**: The job handle is only valid during job processing. Do not cache or use it after your handler returns:
+
+   ```typescript
+   // ❌ WRONG: Caching job reference
+   let cachedJob: BullJob;
+   const worker = new Worker('queue', async (data, job) => {
+     cachedJob = job.providerMetadata?.bullmq?.job;  // don't do this!
+     return Result.ok(undefined);
+   });
+
+   // later...
+   await cachedJob.updateProgress(100);  // may fail or cause undefined behavior
+   ```
+
+2. **No `structuredClone()`**: The BullMQ Job contains circular references and cannot be cloned:
+
+   ```typescript
+   // ❌ WRONG: Will throw an error
+   const clonedJob = structuredClone(job);
+
+   // ✅ CORRECT: Clone only the data you need
+   const clonedData = structuredClone(job.data);
+   ```
+
+3. **JSON Serialization Works**: The job is stored as a non-enumerable property, so `JSON.stringify(job)` works correctly (it excludes the BullMQ Job instance):
+
+   ```typescript
+   // ✅ Safe: Non-enumerable properties are excluded
+   const serialized = JSON.stringify(job);  // works fine
+   ```
+
+**When to access the BullMQ Job:**
+- ✅ Progress updates (`job.updateProgress()`)
+- ✅ Job logging (`job.log()`)
+- ✅ Accessing parent job relationships (`job.parentKey`)
+- ✅ Accessing repeat job keys (`job.repeatJobKey`)
+- ✅ Custom flow control features
+- ❌ Basic job data and metadata (use the `job` parameter directly)
 
 ### Multiple Provider Instances Pattern
 

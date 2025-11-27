@@ -1,6 +1,6 @@
 # Architecture: @satoshibits/queue
 
-**Last Updated**: 2025-10-08
+**Last Updated**: 2025-11-27
 
 This document describes the architectural principles and implementation approach for `@satoshibits/queue`, a thin, honest abstraction layer over queue providers.
 
@@ -336,6 +336,10 @@ class Queue<T = unknown> {
 1. **Create Extension Interface** (`bullmq-extensions.interface.mts`):
 ```typescript
 export interface IBullMQExtensions {
+  // direct access to underlying BullMQ Queue instance
+  getBullMQQueue(): Result<BullMQQueue | undefined, QueueError>;
+
+  // job scheduler methods (BullMQ-specific feature)
   upsertJobScheduler<T>(id: string, options: JobSchedulerOptions<T>): Promise<Result<void, QueueError>>;
   getJobSchedulers(): Promise<Result<JobScheduler[], QueueError>>;
   removeJobScheduler(id: string): Promise<Result<void, QueueError>>;
@@ -584,9 +588,63 @@ Our architecture provides escape hatches at the appropriate layers:
 | Per-job options | `JobOptions.providerOptions` | Operation | Job-specific transient options |
 | Queue features | `queue.bullmq` namespace | Operation | Provider-specific queue actions |
 | Worker features | `worker.bullmq` namespace | Operation | Provider-specific worker actions |
+| Job access | `job.providerMetadata.bullmq.job` | Runtime | Native job instance during processing |
 | Configuration | **Multiple Provider Instances** | **Infrastructure** | **Provider-level settings** |
 
 Each escape hatch is placed at the correct architectural layer, maintaining clean separation of concerns.
+
+#### Job-Level Escape Hatch
+
+For advanced use cases requiring direct access to the underlying provider's Job instance during processing, the native job is available via `providerMetadata`:
+
+```typescript
+const worker = new Worker('my-queue', async (data, job) => {
+  // access the underlying BullMQ Job instance
+  const bullJob = job.providerMetadata?.bullmq?.job as BullJob | undefined;
+
+  if (bullJob) {
+    await bullJob.updateProgress(50);
+    await bullJob.log('Processing checkpoint...');
+  }
+
+  return Result.ok(undefined);
+});
+```
+
+**Implementation Details:**
+
+The BullMQ Job is stored as a **non-enumerable property** on `providerMetadata.bullmq`:
+
+```typescript
+// in BullMQProvider._processJobs and _fetchJobs
+const bullmqMetadata: { token: string; job?: BullJob } = { token };
+Object.defineProperty(bullmqMetadata, "job", {
+  value: bullJob,
+  enumerable: false,  // prevents JSON.stringify issues
+  configurable: true,
+  writable: true,
+});
+```
+
+**Why Non-Enumerable?**
+
+1. **Serialization Safety**: `JSON.stringify(activeJob)` works correctly (excludes the job)
+2. **Circular Reference Protection**: BullMQ Job has circular references that would break `structuredClone()`
+3. **Direct Access Preserved**: `job.providerMetadata?.bullmq?.job` still works
+
+**Lifecycle Constraints:**
+
+- **Valid Only During Processing**: The job handle is only valid during handler execution
+- **No Caching**: Do not store the job reference for use after the handler returns
+- **No Deep Cloning**: `structuredClone(activeJob)` will fail; clone only the data you need
+
+**When to Use:**
+
+- ✅ Progress updates (`job.updateProgress()`)
+- ✅ Job logging (`job.log()`)
+- ✅ Parent job relationships (`job.parentKey`)
+- ✅ Repeat job metadata (`job.repeatJobKey`)
+- ❌ Basic job data (use `job` parameter directly)
 
 ---
 

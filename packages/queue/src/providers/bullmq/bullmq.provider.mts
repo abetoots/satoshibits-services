@@ -541,11 +541,22 @@ export class BullMQProvider implements IProviderFactory {
         if (!bullJob) break; // no more jobs available
 
         const mappedJob = await this.mapBullJobToJob<T>(bullJob, queueName);
+
+        // create providerMetadata with non-enumerable job reference
+        // non-enumerable prevents JSON.stringify from throwing on circular refs
+        const bullmqMetadata: { token: string; job?: BullJob } = { token };
+        Object.defineProperty(bullmqMetadata, "job", {
+          value: bullJob,
+          enumerable: false,
+          configurable: true,
+          writable: true,
+        });
+
         // store token for ack/nack operations - create ActiveJob with providerMetadata
         const job: ActiveJob<T> = {
           ...mappedJob,
           providerMetadata: {
-            bullmq: { token },
+            bullmq: bullmqMetadata,
           },
         };
         jobs.push(job);
@@ -690,11 +701,23 @@ export class BullMQProvider implements IProviderFactory {
           // map BullMQ job to normalized job
           const mappedJob = await this.mapBullJobToJob<T>(bullJob, queueName);
 
+          // create providerMetadata with non-enumerable job reference
+          // non-enumerable prevents JSON.stringify from throwing on circular refs
+          const bullmqMetadata: { token: string | undefined; job?: BullJob } = {
+            token: bullJob.token,
+          };
+          Object.defineProperty(bullmqMetadata, "job", {
+            value: bullJob,
+            enumerable: false,
+            configurable: true,
+            writable: true,
+          });
+
           // create ActiveJob with providerMetadata
           const job: ActiveJob<T> = {
             ...mappedJob,
             providerMetadata: {
-              bullmq: { token: bullJob.token },
+              bullmq: bullmqMetadata,
             },
           };
 
@@ -1395,6 +1418,15 @@ class BullMQExtensions implements IBullMQExtensions {
       await queue.removeJobScheduler(id);
 
       return Result.ok(undefined);
+    } catch (error) {
+      return Result.err(this.provider.mapProviderError(error, this.queueName));
+    }
+  }
+
+  getBullMQQueue(): Result<BullQueue | undefined, QueueError> {
+    try {
+      const queue = this.provider.getBullMQQueue(this.queueName);
+      return Result.ok(queue);
     } catch (error) {
       return Result.err(this.provider.mapProviderError(error, this.queueName));
     }

@@ -361,4 +361,35 @@ describe("BullMQExtensions", () => {
       }
     });
   });
+
+  describe("getBullMQQueue", () => {
+    it("should return the underlying BullMQ Queue instance", () => {
+      const result = extensions.getBullMQQueue();
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // the mock queue should be returned
+        expect(result.data).toBeDefined();
+        expect(result.data).toBe(mockQueue);
+      }
+    });
+
+    it("should return undefined when queue is not initialized", () => {
+      const newProvider = new BullMQProvider({
+        connection: { host: "localhost", port: 6379 },
+      });
+      const boundProvider = newProvider.forQueue("uninitialized-queue");
+      // @ts-expect-error - getBullMQExtensions is BullMQ-specific
+      const ext = boundProvider.getBullMQExtensions() as IBullMQExtensions;
+
+      vi.spyOn(newProvider, "getBullMQQueue").mockReturnValue(undefined);
+
+      const result = ext.getBullMQQueue();
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toBeUndefined();
+      }
+    });
+  });
 });
