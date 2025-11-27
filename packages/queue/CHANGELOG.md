@@ -1,5 +1,11 @@
 # @satoshibits/queue
 
+## 2.3.0
+
+### Minor Changes
+
+- e820010: Adds BullMQ queue/job escape hatches for advanced access
+
 ## 2.2.0
 
 ### Minor Changes
