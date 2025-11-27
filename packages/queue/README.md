@@ -368,6 +368,42 @@ const worker = new Worker('payments', async (data, job) => {
 await worker.start();
 ```
 
+**Alternative: Using `QueueError` with `retryable: false`**
+
+For pull-model providers (MemoryProvider) or when you need explicit control, you can throw a `QueueError` with `retryable: false` to signal permanent failure:
+
+```typescript
+import type { QueueError } from '@satoshibits/queue';
+
+const worker = new Worker('payments', async (data, job) => {
+  try {
+    await chargeCustomer(data.cardId);
+    return Result.ok(undefined);
+  } catch (error) {
+    if (error.code === 'CARD_INVALID') {
+      // throw QueueError with retryable: false to skip all retries
+      const permanentError: QueueError = {
+        type: 'DataError',
+        code: 'VALIDATION',
+        message: `Invalid card: ${error.message}`,
+        retryable: false,  // signals provider to skip retry
+      };
+      throw permanentError;
+    }
+
+    // transient errors - throw plain Error to retry
+    throw error;
+  }
+});
+```
+
+When `nack()` receives an error with `retryable: false`, the provider will:
+- Skip all remaining retry attempts
+- Move the job directly to failed state
+- Respect `removeOnFail` option (job is removed or kept in failed state)
+
+This works for both push-model (BullMQ) and pull-model (MemoryProvider) providers.
+
 ### Mistake 2: Forgetting Graceful Shutdown
 
 **Problem:**

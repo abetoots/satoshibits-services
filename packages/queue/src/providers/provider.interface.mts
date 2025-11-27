@@ -108,11 +108,15 @@ export interface IQueueProvider {
    * Negative acknowledge - job failed (pull model)
    * Provider handles retry logic, DLQ movement, etc.
    *
+   * If error has `retryable: false` (e.g., QueueError with retryable flag),
+   * provider should skip retry and move job directly to failed state.
+   * This allows handlers to signal permanent failures that shouldn't be retried.
+   *
    * @param job ActiveJob with runtime metadata (receiptHandle, lockToken, etc.)
-   * @param error Error that occurred
+   * @param error Error that occurred. If error has `retryable: false`, skip retry.
    * @returns Result indicating success or error
    */
-  nack?<T>(job: ActiveJob<T>, error: Error): Promise<Result<void, QueueError>>;
+  nack?<T>(job: ActiveJob<T>, error: Error | QueueError): Promise<Result<void, QueueError>>;
 
   // ========================================
   // Queue Management (All Providers)

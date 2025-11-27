@@ -625,12 +625,15 @@ export class BullMQProvider implements IProviderFactory {
 
   /**
    * Internal: Negative acknowledge - job failed (pull model)
-   * Delegates to BullMQ's native retry logic
+   * Delegates to BullMQ's native retry logic.
+   *
+   * If error has `retryable: false`, wraps in UnrecoverableError to signal
+   * permanent failure to BullMQ (skips retry, moves directly to failed).
    */
   async _nackJob<T>(
     queueName: string,
     job: ActiveJob<T>,
-    error: Error,
+    error: Error | QueueError,
   ): Promise<Result<void, QueueError>> {
     // HIGH-BQ-001: check shutdown flag
     if (this.isShuttingDown) {
@@ -665,9 +668,21 @@ export class BullMQProvider implements IProviderFactory {
         return Result.err(QueueErrorFactory.jobNotFound(jobId, queueName));
       }
 
+      // check if error signals permanent failure (retryable: false)
+      // if so, wrap in UnrecoverableError to tell BullMQ to skip retries
+      const isPermanentFailure =
+        "retryable" in error && error.retryable === false;
+
+      const errorToPass = isPermanentFailure
+        ? new UnrecoverableError(error.message)
+        : error instanceof Error
+          ? error
+          : new Error(error.message);
+
       // delegate to BullMQ's native retry logic using the correct token
       // BullMQ will check attemptsMade vs attempts and handle retry/DLQ automatically
-      await bullJob.moveToFailed(error, token);
+      // UnrecoverableError signals BullMQ to skip retries and move to failed
+      await bullJob.moveToFailed(errorToPass, token);
 
       return Result.ok(undefined);
     } catch (error) {
@@ -1500,7 +1515,7 @@ class BoundBullMQProvider implements IQueueProvider {
 
   async nack<T>(
     job: ActiveJob<T>,
-    error: Error,
+    error: Error | QueueError,
   ): Promise<Result<void, QueueError>> {
     return this.provider._nackJob(this.queueName, job, error);
   }

@@ -277,14 +277,38 @@ ack()/nack() → Provider uses providerMetadata to acknowledge/reject
 ### The `nack()` Contract
 
 **What `nack()` Does**:
-When a job fails processing, calling `nack(jobId, error)` signals the failure to the provider, which then handles retry/DLQ logic using its native mechanisms.
+When a job fails processing, calling `nack(job, error)` signals the failure to the provider, which then handles retry/DLQ logic using its native mechanisms.
+
+**Permanent Error Signaling**:
+
+If the error has `retryable: false` (e.g., a `QueueError`), the provider will skip retry logic and move the job directly to failed state:
+
+```typescript
+// signature accepts Error or QueueError
+nack<T>(job: ActiveJob<T>, error: Error | QueueError): Promise<Result<void, QueueError>>
+
+// provider checks for permanent failure
+const isPermanentFailure = 'retryable' in error && error.retryable === false;
+if (isPermanentFailure) {
+  // skip retry, move directly to failed
+}
+```
+
+This allows handlers to signal "this failed permanently, don't retry" for errors like invalid data, missing resources, or business rule violations.
 
 **Provider-Specific Behavior**:
 
 **BullMQ**:
 - Increments the job's attempt counter
+- If `retryable: false`: Wraps error in `UnrecoverableError`, skips retry
 - If `attempts < maxAttempts`: Re-queues job with backoff delay
 - If `attempts >= maxAttempts`: Moves job to failed queue (DLQ)
+
+**MemoryProvider**:
+- Increments the job's attempt counter
+- If `retryable: false`: Skips retry, moves directly to failed state
+- If `attempts < maxAttempts`: Re-queues job for retry
+- If `attempts >= maxAttempts`: Marks job as failed
 
 **SQS**:
 - Returns message to queue (makes it visible again)
@@ -295,7 +319,7 @@ When a job fails processing, calling `nack(jobId, error)` signals the failure to
 - Sends `nack` with `requeue=true` for retryable failures
 - If max retries exceeded (tracked via headers): Routes to dead letter exchange
 
-**Key Principle**: The library does NOT implement retry logic. It delegates to the provider's battle-tested native implementation.
+**Key Principle**: The library does NOT implement retry logic. It delegates to the provider's battle-tested native implementation. The `retryable` flag provides a cross-provider way to signal permanent failures.
 
 ---
 

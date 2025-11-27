@@ -280,12 +280,15 @@ export class MemoryProvider implements IProviderFactory {
    * Internal: Negative acknowledge - job failed (pull model)
    * Implements retry logic: requeues job if attempts < maxAttempts
    * Conditionally removes job on final failure based on removeOnFail option
+   *
+   * If error has `retryable: false`, skips retry and moves directly to failed state.
+   * This allows handlers to signal permanent failures that shouldn't be retried.
    */
   // eslint-disable-next-line @typescript-eslint/require-await -- interface requires Promise return type
   async _nackJob<T>(
     queueName: string,
     job: ActiveJob<T>,
-    error: Error,
+    error: Error | QueueError,
   ): Promise<Result<void, QueueError>> {
     const queue = this.queues.get(queueName);
     if (!queue) {
@@ -300,8 +303,12 @@ export class MemoryProvider implements IProviderFactory {
 
     const newAttempts = storedJob.attempts + 1;
 
-    if (newAttempts < storedJob.maxAttempts) {
-      // requeue for retry
+    // check if error signals permanent failure (retryable: false)
+    const isPermanentFailure =
+      "retryable" in error && error.retryable === false;
+
+    if (!isPermanentFailure && newAttempts < storedJob.maxAttempts) {
+      // requeue for retry (only if retryable and attempts remaining)
       const retriedJob = {
         ...storedJob,
         status: "waiting" as const,
@@ -311,6 +318,7 @@ export class MemoryProvider implements IProviderFactory {
       queue.jobs.set(jobId, retriedJob);
     } else {
       // final failure - mark as failed
+      // either: permanent error (retryable: false), or exhausted attempts
       const failedJob = {
         ...storedJob,
         status: "failed" as const,
@@ -518,7 +526,7 @@ class BoundMemoryProvider implements IQueueProvider {
 
   async nack<T>(
     job: ActiveJob<T>,
-    error: Error,
+    error: Error | QueueError,
   ): Promise<Result<void, QueueError>> {
     return this.provider._nackJob(this.queueName, job, error);
   }

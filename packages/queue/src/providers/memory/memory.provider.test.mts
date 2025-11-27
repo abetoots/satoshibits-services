@@ -716,6 +716,156 @@ describe("MemoryProvider", () => {
       if (result?.success) fail("Expected failure");
       expect(result?.error.type).toBe("NotFoundError");
     });
+
+    it("should skip retry and fail immediately when error has retryable: false", async () => {
+      // add job with attempts remaining
+      await boundProvider.add({
+        id: "job-1",
+        name: "test-job",
+        queueName: "test-queue",
+        data: {},
+        status: "waiting",
+        attempts: 0,
+        maxAttempts: 5, // plenty of retries remaining
+        createdAt: new Date(),
+      });
+
+      const fetchResult = await boundProvider.fetch?.(1);
+      expect(fetchResult?.success).toBe(true);
+      if (!fetchResult?.success) fail("Expected fetch success");
+
+      // signal permanent failure with retryable: false
+      const permanentError = {
+        type: "DataError" as const,
+        code: "VALIDATION" as const,
+        message: "Invalid data - cannot be retried",
+        retryable: false as const,
+      };
+
+      const result = await boundProvider.nack?.(
+        fetchResult.data[0]!,
+        permanentError,
+      );
+      expect(result?.success).toBe(true);
+
+      // job should be failed immediately, not requeued
+      const getResult = await boundProvider.getJob("job-1");
+      expect(getResult.success).toBe(true);
+      if (!getResult.success) fail("Expected success");
+      // job removed (default removeOnFail: true) after permanent failure
+      expect(getResult.data).toBeNull();
+
+      // failed count should be incremented
+      const statsResult = await boundProvider.getStats();
+      expect(statsResult.success).toBe(true);
+      if (!statsResult.success) fail("Expected success");
+      expect(statsResult.data.failed).toBe(1);
+    });
+
+    it("should still retry when error has retryable: true", async () => {
+      await boundProvider.add({
+        id: "job-1",
+        name: "test-job",
+        queueName: "test-queue",
+        data: {},
+        status: "waiting",
+        attempts: 0,
+        maxAttempts: 5,
+        createdAt: new Date(),
+      });
+
+      const fetchResult = await boundProvider.fetch?.(1);
+      expect(fetchResult?.success).toBe(true);
+      if (!fetchResult?.success) fail("Expected fetch success");
+
+      // signal transient failure with retryable: true
+      const transientError = {
+        type: "RuntimeError" as const,
+        code: "CONNECTION" as const,
+        message: "Connection timeout - can be retried",
+        retryable: true,
+      };
+
+      const result = await boundProvider.nack?.(
+        fetchResult.data[0]!,
+        transientError,
+      );
+      expect(result?.success).toBe(true);
+
+      // job should be requeued for retry
+      const getResult = await boundProvider.getJob("job-1");
+      expect(getResult.success).toBe(true);
+      if (!getResult.success) fail("Expected success");
+      expect(getResult.data?.status).toBe("waiting");
+      expect(getResult.data?.attempts).toBe(1);
+    });
+
+    it("should still retry when error is a plain Error without retryable flag", async () => {
+      await boundProvider.add({
+        id: "job-1",
+        name: "test-job",
+        queueName: "test-queue",
+        data: {},
+        status: "waiting",
+        attempts: 0,
+        maxAttempts: 5,
+        createdAt: new Date(),
+      });
+
+      const fetchResult = await boundProvider.fetch?.(1);
+      expect(fetchResult?.success).toBe(true);
+      if (!fetchResult?.success) fail("Expected fetch success");
+
+      // plain Error without retryable flag should default to retry
+      const plainError = new Error("Something went wrong");
+
+      const result = await boundProvider.nack?.(fetchResult.data[0]!, plainError);
+      expect(result?.success).toBe(true);
+
+      // job should be requeued for retry (backward compatible behavior)
+      const getResult = await boundProvider.getJob("job-1");
+      expect(getResult.success).toBe(true);
+      if (!getResult.success) fail("Expected success");
+      expect(getResult.data?.status).toBe("waiting");
+      expect(getResult.data?.attempts).toBe(1);
+    });
+
+    it("should keep job with removeOnFail: false even on permanent failure", async () => {
+      await boundProvider.add(
+        {
+          id: "job-1",
+          name: "test-job",
+          queueName: "test-queue",
+          data: {},
+          status: "waiting",
+          attempts: 0,
+          maxAttempts: 5,
+          createdAt: new Date(),
+        },
+        { removeOnFail: false },
+      );
+
+      const fetchResult = await boundProvider.fetch?.(1);
+      expect(fetchResult?.success).toBe(true);
+      if (!fetchResult?.success) fail("Expected fetch success");
+
+      // signal permanent failure
+      const permanentError = {
+        type: "DataError" as const,
+        code: "VALIDATION" as const,
+        message: "Invalid data",
+        retryable: false as const,
+      };
+
+      await boundProvider.nack?.(fetchResult.data[0]!, permanentError);
+
+      // job should still exist in failed state (removeOnFail: false)
+      const getResult = await boundProvider.getJob("job-1");
+      expect(getResult.success).toBe(true);
+      if (!getResult.success) fail("Expected success");
+      expect(getResult.data?.status).toBe("failed");
+      expect(getResult.data?.error).toBe("Invalid data");
+    });
   });
 
   describe("queue management", () => {
