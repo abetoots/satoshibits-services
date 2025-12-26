@@ -30,3 +30,9 @@ View your created package in `packages/{package_name}`.
 
   1. Git add your changes. Group your changes to the relevant package.
   2. `pnpm run commit:publish`
+
+## Contributing & Guidelines
+
+- Contributor guide: see `AGENTS.md` for repo structure, commands, style, and testing expectations.
+- Contributing process: see `.github/CONTRIBUTING.md` for setup, commit/changeset workflow, PR checklist, and releases.
+- Opening a PR will use the built-in template in `.github/pull_request_template.md`.
