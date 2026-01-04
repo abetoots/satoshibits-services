@@ -29,6 +29,7 @@ describe("README Examples Validation", () => {
       // From README line 21-24
       const client = await SmartClient.initialize({
         serviceName: "my-app",
+        environment: "node",
         endpoint: undefined, // no-network mode for tests
       });
 
@@ -51,6 +52,7 @@ describe("README Examples Validation", () => {
       // From README line 26-33
       const client = await SmartClient.initialize({
         serviceName: "my-app",
+        environment: "node",
         endpoint: undefined, // no-network mode for tests
       });
       observability = client;
@@ -66,7 +68,7 @@ describe("README Examples Validation", () => {
         await processPayment(order);
       } catch (error) {
         // Should not throw when recording error
-        expect(() => client.errors.record(error)).not.toThrow();
+        expect(() => client.errors.record(error as Error)).not.toThrow();
         // Automatically captures: user ID, session, feature flags,
         // call stack, related requests, and breadcrumbs
       }
@@ -78,6 +80,7 @@ describe("README Examples Validation", () => {
       // From README line 35-39
       const client = await SmartClient.initialize({
         serviceName: "my-app",
+        environment: "node",
         endpoint: undefined, // no-network mode for tests
       });
       observability = client;
@@ -99,6 +102,7 @@ describe("README Examples Validation", () => {
       // From README line 93-100
       const client = await SmartClient.initialize({
         serviceName: "my-app",
+        environment: "node",
         endpoint: undefined, // no-network mode for tests
       });
       observability = client;
@@ -127,6 +131,7 @@ describe("README Examples Validation", () => {
     it("Should have all documented methods available", async () => {
       const client = await SmartClient.initialize({
         serviceName: "my-app",
+        environment: "node",
         endpoint: undefined, // no-network mode for tests
       });
       observability = client;
@@ -158,6 +163,7 @@ describe("README Examples Validation", () => {
       // Just verify it works in our current test environment
       const client = await SmartClient.initialize({
         serviceName: "test-app",
+        environment: "node",
         endpoint: undefined, // no-network mode for tests
       });
       observability = client;
@@ -178,6 +184,7 @@ describe("README Examples Validation", () => {
 
       const client = await SmartClient.initialize({
         serviceName: "universal-app",
+        environment: "node",
         endpoint: undefined, // no-network mode for tests
       });
       observability = client;

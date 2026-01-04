@@ -11,22 +11,29 @@ import type { Attributes, Tracer } from "@opentelemetry/api";
 import type { Logger } from "@opentelemetry/api-logs";
 
 import { getBusinessContext, getGlobalContext } from "./enrichment/context.mjs";
-import { DataSanitizer, SanitizerPresets } from "./enrichment/sanitizer.mjs";
+import { DataSanitizer, SanitizerPresets, type SanitizerOptions } from "./enrichment/sanitizer.mjs";
 import { getUnifiedClientInstance } from "./client-instance.mjs";
 import * as metrics from "./smart-metrics.mjs";
 import { getResultAdapter } from "./utils/result-adapter.mjs";
 import { isThenable } from "./utils/thenable.mjs";
 
+// ===== Error Sanitizer Configuration (API Boundary Fix) =====
+
 /**
- * Dedicated sanitizer for error reporting with strict security settings.
- * Errors frequently contain sensitive data (passwords, API keys, PII),
- * so we use strict mode to ensure maximum protection.
+ * Error sanitizer preset type.
+ * Controls the baseline sanitization rules for error data.
  */
-const ERROR_SANITIZER = new DataSanitizer({
-  ...SanitizerPresets.gdpr(), // Use GDPR preset as baseline (masks phones, IPs)
+export type ErrorSanitizerPreset = "strict" | "minimal" | "none";
+
+/**
+ * Strict preset - GDPR-compliant with comprehensive secret detection.
+ * This is the default and provides maximum protection.
+ */
+const STRICT_ERROR_SANITIZER_OPTIONS: SanitizerOptions = {
+  ...SanitizerPresets.gdpr(), // GDPR baseline (masks phones, IPs)
   maskEmails: false, // Disable partial masking - we do full redaction via custom pattern
   strictMode: true, // Enable strict mode to catch API keys and other patterns
-  redactionString: "[REDACTED]", // Use clear redaction marker
+  redactionString: "[REDACTED]",
   customPatterns: [
     // Stripe API keys (sk_live_, sk_test_, pk_live_, pk_test_)
     {
@@ -54,7 +61,109 @@ const ERROR_SANITIZER = new DataSanitizer({
       replacement: "[REDACTED]",
     },
   ],
-});
+};
+
+/**
+ * Minimal preset - Only redacts obvious secrets.
+ * Use when you need less aggressive sanitization but still want protection.
+ */
+const MINIMAL_ERROR_SANITIZER_OPTIONS: SanitizerOptions = {
+  strictMode: true,
+  redactionString: "[REDACTED]",
+  customPatterns: [
+    // API keys and secrets
+    {
+      pattern: /\b(api[_-]?key|apikey|secret[_-]?key|password|passwd|pwd)[:=\s]+\S+/gi,
+      replacement: "$1: [REDACTED]",
+    },
+    // Passwords in connection strings
+    {
+      pattern: /((?:mongodb|postgresql|mysql|redis|amqp):\/\/[^:]+:)([^@]+)(@)/gi,
+      replacement: "$1[REDACTED]$3",
+    },
+  ],
+};
+
+/**
+ * Get error sanitizer options based on preset.
+ */
+function getPresetOptions(preset: ErrorSanitizerPreset): SanitizerOptions {
+  switch (preset) {
+    case "strict":
+      return STRICT_ERROR_SANITIZER_OPTIONS;
+    case "minimal":
+      return MINIMAL_ERROR_SANITIZER_OPTIONS;
+    case "none":
+      return {}; // No sanitization
+    default:
+      return STRICT_ERROR_SANITIZER_OPTIONS;
+  }
+}
+
+/**
+ * Module-level error sanitizer instance.
+ * Configurable via configureErrorSanitizer() during SDK initialization.
+ */
+let errorSanitizer: DataSanitizer = new DataSanitizer(STRICT_ERROR_SANITIZER_OPTIONS);
+
+/**
+ * Configure the error sanitizer with custom options.
+ *
+ * API Boundary Fix: This function allows consumers to customize the error
+ * sanitizer behavior instead of being forced to use hardcoded GDPR/Stripe patterns.
+ *
+ * Called automatically during SDK initialization if config options are provided.
+ * Can also be called manually for advanced use cases.
+ *
+ * @param preset - Base preset to use ('strict', 'minimal', 'none')
+ * @param customOptions - Additional options to merge with preset
+ *
+ * @example
+ * ```typescript
+ * // Use minimal preset with custom patterns
+ * configureErrorSanitizer('minimal', {
+ *   customPatterns: [
+ *     { pattern: /my-vendor-key-\w+/gi, replacement: '[VENDOR_KEY]' }
+ *   ]
+ * });
+ * ```
+ */
+export function configureErrorSanitizer(
+  preset: ErrorSanitizerPreset = "strict",
+  customOptions?: SanitizerOptions,
+): void {
+  const presetOptions = getPresetOptions(preset);
+
+  // Merge preset with custom options (custom takes precedence)
+  const mergedOptions: SanitizerOptions = {
+    ...presetOptions,
+    ...customOptions,
+    // Merge custom patterns arrays if both exist
+    customPatterns: [
+      ...(presetOptions.customPatterns ?? []),
+      ...(customOptions?.customPatterns ?? []),
+    ],
+  };
+
+  errorSanitizer = new DataSanitizer(mergedOptions);
+}
+
+/**
+ * Get the current error sanitizer instance.
+ * Used internally by error reporting functions.
+ */
+function getErrorSanitizer(): DataSanitizer {
+  return errorSanitizer;
+}
+
+/**
+ * Reset error sanitizer to default (strict preset).
+ * Useful for testing.
+ * @internal
+ */
+export function resetErrorSanitizer(): void {
+  errorSanitizer = new DataSanitizer(STRICT_ERROR_SANITIZER_OPTIONS);
+}
 
 /**
  * Error categories for better observability
@@ -144,14 +253,20 @@ interface InternalErrorCategorizationConfig extends ErrorCategorizationConfig {
 }
 
 // Global configuration for error categorization (uses internal type to support advanced features)
+// M5 fix: This global config is deprecated for multi-tenant applications.
+// Prefer passing config via client instance for tenant isolation.
 let errorCategorizationConfig: InternalErrorCategorizationConfig = {};
 
 /**
- * Configure error categorization behavior.
+ * Configure error categorization behavior globally.
  * Must be called during application initialization before errors are reported.
  *
+ * @deprecated For multi-tenant applications, use `createErrorReporter({ categorizationConfig: {...} })`
+ * or pass config directly to error functions. Global configuration is shared across all clients
+ * and does not support tenant isolation. This function will be removed in a future major version.
+ *
  * @example
- * // Basic configuration
+ * // Basic configuration (single-tenant only)
  * configureErrorCategorization({
  *   disableDefaults: false,
  * });
@@ -171,6 +286,11 @@ let errorCategorizationConfig: InternalErrorCategorizationConfig = {};
 export function configureErrorCategorization(
   config: ErrorCategorizationConfig | InternalErrorCategorizationConfig,
 ): void {
+  console.warn(
+    "[@satoshibits/observability] configureErrorCategorization() is deprecated. " +
+    "For multi-tenant applications, use instance-level configuration via createErrorReporter(). " +
+    "Global configuration does not support tenant isolation.",
+  );
   errorCategorizationConfig = config as InternalErrorCategorizationConfig;
 }
 
@@ -255,14 +375,101 @@ export function categorizeErrorForObservability(error: Error): ErrorCategory {
 }
 
 /**
+ * API Boundary Fix - Issue #9: Extract structured data from errors
+ * Prioritizes HTTP status codes and error codes over string matching.
+ * Works across locales and with third-party libraries that use different terminology.
+ *
+ * @param error - The Error object to extract data from
+ * @returns Category if structured data matches, undefined otherwise
+ */
+function categorizeByStructuredData(error: Error): ErrorCategory | undefined {
+  // check error.status or error.statusCode (HTTP errors from fetch, axios, etc.)
+  // Multi-model review (Codex): Some libraries expose status as string - coerce with Number()
+  const rawStatus =
+    (error as Error & { status?: number | string }).status ??
+    (error as Error & { statusCode?: number | string }).statusCode ??
+    (error as Error & { response?: { status?: number | string } }).response?.status;
+  const statusCode = typeof rawStatus === "string" ? Number(rawStatus) : rawStatus;
+
+  if (typeof statusCode === "number" && Number.isFinite(statusCode)) {
+    // 400 Bad Request, 409 Conflict, 422 Unprocessable Entity (validation errors)
+    // Multi-model review (Codex + Gemini): Added 409 for duplicate/conflict errors
+    if (statusCode === 400 || statusCode === 409 || statusCode === 422) return ErrorCategory.VALIDATION;
+    if (statusCode === 401) return ErrorCategory.AUTHENTICATION;
+    if (statusCode === 403) return ErrorCategory.AUTHORIZATION;
+    if (statusCode === 404) return ErrorCategory.NOT_FOUND;
+    // 408 Request Timeout, 504 Gateway Timeout
+    if (statusCode === 408 || statusCode === 504) return ErrorCategory.TIMEOUT;
+    if (statusCode === 429) return ErrorCategory.RATE_LIMIT;
+    // Note: 502/503 categorized as INTERNAL. For outbound HTTP errors where the
+    // *dependency* failed, consumers can use customCategorizer to route to EXTERNAL_SERVICE.
+    if (statusCode >= 500 && statusCode < 600) return ErrorCategory.INTERNAL;
+  }
+
+  // check error.code (Node.js system errors, database drivers, etc.)
+  // Multi-model review (Codex + Gemini): Handle numeric codes (e.g., MongoDB 11000)
+  const rawCode = (error as Error & { code?: string | number }).code;
+  if (rawCode !== undefined && rawCode !== null) {
+    // normalize to uppercase string for case-insensitive matching
+    const upperCode = String(rawCode).toUpperCase();
+
+    // network-related codes
+    // Multi-model review (Codex): Added EHOSTUNREACH, ENETDOWN, ENETRESET, EAI_AGAIN
+    if (
+      upperCode === "ECONNREFUSED" ||
+      upperCode === "ENOTFOUND" ||
+      upperCode === "ECONNRESET" ||
+      upperCode === "EPIPE" ||
+      upperCode === "ENETUNREACH" ||
+      upperCode === "EHOSTUNREACH" ||
+      upperCode === "ENETDOWN" ||
+      upperCode === "ENETRESET" ||
+      upperCode === "EAI_AGAIN" // DNS lookup failure
+    ) {
+      return ErrorCategory.NETWORK;
+    }
+    // timeout-related codes
+    if (
+      upperCode === "ETIMEDOUT" ||
+      upperCode === "ESOCKETTIMEDOUT" ||
+      upperCode === "ECONNABORTED"
+    ) {
+      return ErrorCategory.TIMEOUT;
+    }
+    // database-related codes (common across drivers)
+    if (
+      upperCode.startsWith("ER_") || // MySQL
+      upperCode.startsWith("23") || // PostgreSQL constraint violations
+      upperCode === "SQLITE_CONSTRAINT" ||
+      upperCode === "11000" // MongoDB duplicate key
+    ) {
+      return ErrorCategory.DATABASE;
+    }
+  }
+
+  return undefined;
+}
+
+/**
  * Default error categorization logic using pattern matching.
  * This is the built-in categorization that can be augmented or replaced
  * via configuration.
+ *
+ * API Boundary Fix - Issue #9: Now prioritizes structured data (HTTP status,
+ * error codes) before falling back to string matching. This improves
+ * reliability across locales and third-party libraries.
  *
  * @param error - The Error object to categorize
  * @returns The determined error category from the ErrorCategory enum
  */
 function defaultCategorizationLogic(error: Error): ErrorCategory {
+  // API Boundary Fix - Issue #9: Try structured data first (locale-independent)
+  const structuredCategory = categorizeByStructuredData(error);
+  if (structuredCategory !== undefined) {
+    return structuredCategory;
+  }
+
+  // fall back to string matching for errors without structured data
   const errorName = error.name.toLowerCase();
   const errorMessage = error.message.toLowerCase();
 
@@ -439,14 +646,20 @@ interface InternalRetryClassificationConfig extends RetryClassificationConfig {
 }
 
 // Global configuration for retry classification (uses internal type to support advanced features)
+// M5 fix: This global config is deprecated for multi-tenant applications.
+// Prefer passing config via client instance for tenant isolation.
 let retryClassificationConfig: InternalRetryClassificationConfig = {};
 
 /**
- * Configure retry classification behavior.
+ * Configure retry classification behavior globally.
  * Must be called during application initialization before errors are checked for retryability.
  *
+ * @deprecated For multi-tenant applications, use `createErrorReporter({ retryConfig: {...} })`
+ * or pass config directly to error functions. Global configuration is shared across all clients
+ * and does not support tenant isolation. This function will be removed in a future major version.
+ *
  * @example
- * // API Gateway service
+ * // API Gateway service (single-tenant only)
  * configureRetryClassification({
  *   retryableCategories: [
  *     ErrorCategory.TIMEOUT,
@@ -469,6 +682,11 @@ let retryClassificationConfig: InternalRetryClassificationConfig = {};
 export function configureRetryClassification(
   config: RetryClassificationConfig | InternalRetryClassificationConfig,
 ): void {
+  console.warn(
+    "[@satoshibits/observability] configureRetryClassification() is deprecated. " +
+    "For multi-tenant applications, use instance-level configuration via createErrorReporter(). " +
+    "Global configuration does not support tenant isolation.",
+  );
   retryClassificationConfig = config as InternalRetryClassificationConfig;
 }
 
@@ -590,10 +808,11 @@ function isExtendedError(error: Error): error is ExtendedError {
  */
 export function extractErrorContext(error: Error): Record<string, unknown> {
   // sanitize error message and stack to protect sensitive data
-  // use dedicated ERROR_SANITIZER for strict security
-  const sanitizedMessage = ERROR_SANITIZER.sanitize(error.message) as string;
+  // use configurable error sanitizer for strict security
+  const sanitizer = getErrorSanitizer();
+  const sanitizedMessage = sanitizer.sanitize(error.message) as string;
   const sanitizedStack = error.stack
-    ? (ERROR_SANITIZER.sanitize(error.stack) as string)
+    ? (sanitizer.sanitize(error.stack) as string)
     : undefined;
 
   const context: Record<string, unknown> = {
@@ -624,11 +843,11 @@ export function extractErrorContext(error: Error): Record<string, unknown> {
 
 /**
  * Sanitize a value recursively to protect sensitive data in errors
- * Uses strict ERROR_SANITIZER for maximum security
+ * Uses configurable error sanitizer for maximum security
  */
 function sanitizeErrorValue(value: unknown): unknown {
-  // use ERROR_SANITIZER.sanitize() which handles all types recursively
-  return ERROR_SANITIZER.sanitize(value);
+  // use error sanitizer which handles all types recursively
+  return getErrorSanitizer().sanitize(value);
 }
 
 /**
@@ -677,8 +896,8 @@ export function reportError(
     ...sanitizedCustomContext,
   } as Attributes;
 
-  // sanitize error message for status using strict ERROR_SANITIZER
-  const sanitizedErrorMessage = ERROR_SANITIZER.sanitize(error.message) as string;
+  // sanitize error message for status using configurable error sanitizer
+  const sanitizedErrorMessage = getErrorSanitizer().sanitize(error.message) as string;
 
   // record in trace if there's an active span
   if (span) {
@@ -723,24 +942,162 @@ export function reportResultError<T, E extends Error>(
 }
 
 /**
- * Create an error reporter with pre-configured context
+ * Options for creating an error reporter with instance-level configuration
+ * M5 fix: Enables multi-tenant isolation without using global mutable state
  */
-export function createErrorReporter(defaultContext: Record<string, unknown>) {
-  return {
+export interface ErrorReporterOptions {
+  /**
+   * Default context to attach to all errors reported by this instance
+   */
+  defaultContext?: Record<string, unknown>;
+
+  /**
+   * Instance-level error categorization config
+   * Overrides global config for errors reported through this instance
+   */
+  categorizationConfig?: ErrorCategorizationConfig;
+
+  /**
+   * Instance-level retry classification config
+   * Overrides global config for errors reported through this instance
+   */
+  retryConfig?: RetryClassificationConfig;
+}
+
+/**
+ * Create an error reporter with pre-configured context and optional instance-level configuration
+ *
+ * M5 fix: For multi-tenant applications, use instance-level configuration instead of
+ * the deprecated global `configureErrorCategorization()` and `configureRetryClassification()`.
+ *
+ * @example
+ * // Multi-tenant usage with different error handling per tenant
+ * const tenantAReporter = createErrorReporter({
+ *   defaultContext: { tenantId: 'tenant-a' },
+ *   categorizationConfig: { disableDefaults: false },
+ *   retryConfig: { retryableCategories: [ErrorCategory.TIMEOUT, ErrorCategory.NETWORK] },
+ * });
+ *
+ * const tenantBReporter = createErrorReporter({
+ *   defaultContext: { tenantId: 'tenant-b' },
+ *   retryConfig: { retryableCategories: [] }, // No automatic retries for this tenant
+ * });
+ *
+ * @example
+ * // Legacy usage (backward compatible)
+ * const reporter = createErrorReporter({ service: 'my-service' });
+ */
+export function createErrorReporter(
+  optionsOrContext: ErrorReporterOptions | Record<string, unknown>,
+) {
+  // Known ErrorReporterOptions keys for detection
+  const optionsKeys = ["defaultContext", "categorizationConfig", "retryConfig"];
+
+  // backward compatibility: detect if this is ErrorReporterOptions or plain context
+  const isOptionsObject = optionsOrContext &&
+    optionsKeys.some(key => key in optionsOrContext);
+
+  // M5 fix: Warn if user passes mixed object (options fields + extra properties)
+  // This prevents silent data loss during migration
+  if (isOptionsObject) {
+    const unknownKeys = Object.keys(optionsOrContext).filter(
+      key => !optionsKeys.includes(key)
+    );
+    if (unknownKeys.length > 0) {
+      console.warn(
+        `[@satoshibits/observability] Properties [${unknownKeys.join(", ")}] on ` +
+        "createErrorReporter() options were ignored. Move them into 'defaultContext': " +
+        `createErrorReporter({ defaultContext: { ${unknownKeys.join(", ")}, ... }, ... })`
+      );
+    }
+  }
+
+  const options: ErrorReporterOptions = isOptionsObject
+    ? optionsOrContext as ErrorReporterOptions
+    : { defaultContext: optionsOrContext as Record<string, unknown> };
+
+  const defaultContext = options.defaultContext ?? {};
+
+  // instance-level categorize function that uses local config if provided
+  const categorizeWithConfig = (error: Error): ErrorCategory => {
+    if (options.categorizationConfig) {
+      // use instance config - check disableDefaults
+      if (options.categorizationConfig.disableDefaults) {
+        return ErrorCategory.UNKNOWN;
+      }
+      return defaultCategorizationLogic(error);
+    }
+    // fall back to global
+    return categorizeErrorForObservability(error);
+  };
+
+  // instance-level retry check that uses local config if provided
+  const isRetryableWithConfig = (error: Error): boolean => {
+    if (options.retryConfig) {
+      const category = categorizeWithConfig(error);
+      const retryableCategories =
+        options.retryConfig.retryableCategories ?? defaultRetryableCategories();
+      return retryableCategories.includes(category);
+    }
+    // fall back to global
+    return isRetryableError(error);
+  };
+
+  // M5 fix: Helper to build instance context for both report and reportResult
+  const buildInstanceContext = (error: Error): Record<string, unknown> => {
+    if (options.categorizationConfig || options.retryConfig) {
+      return {
+        "error.category": categorizeWithConfig(error),
+        "error.retryable": isRetryableWithConfig(error),
+      };
+    }
+    return {};
+  };
+
+  // create reporter object with self-reference for reportResult to use report()
+  const reporter = {
     report(error: Error, additionalContext?: Record<string, unknown>) {
+      // add instance-level categorization info if custom config provided
+      const instanceContext = buildInstanceContext(error);
+
       reportError(error, {
         ...defaultContext,
+        ...instanceContext,
         ...additionalContext,
       });
     },
 
+    // M5 fix: Now uses this.report() to ensure instance config is applied
     reportResult<_T, _E extends Error>(
       result: unknown,
       additionalContext?: Record<string, unknown>,
     ) {
-      reportResultError(result, { ...defaultContext, ...additionalContext });
+      const adapter = getResultAdapter<_T, _E>(result);
+      if (adapter && !adapter.isSuccess()) {
+        const error = adapter.getError();
+        if (error) {
+          // Use reporter.report to ensure instance config is applied
+          reporter.report(error, additionalContext);
+        }
+      }
+    },
+
+    /**
+     * Categorize an error using this instance's configuration
+     */
+    categorize(error: Error): ErrorCategory {
+      return categorizeWithConfig(error);
+    },
+
+    /**
+     * Check if an error is retryable using this instance's configuration
+     */
+    isRetryable(error: Error): boolean {
+      return isRetryableWithConfig(error);
     },
   };
+
+  return reporter;
 }
 
 /**
@@ -767,43 +1124,4 @@ export function withErrorReporting<T>(
   }
 }
 
-/**
- * Create error metrics for monitoring error rates
- */
-export function createErrorMetrics(meter: import("@opentelemetry/api").Meter) {
-  const errorCount = metrics.createSmartCounter(
-    "errors.count",
-    meter,
-    "Total error count",
-  );
-
-  const errorRate = metrics.createSmartGauge(
-    "errors.rate",
-    meter,
-    "Error rate per minute",
-  );
-
-  return {
-    /**
-     * Record an error occurrence
-     */
-    recordError(error: Error, customContext?: Record<string, unknown>) {
-      const category = categorizeErrorForObservability(error);
-      const retryable = isRetryableError(error);
-
-      errorCount.increment(1, {
-        category,
-        retryable,
-        error_type: error.constructor.name,
-        ...customContext,
-      });
-    },
-
-    /**
-     * Update the error rate
-     */
-    updateErrorRate(rate: number, category?: ErrorCategory) {
-      errorRate.set(rate, category ? { category } : undefined);
-    },
-  };
-}
+// [M3] Removed createErrorMetrics() - unused factory, use errors.record() API instead

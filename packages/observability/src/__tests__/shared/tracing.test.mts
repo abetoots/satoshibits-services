@@ -130,8 +130,8 @@ describe("Tracing API - Shared Functionality", () => {
       // Should also record error via error API
       const errors = client.errors.getRecorded();
       expect(errors).toHaveLength(1);
-      expect(errors[0].error).toBe(testError);
-      expect(errors[0].context?.span).toBe("failing_span");
+      expect(errors[0]!.error).toBe(testError);
+      expect(errors[0]!.context?.span).toBe("failing_span");
     });
 
     it("Should support withSpan with attributes", async () => {
@@ -317,8 +317,8 @@ describe("Tracing API - Shared Functionality", () => {
 
       const errors = client.errors.getRecorded();
       expect(errors).toHaveLength(1);
-      expect(errors[0].error).toBe(testError);
-      expect(errors[0].context?.source).toBe("manual");
+      expect(errors[0]!.error).toBe(testError);
+      expect(errors[0]!.context?.source).toBe("manual");
     });
 
     it("Should work with context and breadcrumbs", async () => {
@@ -334,15 +334,15 @@ describe("Tracing API - Shared Functionality", () => {
 
       const breadcrumbs = client.context.getBreadcrumbs();
       expect(breadcrumbs).toHaveLength(2);
-      expect(breadcrumbs[0].message).toBe("Started processing");
-      expect(breadcrumbs[1].message).toBe("Completed processing");
+      expect(breadcrumbs[0]!.message).toBe("Started processing");
+      expect(breadcrumbs[1]!.message).toBe("Completed processing");
 
       const user = client.context.getUser();
       expect(user?.id).toBe("user123");
 
       const tags = client.context.getTags();
       expect(tags).toHaveLength(1);
-      expect(tags[0].key).toBe("environment");
+      expect(tags[0]!.key).toBe("environment");
     });
   });
 
@@ -372,7 +372,7 @@ describe("Tracing API - Shared Functionality", () => {
 
       const allSpans = client.getSpans();
       expect(allSpans).toHaveLength(1);
-      expect(allSpans[0].name).toBe("findable_span");
+      expect(allSpans[0]!.name).toBe("findable_span");
     });
   });
 

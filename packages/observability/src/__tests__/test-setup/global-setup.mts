@@ -5,20 +5,11 @@
  * This is test-only and does not affect production bundles.
  */
 
+import { createProcessStub } from "../test-utils/test-types.mjs";
+
 export default function () {
   if (typeof globalThis.process === "undefined") {
-    globalThis.process = {
-      env: {},
-      listeners: (_event: string) => [],
-      removeListener: () => {},
-      on: () => {},
-      once: () => {},
-      emit: () => false,
-      removeAllListeners: () => {},
-      setMaxListeners: () => {},
-      getMaxListeners: () => 10,
-      eventNames: () => [],
-      listenerCount: () => 0,
-    };
+    // use shared ProcessStub from test-types to avoid duplication
+    globalThis.process = createProcessStub() as unknown as NodeJS.Process;
   }
 }

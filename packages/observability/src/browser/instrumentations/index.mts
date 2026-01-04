@@ -34,3 +34,19 @@ export {
   type BrowserWebVitalsInstrumentationConfig,
   VitalsSampler,
 } from "./web-vitals-instrumentation.mjs";
+
+// interaction breadcrumb instrumentations (opt-in)
+export {
+  BrowserClickBreadcrumbInstrumentation,
+  type BrowserClickBreadcrumbConfig,
+} from "./click-breadcrumb-instrumentation.mjs";
+
+export {
+  BrowserFormBreadcrumbInstrumentation,
+  type BrowserFormBreadcrumbConfig,
+} from "./form-breadcrumb-instrumentation.mjs";
+
+export {
+  BrowserRageClickInstrumentation,
+  type BrowserRageClickConfig,
+} from "./rage-click-instrumentation.mjs";

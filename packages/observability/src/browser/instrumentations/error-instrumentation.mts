@@ -39,6 +39,7 @@ export class BrowserErrorInstrumentation extends InstrumentationBase<BrowserErro
 
   private _errorHandler?: (event: ErrorEvent) => void;
   private _rejectionHandler?: (event: PromiseRejectionEvent) => void;
+  private _isInstrumentationEnabled = false;
 
   constructor(
     config: BrowserErrorInstrumentationConfig = {} as BrowserErrorInstrumentationConfig,
@@ -52,11 +53,20 @@ export class BrowserErrorInstrumentation extends InstrumentationBase<BrowserErro
     // initialization is handled in enable()
   }
 
+  /**
+   * Check if instrumentation is enabled.
+   * Note: Browser InstrumentationBase doesn't have isEnabled(), so we track it ourselves.
+   */
+  isEnabled(): boolean {
+    return this._isInstrumentationEnabled;
+  }
+
   enable() {
     if (this.isEnabled()) {
       return;
     }
-    super.enable();
+    this._isInstrumentationEnabled = true;
+    // note: browser InstrumentationBase doesn't implement enable(), so no super call
 
     if (typeof window === "undefined") {
       this.logger.emit({
@@ -127,7 +137,8 @@ export class BrowserErrorInstrumentation extends InstrumentationBase<BrowserErro
     if (!this.isEnabled()) {
       return;
     }
-    super.disable();
+    this._isInstrumentationEnabled = false;
+    // note: browser InstrumentationBase doesn't implement disable(), so no super call
 
     if (typeof window === "undefined") {
       return;

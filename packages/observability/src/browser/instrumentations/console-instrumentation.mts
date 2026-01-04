@@ -38,6 +38,10 @@ export class BrowserConsoleInstrumentation extends InstrumentationBase<BrowserCo
   moduleName = this.component;
 
   private _originalConsoleError?: (...args: unknown[]) => void;
+  private _isInstrumentationEnabled = false;
+  // Doc 4 H3 Fix: reentrancy guard to prevent infinite recursion
+  // if tracer or errorHandler calls console.error
+  private _isHandlingConsoleError = false;
 
   constructor(
     config: BrowserConsoleInstrumentationConfig = {} as BrowserConsoleInstrumentationConfig,
@@ -51,11 +55,20 @@ export class BrowserConsoleInstrumentation extends InstrumentationBase<BrowserCo
     // initialization is handled in enable()
   }
 
+  /**
+   * Check if instrumentation is enabled.
+   * Note: Browser InstrumentationBase doesn't have isEnabled(), so we track it ourselves.
+   */
+  isEnabled(): boolean {
+    return this._isInstrumentationEnabled;
+  }
+
   enable() {
     if (this.isEnabled()) {
       return;
     }
-    super.enable();
+    this._isInstrumentationEnabled = true;
+    // note: browser InstrumentationBase doesn't implement enable(), so no super call
 
     if (typeof window === "undefined" || typeof console === "undefined") {
       this.logger.emit({
@@ -78,6 +91,12 @@ export class BrowserConsoleInstrumentation extends InstrumentationBase<BrowserCo
         this._originalConsoleError.apply(console, args);
       }
 
+      // Doc 4 H3 Fix: reentrancy guard - skip telemetry if we're already handling
+      // a console.error (prevents infinite recursion if tracer/handler logs errors)
+      if (this._isHandlingConsoleError) {
+        return;
+      }
+
       // create error from console message
       const message = args
         .map((arg) => {
@@ -96,19 +115,41 @@ export class BrowserConsoleInstrumentation extends InstrumentationBase<BrowserCo
         .join(" ");
       const error = new Error(message);
 
-      // create span for observability
-      const span = this.tracer.startSpan("console.error");
-      span.recordException(error);
-      span.end();
+      // Doc 4 H3 Fix: wrap telemetry code in try/catch to prevent
+      // exceptions from span creation/recording from interfering with console.error
+      this._isHandlingConsoleError = true;
+      try {
+        // create span for observability
+        const span = this.tracer.startSpan("console.error");
+        span.recordException(error);
+        span.end();
 
-      // call custom handler if provided
-      if (this._config.errorHandler) {
-        this._config.errorHandler(error, { source: "console.error" });
+        // call custom handler if provided
+        if (this._config.errorHandler) {
+          this._config.errorHandler(error, { source: "console.error" });
+        }
+      } catch (telemetryError) {
+        // Doc 4 H3 Fix: log telemetry errors via original console.error for visibility
+        // (won't recurse since we check _isHandlingConsoleError above)
+        if (this._originalConsoleError) {
+          this._originalConsoleError.call(
+            console,
+            "[ConsoleInstrumentation] telemetry failed:",
+            telemetryError
+          );
+        }
+      } finally {
+        this._isHandlingConsoleError = false;
       }
     };
   }
 
   disable() {
+    if (!this.isEnabled()) {
+      return;
+    }
+    this._isInstrumentationEnabled = false;
+
     if (typeof window === "undefined" || typeof console === "undefined") {
       return;
     }

@@ -21,7 +21,7 @@ describe('Browser Performance Features', () => {
     vi.clearAllMocks();
 
     // Mock Performance API methods on the existing global
-    if (global.performance) {
+    if (globalThis.performance) {
       vi.spyOn(performance, 'getEntriesByType').mockReturnValue([]);
       vi.spyOn(performance, 'getEntriesByName').mockReturnValue([]);
       vi.spyOn(performance, 'mark');
@@ -67,8 +67,8 @@ describe('Browser Performance Features', () => {
     }
 
     // Mock PerformanceObserver if needed
-    if (!global.PerformanceObserver) {
-      (global as typeof globalThis & { PerformanceObserver?: typeof PerformanceObserver }).PerformanceObserver = vi.fn().mockImplementation((callback) => ({
+    if (!globalThis.PerformanceObserver) {
+      (globalThis as typeof globalThis & { PerformanceObserver?: typeof PerformanceObserver }).PerformanceObserver = vi.fn().mockImplementation((callback) => ({
         observe: vi.fn(),
         disconnect: vi.fn(),
         takeRecords: vi.fn(() => [])
@@ -77,16 +77,18 @@ describe('Browser Performance Features', () => {
 
     client = await SmartClient.initialize({
       serviceName: 'browser-performance-test',
+      environment: 'browser',
       endpoint: undefined // no-network mode
     });
-    
-    serviceInstrument = client.getServiceInstrumentation();
+
+    // cast to test type - actual ScopedInstrument has more methods
+    serviceInstrument = client.getServiceInstrumentation() as unknown as ServiceInstrumentType;
   });
 
   afterEach(async () => {
     if (client) {
-      await SmartClient.shutdown().catch(() => {});
-      client = null;
+      await SmartClient.shutdown();
+      client = null as unknown as UnifiedObservabilityClient;
     }
     vi.restoreAllMocks();
     vi.clearAllMocks();
@@ -118,7 +120,7 @@ describe('Browser Performance Features', () => {
       ];
 
       if (performance.getEntriesByType) {
-        vi.mocked(performance.getEntriesByType).mockReturnValue(scriptEntries as PerformanceEntryList);
+        vi.mocked(performance.getEntriesByType).mockReturnValue(scriptEntries as unknown as PerformanceEntryList);
       }
 
       expect(() => {
@@ -148,7 +150,7 @@ describe('Browser Performance Features', () => {
         }
       ];
 
-      vi.mocked(performance.getEntriesByType).mockReturnValue(imageEntries as PerformanceEntryList);
+      vi.mocked(performance.getEntriesByType).mockReturnValue(imageEntries as unknown as PerformanceEntryList);
 
       expect(() => {
         const entries = performance.getEntriesByType('resource');
@@ -177,7 +179,7 @@ describe('Browser Performance Features', () => {
         }
       ];
 
-      vi.mocked(performance.getEntriesByType).mockReturnValue(fontEntries as PerformanceEntryList);
+      vi.mocked(performance.getEntriesByType).mockReturnValue(fontEntries as unknown as PerformanceEntryList);
 
       expect(() => {
         const entries = performance.getEntriesByType('resource');
@@ -240,7 +242,7 @@ describe('Browser Performance Features', () => {
           type: typeNames[navType] || 'unknown'
         });
 
-        client.context.addTag('navigation.type', typeNames[navType] || 'unknown');
+        client.context.business.addTag('navigation.type', typeNames[navType] || 'unknown');
       }).not.toThrow();
     });
   });
@@ -272,7 +274,7 @@ describe('Browser Performance Features', () => {
           list.getEntries().forEach(entry => {
             if (entry.entryType === 'longtask') {
               serviceInstrument.metrics.record('browser.long_task.duration', entry.duration);
-              client.context.addBreadcrumb(`Long task detected: ${entry.duration}ms`);
+              client.context.business.addBreadcrumb(`Long task detected: ${entry.duration}ms`);
             }
           });
         });
@@ -342,7 +344,7 @@ describe('Browser Performance Features', () => {
         const mockMemoryUsage = 85; // 85% usage
 
         if (mockMemoryUsage > 80) {
-          client.context.addBreadcrumb('High memory usage detected', {
+          client.context.business.addBreadcrumb('High memory usage detected', {
             usage_percent: mockMemoryUsage,
             category: 'performance'
           });
@@ -357,9 +359,9 @@ describe('Browser Performance Features', () => {
     it('should capture performance context with errors', () => {
       expect(() => {
         // Simulate poor performance context
-        client.context.addTag('performance.long_tasks', '3');
-        client.context.addTag('performance.memory_usage', '78%');
-        client.context.addTag('performance.page_load', '3200ms');
+        client.context.business.addTag('performance.long_tasks', '3');
+        client.context.business.addTag('performance.memory_usage', '78%');
+        client.context.business.addTag('performance.page_load', '3200ms');
         
         const error = new Error('Application slow/unresponsive');
         client.errors.record(error);
@@ -411,7 +413,7 @@ describe('Browser Performance Features', () => {
         
         // Tag slow experiences
         if (pageLoadTime > 3000) {
-          client.context.addTag('ux.performance', 'slow');
+          client.context.business.addTag('ux.performance', 'slow');
           serviceInstrument.metrics.increment('ux.slow_experience');
         }
       }).not.toThrow();

@@ -262,6 +262,200 @@ describe('Error Categorization (Issue #12)', () => {
     });
   });
 
+  describe('Structured data categorization (Issue #9)', () => {
+    describe('HTTP status codes', () => {
+      it('should categorize by error.status', () => {
+        const error400 = Object.assign(new Error('Bad Request'), { status: 400 });
+        expect(categorizeErrorForObservability(error400)).toBe(ErrorCategory.VALIDATION);
+
+        const error401 = Object.assign(new Error('Unauthorized'), { status: 401 });
+        expect(categorizeErrorForObservability(error401)).toBe(ErrorCategory.AUTHENTICATION);
+
+        const error403 = Object.assign(new Error('Forbidden'), { status: 403 });
+        expect(categorizeErrorForObservability(error403)).toBe(ErrorCategory.AUTHORIZATION);
+
+        const error404 = Object.assign(new Error('Not Found'), { status: 404 });
+        expect(categorizeErrorForObservability(error404)).toBe(ErrorCategory.NOT_FOUND);
+
+        const error408 = Object.assign(new Error('Request Timeout'), { status: 408 });
+        expect(categorizeErrorForObservability(error408)).toBe(ErrorCategory.TIMEOUT);
+
+        const error429 = Object.assign(new Error('Too Many Requests'), { status: 429 });
+        expect(categorizeErrorForObservability(error429)).toBe(ErrorCategory.RATE_LIMIT);
+
+        const error500 = Object.assign(new Error('Internal Server Error'), { status: 500 });
+        expect(categorizeErrorForObservability(error500)).toBe(ErrorCategory.INTERNAL);
+
+        const error503 = Object.assign(new Error('Service Unavailable'), { status: 503 });
+        expect(categorizeErrorForObservability(error503)).toBe(ErrorCategory.INTERNAL);
+      });
+
+      it('should categorize HTTP 422 Unprocessable Entity as VALIDATION', () => {
+        const error422 = Object.assign(new Error('Unprocessable Entity'), { status: 422 });
+        expect(categorizeErrorForObservability(error422)).toBe(ErrorCategory.VALIDATION);
+      });
+
+      it('should categorize HTTP 409 Conflict as VALIDATION (multi-model review)', () => {
+        const error409 = Object.assign(new Error('Conflict'), { status: 409 });
+        expect(categorizeErrorForObservability(error409)).toBe(ErrorCategory.VALIDATION);
+      });
+
+      it('should handle status codes as strings (Codex review)', () => {
+        // some libraries expose status as string
+        const errorStringStatus = Object.assign(new Error('Not Found'), { status: '404' });
+        expect(categorizeErrorForObservability(errorStringStatus)).toBe(ErrorCategory.NOT_FOUND);
+      });
+
+      it('should categorize HTTP 504 Gateway Timeout as TIMEOUT', () => {
+        const error504 = Object.assign(new Error('Gateway Timeout'), { status: 504 });
+        expect(categorizeErrorForObservability(error504)).toBe(ErrorCategory.TIMEOUT);
+      });
+
+      it('should categorize by error.statusCode (axios-style)', () => {
+        const error = Object.assign(new Error('Request failed'), { statusCode: 404 });
+        expect(categorizeErrorForObservability(error)).toBe(ErrorCategory.NOT_FOUND);
+      });
+
+      it('should categorize by error.response.status (fetch/axios response)', () => {
+        const error = Object.assign(new Error('Request failed'), {
+          response: { status: 401 },
+        });
+        expect(categorizeErrorForObservability(error)).toBe(ErrorCategory.AUTHENTICATION);
+      });
+
+      it('should prioritize structured data over string matching', () => {
+        // error message says "network" but status says 404
+        const error = Object.assign(new Error('Network request failed'), { status: 404 });
+        expect(categorizeErrorForObservability(error)).toBe(ErrorCategory.NOT_FOUND);
+      });
+    });
+
+    describe('Node.js error codes', () => {
+      it('should categorize network-related error codes', () => {
+        const econnrefused = Object.assign(new Error('connect ECONNREFUSED'), {
+          code: 'ECONNREFUSED',
+        });
+        expect(categorizeErrorForObservability(econnrefused)).toBe(ErrorCategory.NETWORK);
+
+        const enotfound = Object.assign(new Error('getaddrinfo ENOTFOUND'), {
+          code: 'ENOTFOUND',
+        });
+        expect(categorizeErrorForObservability(enotfound)).toBe(ErrorCategory.NETWORK);
+
+        const econnreset = Object.assign(new Error('read ECONNRESET'), {
+          code: 'ECONNRESET',
+        });
+        expect(categorizeErrorForObservability(econnreset)).toBe(ErrorCategory.NETWORK);
+
+        const epipe = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
+        expect(categorizeErrorForObservability(epipe)).toBe(ErrorCategory.NETWORK);
+
+        const enetunreach = Object.assign(new Error('connect ENETUNREACH'), {
+          code: 'ENETUNREACH',
+        });
+        expect(categorizeErrorForObservability(enetunreach)).toBe(ErrorCategory.NETWORK);
+      });
+
+      it('should categorize timeout-related error codes', () => {
+        const etimedout = Object.assign(new Error('connect ETIMEDOUT'), {
+          code: 'ETIMEDOUT',
+        });
+        expect(categorizeErrorForObservability(etimedout)).toBe(ErrorCategory.TIMEOUT);
+
+        const esockettimedout = Object.assign(new Error('socket timeout'), {
+          code: 'ESOCKETTIMEDOUT',
+        });
+        expect(categorizeErrorForObservability(esockettimedout)).toBe(ErrorCategory.TIMEOUT);
+
+        const econnaborted = Object.assign(new Error('Connection aborted'), {
+          code: 'ECONNABORTED',
+        });
+        expect(categorizeErrorForObservability(econnaborted)).toBe(ErrorCategory.TIMEOUT);
+      });
+
+      it('should categorize database-related error codes', () => {
+        // MySQL error
+        const mysqlError = Object.assign(new Error('Duplicate entry'), {
+          code: 'ER_DUP_ENTRY',
+        });
+        expect(categorizeErrorForObservability(mysqlError)).toBe(ErrorCategory.DATABASE);
+
+        // PostgreSQL constraint violation
+        const pgError = Object.assign(new Error('violates foreign key constraint'), {
+          code: '23503',
+        });
+        expect(categorizeErrorForObservability(pgError)).toBe(ErrorCategory.DATABASE);
+
+        // SQLite constraint error
+        const sqliteError = Object.assign(new Error('UNIQUE constraint failed'), {
+          code: 'SQLITE_CONSTRAINT',
+        });
+        expect(categorizeErrorForObservability(sqliteError)).toBe(ErrorCategory.DATABASE);
+      });
+
+      it('should handle numeric error codes (Gemini review - MongoDB)', () => {
+        // MongoDB duplicate key error uses numeric code
+        const mongoError = Object.assign(new Error('duplicate key error'), {
+          code: 11000,
+        });
+        expect(categorizeErrorForObservability(mongoError)).toBe(ErrorCategory.DATABASE);
+      });
+
+      it('should categorize additional network codes (Codex review)', () => {
+        const ehostunreach = Object.assign(new Error('host unreachable'), {
+          code: 'EHOSTUNREACH',
+        });
+        expect(categorizeErrorForObservability(ehostunreach)).toBe(ErrorCategory.NETWORK);
+
+        const enetdown = Object.assign(new Error('network is down'), {
+          code: 'ENETDOWN',
+        });
+        expect(categorizeErrorForObservability(enetdown)).toBe(ErrorCategory.NETWORK);
+
+        const eaiAgain = Object.assign(new Error('DNS lookup failed'), {
+          code: 'EAI_AGAIN',
+        });
+        expect(categorizeErrorForObservability(eaiAgain)).toBe(ErrorCategory.NETWORK);
+      });
+
+      it('should fall back to string matching when no structured data', () => {
+        // no status, no code - should use string matching
+        const error = new Error('Invalid email format');
+        expect(categorizeErrorForObservability(error)).toBe(ErrorCategory.VALIDATION);
+      });
+
+      it('should handle error codes case-insensitively', () => {
+        // lowercase error code (some libraries may use this)
+        const lowerError = Object.assign(new Error('connection refused'), {
+          code: 'econnrefused',
+        });
+        expect(categorizeErrorForObservability(lowerError)).toBe(ErrorCategory.NETWORK);
+
+        // mixed case error code
+        const mixedError = Object.assign(new Error('socket timeout'), {
+          code: 'ETimedOut',
+        });
+        expect(categorizeErrorForObservability(mixedError)).toBe(ErrorCategory.TIMEOUT);
+      });
+    });
+
+    describe('Locale independence', () => {
+      it('should work with non-English error messages when status code present', () => {
+        // German error message with HTTP status
+        const germanError = Object.assign(new Error('Verbindung fehlgeschlagen'), {
+          status: 408,
+        });
+        expect(categorizeErrorForObservability(germanError)).toBe(ErrorCategory.TIMEOUT);
+
+        // Japanese error message with error code
+        const japaneseError = Object.assign(new Error('接続が拒否されました'), {
+          code: 'ECONNREFUSED',
+        });
+        expect(categorizeErrorForObservability(japaneseError)).toBe(ErrorCategory.NETWORK);
+      });
+    });
+  });
+
   describe('Real-world scenarios', () => {
     it('should support healthcare application with domain-specific errors', () => {
       configureErrorCategorization({

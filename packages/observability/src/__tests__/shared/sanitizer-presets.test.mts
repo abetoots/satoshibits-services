@@ -2,7 +2,11 @@ import { describe, it, expect } from "vitest";
 import {
   DataSanitizer,
   SanitizerPresets,
+  type SanitizedValue,
 } from "../../enrichment/sanitizer.mjs";
+
+// helper to cast sanitized object results for test assertions
+type SanitizedObject = Record<string, SanitizedValue>;
 
 describe("SanitizerPresets", () => {
   describe("minimal preset", () => {
@@ -152,7 +156,7 @@ describe("SanitizerPresets", () => {
         normal_field: "keep this",
       };
 
-      const sanitized = sanitizer.sanitize(data);
+      const sanitized = sanitizer.sanitize(data) as SanitizedObject;
 
       expect(sanitized.patient_id).toBe("[REDACTED]");
       expect(sanitized.diagnosis).toBe("[REDACTED]");
@@ -282,7 +286,7 @@ describe("SanitizerPresets", () => {
         notes: "Patient has credit card 4111-1111-1111-1111 on file",
       };
 
-      const sanitized = sanitizer.sanitize(patientRecord);
+      const sanitized = sanitizer.sanitize(patientRecord) as SanitizedObject;
 
       // healthcare fields redacted
       expect(sanitized.patient_id).toBe("[REDACTED]");
@@ -310,7 +314,7 @@ describe("SanitizerPresets", () => {
         notes: "Contact at +1-555-123-4567", // phone in string
       };
 
-      const sanitized = sanitizer.sanitize(logEntry);
+      const sanitized = sanitizer.sanitize(logEntry) as SanitizedObject;
 
       // internal tools - emails, IPs NOT masked in field names
       expect(sanitized.user_email).toBe("admin@company.com");
@@ -347,7 +351,7 @@ describe("SanitizerPresets", () => {
         normal_field: "keep this",
       };
 
-      const sanitized = sanitizer.sanitize(data);
+      const sanitized = sanitizer.sanitize(data) as SanitizedObject;
 
       expect(sanitized.company_id).toBe("[REDACTED]");
       expect(sanitized.tenant_id).toBe("[REDACTED]");
@@ -373,7 +377,7 @@ describe("SanitizerPresets", () => {
       expect(ccResult).toContain("[PRIVACY]");
 
       // field-level redaction uses custom redactionString
-      const objResult = sanitizer.sanitize({ password: "secret123" });
+      const objResult = sanitizer.sanitize({ password: "secret123" }) as SanitizedObject;
       expect(objResult.password).toBe("[PRIVACY]");
     });
   });

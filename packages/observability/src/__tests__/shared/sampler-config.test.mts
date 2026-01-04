@@ -1,11 +1,40 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SmartSampler, AdaptiveSampler } from '../../sampling.mjs';
+import { SmartSampler, normalizeHash } from '../../sampling.mjs';
 import { Context, SpanKind, trace, context, TraceFlags, SpanContext, Link } from '@opentelemetry/api';
 import { SamplingDecision } from '@opentelemetry/sdk-trace-base';
 
+// test subclass to expose protected methods for unit testing
+class TestableSmartSampler extends SmartSampler {
+  public testHashTraceId(traceId: string): number {
+    return this.hashTraceId(traceId);
+  }
+}
+
+// test subclass that forces a specific RAW hash value and uses PRODUCTION normalizeHash
+class ForcedRawHashSmartSampler extends SmartSampler {
+  constructor(
+    private forcedRawHash: number,
+    config?: ConstructorParameters<typeof SmartSampler>[0]
+  ) {
+    super(config);
+  }
+
+  protected hashTraceId(_traceId: string): number {
+    // use the ACTUAL production normalizeHash function - no logic duplication
+    return normalizeHash(this.forcedRawHash);
+  }
+}
+
+// simulates BROKEN behavior (without the MIN_INT32 fix) for comparison
+function brokenNormalizeHash(hash: number): number {
+  // BUG: no MIN_INT32 handling - this is what the bug looked like
+  return Math.abs(hash) / 0x7fffffff;
+}
+
 // Note: These tests cover both public API (SmartSampler with baseRate, errorRate, slowThresholdMs)
-// and internal features (tierRates, isImportantOperation, AdaptiveSampler) that are kept for
-// future use but not part of the stable public API.
+// and internal features (tierRates, isImportantOperation) that are kept for future use but not
+// part of the stable public API.
+// [H3] Removed AdaptiveSampler tests - class was removed per YAGNI/KISS review
 
 describe('SmartSampler config logic (unit)', () => {
   it('always samples errors and premium customers per config', () => {
@@ -21,7 +50,7 @@ describe('SmartSampler config logic (unit)', () => {
     const traceId = 'trace-123';
     const spanName = 'test-span';
     const spanKind = SpanKind.INTERNAL;
-    const links: unknown[] = [];
+    const links: Link[] = [];
 
     // Simulate sampling decision: always sample span
     let decision = sampler.shouldSample(
@@ -62,7 +91,7 @@ describe('SmartSampler config logic (unit)', () => {
     const mockContext = context.active();
     const traceId = 'trace-123';
     const spanKind = SpanKind.SERVER; // use SERVER for business logic checks
-    const links: unknown[] = [];
+    const links: Link[] = [];
 
     beforeEach(() => {
       // clear console warn mock before each test
@@ -248,255 +277,8 @@ describe('SmartSampler config logic (unit)', () => {
     });
   });
 
-  describe('AdaptiveSampler config (Issue #13)', () => {
-    const mockContext = context.active();
-    const traceId = 'trace-123';
-    const spanKind = SpanKind.INTERNAL;
-    const links: unknown[] = [];
-
-    beforeEach(() => {
-      vi.restoreAllMocks();
-    });
-
-    it('should use default thresholds when not configured', () => {
-      const sampler = new AdaptiveSampler({
-        baseRate: 0.1,
-      });
-
-      // default thresholds should be used
-      // resetInterval: 60000ms
-      // highTrafficThreshold: 1000 requests/min
-      // highErrorRateThreshold: 0.1
-      // highTrafficRateMultiplier: 0.1
-
-      // just verify sampler works without crashing
-      const decision = sampler.shouldSample(
-        mockContext,
-        traceId,
-        'test-span',
-        spanKind,
-        {},
-        links
-      );
-      expect(typeof decision.decision).toBe('number');
-    });
-
-    it('should accept custom threshold configuration', () => {
-      const sampler = new AdaptiveSampler({
-        baseRate: 0.1,
-        adaptive: {
-          resetInterval: 30000, // 30 seconds
-          highTrafficThreshold: 500, // lower threshold
-          highErrorRateThreshold: 0.05, // 5% instead of 10%
-          highTrafficRateMultiplier: 0.2, // less aggressive reduction
-        },
-      });
-
-      // verify sampler uses custom config without crashing
-      const decision = sampler.shouldSample(
-        mockContext,
-        traceId,
-        'test-span',
-        spanKind,
-        {},
-        links
-      );
-      expect(typeof decision.decision).toBe('number');
-    });
-
-    it('should support custom adaptation callback for complete control', () => {
-      const customAdaptation = vi.fn((stats) => {
-        // custom logic: only adapt during business hours
-        const hour = new Date().getHours();
-        if (hour >= 9 && hour <= 17) {
-          return {
-            shouldReduce: stats.requestsPerMinute > 100,
-            reducedRate: stats.baseRate * 0.5,
-            reason: 'business_hours_adaptation',
-          };
-        }
-        return null; // no adaptation outside business hours
-      });
-
-      const sampler = new AdaptiveSampler({
-        baseRate: 0.1,
-        adaptive: {
-          customAdaptation,
-        },
-      });
-
-      // trigger sampling to invoke callback
-      sampler.shouldSample(mockContext, traceId, 'test-span', spanKind, {}, links);
-
-      // callback should be invoked with stats
-      expect(customAdaptation).toHaveBeenCalledWith(
-        expect.objectContaining({
-          requestCount: expect.any(Number),
-          errorCount: expect.any(Number),
-          errorRate: expect.any(Number),
-          requestsPerMinute: expect.any(Number),
-          baseRate: 0.1,
-        })
-      );
-    });
-
-    it('should handle custom adaptation callback errors gracefully', () => {
-      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-      const sampler = new AdaptiveSampler({
-        baseRate: 0.1,
-        adaptive: {
-          customAdaptation: () => {
-            throw new Error('Simulated adaptation error');
-          },
-        },
-      });
-
-      // callback throws but sampler should not crash
-      const decision = sampler.shouldSample(
-        mockContext,
-        traceId,
-        'test-operation',
-        spanKind,
-        {},
-        links
-      );
-
-      // should log error
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('customAdaptation callback threw an error'),
-        expect.any(Error)
-      );
-
-      // should fall back to standard adaptive behavior
-      expect(typeof decision.decision).toBe('number');
-
-      consoleErrorSpy.mockRestore();
-    });
-
-    it('should allow low-traffic services to use higher error threshold', () => {
-      // low-traffic service: fewer requests, tolerate higher error rate
-      const sampler = new AdaptiveSampler({
-        baseRate: 0.5, // higher base rate for low traffic
-        adaptive: {
-          highTrafficThreshold: 100, // 100 requests/min = "high" for this service
-          highErrorRateThreshold: 0.2, // tolerate up to 20% errors
-          highTrafficRateMultiplier: 0.5, // less aggressive reduction
-        },
-      });
-
-      const decision = sampler.shouldSample(
-        mockContext,
-        traceId,
-        'low-traffic-span',
-        spanKind,
-        {},
-        links
-      );
-      expect(typeof decision.decision).toBe('number');
-    });
-
-    it('should allow high-traffic services to use aggressive reduction', () => {
-      // high-traffic service: many requests, need aggressive sampling
-      const sampler = new AdaptiveSampler({
-        baseRate: 0.01, // already low base rate
-        adaptive: {
-          highTrafficThreshold: 10000, // 10k requests/min = "high"
-          highErrorRateThreshold: 0.05, // strict error threshold
-          highTrafficRateMultiplier: 0.01, // very aggressive reduction (100x)
-        },
-      });
-
-      const decision = sampler.shouldSample(
-        mockContext,
-        traceId,
-        'high-traffic-span',
-        spanKind,
-        {},
-        links
-      );
-      expect(typeof decision.decision).toBe('number');
-    });
-  });
-
-  describe('AdaptiveSampler config validation', () => {
-    let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
-
-    beforeEach(() => {
-      consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    });
-
-    afterEach(() => {
-      consoleWarnSpy.mockRestore();
-    });
-
-    it('should warn and use default for resetInterval < 1000ms', () => {
-      new AdaptiveSampler({ adaptive: { resetInterval: 500 } });
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Invalid resetInterval: 500. Must be >= 1000ms. Using default 60000ms.')
-      );
-
-      new AdaptiveSampler({ adaptive: { resetInterval: 0 } });
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Invalid resetInterval: 0. Must be >= 1000ms. Using default 60000ms.')
-      );
-
-      new AdaptiveSampler({ adaptive: { resetInterval: -1 } });
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Invalid resetInterval: -1. Must be >= 1000ms. Using default 60000ms.')
-      );
-    });
-
-    it('should warn and use default for negative highTrafficThreshold', () => {
-      new AdaptiveSampler({ adaptive: { highTrafficThreshold: -100 } });
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Invalid highTrafficThreshold: -100. Must be non-negative. Using default 1000.')
-      );
-    });
-
-    it('should warn and use default for highErrorRateThreshold outside [0, 1]', () => {
-      new AdaptiveSampler({ adaptive: { highErrorRateThreshold: -0.1 } });
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Invalid highErrorRateThreshold: -0.1. Must be between 0 and 1. Using default 0.1.')
-      );
-
-      new AdaptiveSampler({ adaptive: { highErrorRateThreshold: 1.1 } });
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Invalid highErrorRateThreshold: 1.1. Must be between 0 and 1. Using default 0.1.')
-      );
-    });
-
-    it('should warn and use default for highTrafficRateMultiplier outside [0, 1]', () => {
-      new AdaptiveSampler({ adaptive: { highTrafficRateMultiplier: -0.1 } });
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Invalid highTrafficRateMultiplier: -0.1. Must be between 0 and 1. Using default 0.1.')
-      );
-
-      new AdaptiveSampler({ adaptive: { highTrafficRateMultiplier: 1.1 } });
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Invalid highTrafficRateMultiplier: 1.1. Must be between 0 and 1. Using default 0.1.')
-      );
-    });
-
-    it('should not warn for valid edge case values', () => {
-      new AdaptiveSampler({
-        adaptive: {
-          highTrafficThreshold: 0,
-          highErrorRateThreshold: 0,
-          highTrafficRateMultiplier: 0,
-        },
-      });
-      expect(consoleWarnSpy).not.toHaveBeenCalled();
-
-      new AdaptiveSampler({
-        adaptive: {
-          highErrorRateThreshold: 1,
-          highTrafficRateMultiplier: 1,
-        },
-      });
-      expect(consoleWarnSpy).not.toHaveBeenCalled();
-    });
-  });
+  // [H3] Removed AdaptiveSampler config tests (Issue #13) - class removed per YAGNI/KISS review
+  // [H3] Removed AdaptiveSampler config validation tests - class removed per YAGNI/KISS review
 
   // New tests for parent context sampling (trace integrity)
   describe('Parent context sampling (trace integrity)', () => {
@@ -827,6 +609,101 @@ describe('SmartSampler config logic (unit)', () => {
       // Should sample because one link was sampled
       expect(result.decision).toBe(SamplingDecision.RECORD_AND_SAMPLED);
       expect(result.attributes?.['sampling.reason']).toBe('linked_trace_sampled');
+    });
+  });
+
+  // Doc 4 C1: Math.abs integer overflow fix
+  describe('hashTraceId edge cases (Doc 4 C1 Fix)', () => {
+    const MIN_INT32 = -2147483648;
+    const emptyContext = context.active();
+    const links: Link[] = [];
+
+    it('should always return a value between 0 and 1', () => {
+      const sampler = new TestableSmartSampler({ baseRate: 0.5 });
+
+      // test with deterministic trace IDs to ensure hash is always in 0-1 range
+      const traceIds = [
+        '00000000000000000000000000000000',
+        'ffffffffffffffffffffffffffffffff',
+        'd4cda95b652f4a1592b449d5929fda1b',
+        'abcdef1234567890abcdef1234567890',
+      ];
+
+      for (const traceId of traceIds) {
+        const hash = sampler.testHashTraceId(traceId);
+        expect(hash).toBeGreaterThanOrEqual(0);
+        expect(hash).toBeLessThanOrEqual(1);
+      }
+    });
+
+    it('should handle MIN_INT32 edge case correctly - DIRECT PRODUCTION CODE TEST', () => {
+      // DIRECT TEST of the production normalizeHash function
+      // This test will FAIL if the MIN_INT32 fix is removed from sampling.mts
+
+      // Test production normalizeHash with MIN_INT32
+      const fixedResult = normalizeHash(MIN_INT32);
+      expect(fixedResult).toBeLessThanOrEqual(1);
+      expect(fixedResult).toBeGreaterThanOrEqual(0);
+      expect(fixedResult).toBe(1); // exactly 1.0 (2147483647 / 2147483647)
+
+      // Compare with broken implementation
+      const brokenResult = brokenNormalizeHash(MIN_INT32);
+      expect(brokenResult).toBeGreaterThan(1); // ~1.0000000004656613
+
+      // This test proves the production fix works
+    });
+
+    it('should handle boundary values correctly', () => {
+      // Test production normalizeHash with various boundary values
+      expect(normalizeHash(0)).toBe(0);
+      expect(normalizeHash(1)).toBeCloseTo(1 / 0x7fffffff);
+      expect(normalizeHash(-1)).toBeCloseTo(1 / 0x7fffffff);
+      expect(normalizeHash(2147483647)).toBe(1); // MAX_INT32
+      expect(normalizeHash(-2147483647)).toBeCloseTo(2147483647 / 0x7fffffff);
+      expect(normalizeHash(-2147483648)).toBe(1); // MIN_INT32 - the edge case
+
+      // all results should be in [0, 1]
+      const testValues = [0, 1, -1, 100, -100, 2147483647, -2147483647, -2147483648];
+      for (const val of testValues) {
+        const result = normalizeHash(val);
+        expect(result).toBeGreaterThanOrEqual(0);
+        expect(result).toBeLessThanOrEqual(1);
+      }
+    });
+
+    it('should sample correctly with MIN_INT32 hash at high rates', () => {
+      // Test using ForcedRawHashSmartSampler which calls production normalizeHash
+      // The normalized hash for MIN_INT32 is 1.0
+
+      // hash=1.0, rate=0.9999 => NOT sampled (1.0 < 0.9999 is false)
+      const sampler = new ForcedRawHashSmartSampler(MIN_INT32, { baseRate: 0.9999 });
+      const result = sampler.shouldSample(
+        emptyContext,
+        'any-trace-id',
+        'test-span',
+        SpanKind.INTERNAL,
+        {},
+        links
+      );
+      expect(result.decision).toBe(SamplingDecision.NOT_RECORD);
+    });
+
+    it('should demonstrate bug impact: broken impl produces invalid hash', () => {
+      // This test documents the actual bug impact
+
+      // Broken implementation produces hash > 1.0
+      const brokenHash = brokenNormalizeHash(MIN_INT32);
+      expect(brokenHash).toBeGreaterThan(1);
+      expect(brokenHash).toBeCloseTo(1.0000000004656613);
+
+      // At rate=1.0 (100% sampling), broken hash would NOT be sampled
+      // because brokenHash < 1.0 is false
+      expect(brokenHash < 1.0).toBe(false);
+
+      // Production normalizeHash fixes this
+      const fixedHash = normalizeHash(MIN_INT32);
+      expect(fixedHash).toBe(1);
+      expect(fixedHash <= 1.0).toBe(true);
     });
   });
 });

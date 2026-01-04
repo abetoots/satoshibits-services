@@ -276,46 +276,92 @@ describe('Input Validation (Real Client Integration)', () => {
     // These tests verify that getInstrumentation() validates scope names
     // against high-cardinality patterns in the REAL client (not mock)
 
-    it('should reject scope names containing user IDs', () => {
-      expect(() => {
-        client.getInstrumentation('user-123');
-      }).toThrow(/High-cardinality scope name detected.*user IDs/i);
+    describe('with scopeNameValidation: "strict" (throws errors)', () => {
+      let strictClient: UnifiedObservabilityClient;
+
+      beforeEach(async () => {
+        strictClient = await SmartClient.create({
+          serviceName: 'strict-validation-test',
+          environment: 'node',
+          disableInstrumentation: true,
+          scopeNameValidation: 'strict',
+        });
+      });
+
+      it('should reject scope names containing user IDs', () => {
+        expect(() => {
+          strictClient.getInstrumentation('user-123');
+        }).toThrow(/High-cardinality scope name detected.*user IDs/i);
+      });
+
+      it('should reject scope names containing request IDs', () => {
+        expect(() => {
+          strictClient.getInstrumentation('request-abc123456');
+        }).toThrow(/High-cardinality scope name detected.*request IDs/i);
+      });
+
+      it('should reject scope names containing UUIDs', () => {
+        expect(() => {
+          strictClient.getInstrumentation('550e8400-e29b-41d4-a716-446655440000');
+        }).toThrow(/High-cardinality scope name detected.*UUIDs/i);
+      });
+
+      it('should reject scope names containing timestamps', () => {
+        expect(() => {
+          strictClient.getInstrumentation('operation-1234567890123');
+        }).toThrow(/High-cardinality scope name detected.*timestamps/i);
+      });
+
+      it('should reject scope names containing session IDs', () => {
+        expect(() => {
+          strictClient.getInstrumentation('session-abc123def456');
+        }).toThrow(/High-cardinality scope name detected.*session IDs/i);
+      });
+
+      it('should reject scope names containing tenant IDs', () => {
+        expect(() => {
+          strictClient.getInstrumentation('tenant-456');
+        }).toThrow(/High-cardinality scope name detected.*tenant IDs/i);
+      });
+
+      it('should reject scope names containing customer IDs', () => {
+        expect(() => {
+          strictClient.getInstrumentation('customer_789');
+        }).toThrow(/High-cardinality scope name detected.*customer IDs/i);
+      });
+
+      it('should provide helpful error messages with examples', () => {
+        try {
+          strictClient.getInstrumentation('user/123');
+          // should not reach here
+          expect(true).toBe(false);
+        } catch (error) {
+          const errorMessage = (error as Error).message;
+
+          // verify error message contains helpful guidance
+          expect(errorMessage).toContain('Scope names should be static module identifiers');
+          expect(errorMessage).toContain('Use attributes for dynamic data');
+          expect(errorMessage).toContain('instrument.metrics.increment');
+          expect(errorMessage).toContain('https://opentelemetry.io/docs/specs/otel/glossary/#instrumentation-scope');
+        }
+      });
     });
 
-    it('should reject scope names containing request IDs', () => {
-      expect(() => {
-        client.getInstrumentation('request-abc123456');
-      }).toThrow(/High-cardinality scope name detected.*request IDs/i);
-    });
+    describe('with scopeNameValidation: "warn" (default - logs warning)', () => {
+      it('should warn but not throw for high-cardinality scope names', () => {
+        const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    it('should reject scope names containing UUIDs', () => {
-      expect(() => {
-        client.getInstrumentation('550e8400-e29b-41d4-a716-446655440000');
-      }).toThrow(/High-cardinality scope name detected.*UUIDs/i);
-    });
+        // default client uses 'warn' mode - should not throw
+        expect(() => {
+          client.getInstrumentation('user-123');
+        }).not.toThrow();
 
-    it('should reject scope names containing timestamps', () => {
-      expect(() => {
-        client.getInstrumentation('operation-1234567890123');
-      }).toThrow(/High-cardinality scope name detected.*timestamps/i);
-    });
+        expect(consoleSpy).toHaveBeenCalledWith(
+          expect.stringMatching(/High-cardinality scope name detected/i),
+        );
 
-    it('should reject scope names containing session IDs', () => {
-      expect(() => {
-        client.getInstrumentation('session-abc123def456');
-      }).toThrow(/High-cardinality scope name detected.*session IDs/i);
-    });
-
-    it('should reject scope names containing tenant IDs', () => {
-      expect(() => {
-        client.getInstrumentation('tenant-456');
-      }).toThrow(/High-cardinality scope name detected.*tenant IDs/i);
-    });
-
-    it('should reject scope names containing customer IDs', () => {
-      expect(() => {
-        client.getInstrumentation('customer_789');
-      }).toThrow(/High-cardinality scope name detected.*customer IDs/i);
+        consoleSpy.mockRestore();
+      });
     });
 
     it('should accept valid static scope names', () => {
@@ -348,22 +394,6 @@ describe('Input Validation (Real Client Integration)', () => {
       );
 
       consoleSpy.mockRestore();
-    });
-
-    it('should provide helpful error messages with examples', () => {
-      try {
-        client.getInstrumentation('user/123');
-        // should not reach here
-        expect(true).toBe(false);
-      } catch (error) {
-        const errorMessage = (error as Error).message;
-
-        // verify error message contains helpful guidance
-        expect(errorMessage).toContain('Scope names should be static module identifiers');
-        expect(errorMessage).toContain('Use attributes for dynamic data');
-        expect(errorMessage).toContain('instrument.metrics.increment');
-        expect(errorMessage).toContain('https://opentelemetry.io/docs/specs/otel/glossary/#instrumentation-scope');
-      }
     });
 
     it('should cache valid scopes and reuse them', () => {

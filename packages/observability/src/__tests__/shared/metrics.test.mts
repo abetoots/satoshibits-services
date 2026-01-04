@@ -465,47 +465,56 @@ describe("Metrics API - Shared Functionality", () => {
     });
   });
 
+  // API Boundary Fix - Issue #2: Changed from throwing to warning by default
+  // Use scopeNameValidation: 'strict' to get throw behavior
   describe("High-Cardinality Scope Validation", () => {
-    it("should reject scope names containing user IDs", () => {
-      expect(() => {
-        client.getInstrumentation("user-123");
-      }).toThrow(/High-cardinality scope name detected.*user IDs/i);
+    it("should warn for scope names containing user IDs (default mode)", () => {
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      client.getInstrumentation("user-123");
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/High-cardinality scope name detected.*user IDs/i));
+      consoleSpy.mockRestore();
     });
 
-    it("should reject scope names containing request IDs", () => {
-      expect(() => {
-        client.getInstrumentation("request-abc123456");
-      }).toThrow(/High-cardinality scope name detected.*request IDs/i);
+    it("should warn for scope names containing request IDs", () => {
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      client.getInstrumentation("request-abc123456");
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/High-cardinality scope name detected.*request IDs/i));
+      consoleSpy.mockRestore();
     });
 
-    it("should reject scope names containing UUIDs", () => {
-      expect(() => {
-        client.getInstrumentation("550e8400-e29b-41d4-a716-446655440000");
-      }).toThrow(/High-cardinality scope name detected.*UUIDs/i);
+    it("should warn for scope names containing UUIDs", () => {
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      client.getInstrumentation("550e8400-e29b-41d4-a716-446655440000");
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/High-cardinality scope name detected.*UUIDs/i));
+      consoleSpy.mockRestore();
     });
 
-    it("should reject scope names containing timestamps", () => {
-      expect(() => {
-        client.getInstrumentation("operation-1234567890123");
-      }).toThrow(/High-cardinality scope name detected.*timestamps/i);
+    it("should warn for scope names containing timestamps", () => {
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      client.getInstrumentation("operation-1234567890123");
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/High-cardinality scope name detected.*timestamps/i));
+      consoleSpy.mockRestore();
     });
 
-    it("should reject scope names containing session IDs", () => {
-      expect(() => {
-        client.getInstrumentation("session-abc123def456");
-      }).toThrow(/High-cardinality scope name detected.*session IDs/i);
+    it("should warn for scope names containing session IDs", () => {
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      client.getInstrumentation("session-abc123def456");
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/High-cardinality scope name detected.*session IDs/i));
+      consoleSpy.mockRestore();
     });
 
-    it("should reject scope names containing tenant IDs", () => {
-      expect(() => {
-        client.getInstrumentation("tenant-456");
-      }).toThrow(/High-cardinality scope name detected.*tenant IDs/i);
+    it("should warn for scope names containing tenant IDs", () => {
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      client.getInstrumentation("tenant-456");
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/High-cardinality scope name detected.*tenant IDs/i));
+      consoleSpy.mockRestore();
     });
 
-    it("should reject scope names containing customer IDs", () => {
-      expect(() => {
-        client.getInstrumentation("customer_789");
-      }).toThrow(/High-cardinality scope name detected.*customer IDs/i);
+    it("should warn for scope names containing customer IDs", () => {
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      client.getInstrumentation("customer_789");
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/High-cardinality scope name detected.*customer IDs/i));
+      consoleSpy.mockRestore();
     });
 
     it("should accept valid static scope names", () => {
@@ -540,20 +549,26 @@ describe("Metrics API - Shared Functionality", () => {
       consoleSpy.mockRestore();
     });
 
-    it("should provide helpful error messages with examples", () => {
-      try {
-        client.getInstrumentation("user/123");
-        // Should not reach here
-        expect(true).toBe(false);
-      } catch (error) {
-        const errorMessage = (error as Error).message;
+    it("should provide helpful warning messages with examples", () => {
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-        // Verify error message contains helpful guidance
-        expect(errorMessage).toContain("Scope names should be static module identifiers");
-        expect(errorMessage).toContain("Use attributes for dynamic data");
-        expect(errorMessage).toContain("instrument.metrics.increment");
-        expect(errorMessage).toContain("https://opentelemetry.io/docs/specs/otel/glossary/#instrumentation-scope");
-      }
+      client.getInstrumentation("user/123");
+
+      // verify warning message contains helpful guidance
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Scope names should be static module identifiers")
+      );
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Use attributes for dynamic data")
+      );
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining("instrument.metrics.increment")
+      );
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining("https://opentelemetry.io/docs/specs/otel/glossary/#instrumentation-scope")
+      );
+
+      consoleSpy.mockRestore();
     });
 
     it("should cache valid scopes and reuse them", () => {
@@ -607,7 +622,6 @@ describe("Metrics API - Shared Functionality", () => {
       }).not.toThrow();
 
       expect(() => {
-        // @ts-expect-error - Testing undefined as metric value
         client.metrics.increment("test", undefined);
       }).not.toThrow();
     });
@@ -669,8 +683,7 @@ describe("Metrics API - Shared Functionality", () => {
 
       // mock scoped instruments also don't validate
       expect(() => {
-        // @ts-expect-error - Testing number as metric name
-        scoped.metrics.increment(123);
+        scoped.metrics.increment(123 as unknown as string);
         scoped.metrics.gauge("test", NaN);
         scoped.metrics.record("", 100);
       }).not.toThrow();

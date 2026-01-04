@@ -9,6 +9,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { SmartClient, sanitize, sanitizeError } from '../../../index.mjs';
+import { extractErrorContext } from '../../../smart-errors.mjs';
 import type { UnifiedObservabilityClient } from '../../../unified-smart-client.mjs';
 import type { ServiceInstrumentType, TestErrorWithProps } from '../../test-utils/test-types.mjs';
 import { isSanitizedObject } from '../../test-utils/test-types.mjs';
@@ -28,7 +29,7 @@ describe('Node.js API Integration - Testing Our Code With Real SDK', () => {
       endpoint: undefined // Use default (should work without network)
     });
     
-    serviceInstrument = client.getServiceInstrumentation();
+    serviceInstrument = client.getServiceInstrumentation() as unknown as ServiceInstrumentType;
   });
   
   afterEach(async () => {
@@ -154,9 +155,9 @@ describe('Node.js API Integration - Testing Our Code With Real SDK', () => {
             email: 'test@example.com', // Should be sanitized
             operation: 'test'
           });
-          
+
           // The fact that this doesn't throw means our integration works
-          span.setAttributes(sanitizedAttrs);
+          (span as { setAttributes: (attrs: unknown) => void }).setAttributes(sanitizedAttrs);
         }
       });
     });
@@ -221,11 +222,9 @@ describe('Node.js API Integration - Testing Our Code With Real SDK', () => {
       errorWithProps.apiKey = 'sk_live_123456';
       errorWithProps.email = 'user@example.com';
       
-      const sanitized = sanitizeError(error);
+      const sanitized = sanitizeError(error) as unknown as { message: string; apiKey?: string };
       expect(sanitized.message).toBe('Test error');
-      if (isSanitizedObject(sanitized)) {
-        expect(sanitized.apiKey).not.toBe('sk_live_123456');
-      }
+      expect(sanitized.apiKey).not.toBe('sk_live_123456');
     });
 
     it('Should provide error boundary functionality', async () => {
@@ -243,16 +242,50 @@ describe('Node.js API Integration - Testing Our Code With Real SDK', () => {
     });
 
     it('Should wrap functions with error handling', () => {
-      const wrappedFn = serviceInstrument.errors.wrap((x: number) => {
+      const wrappedFn = serviceInstrument.errors.wrap(((x: number) => {
         if (x < 0) throw new Error('Negative number');
         return x * 2;
-      });
+      }) as (...args: unknown[]) => unknown) as (x: number) => number;
       
       expect(wrappedFn(5)).toBe(10);
       expect(() => wrappedFn(-1)).toThrow('Negative number');
     });
   });
-  
+
+  describe('C3 Fix: Unified Sanitizer Architecture', () => {
+    // Integration test for Doc 4 C3 Fix: verifies that sanitizerOptions patterns
+    // are applied to error sanitization through the actual sdk-factory merge path.
+
+    it('Should apply sanitizerOptions custom patterns to error sanitization', async () => {
+      // shutdown existing client first
+      await SmartClient.shutdown();
+
+      // create a new client with sanitizerOptions containing custom patterns
+      // (this is the original bug scenario - user provides sanitizerOptions only)
+      const testClient = await SmartClient.create({
+        serviceName: 'c3-fix-test',
+        environment: 'node',
+        disableInstrumentation: true,
+        sanitizerOptions: {
+          customPatterns: [
+            { pattern: /INTEGRATION_SECRET_\w+/gi, replacement: '[INT_REDACTED]' },
+          ],
+        },
+        // note: no errorSanitizerOptions - this tests the merge path
+      });
+
+      expect(testClient).toBeDefined();
+
+      // verify the custom pattern from sanitizerOptions is applied to errors
+      const testError = new Error('Failed with INTEGRATION_SECRET_abc123');
+      const context = extractErrorContext(testError);
+
+      // the pattern should be redacted (proving the sdk-factory merge worked)
+      expect(context['error.message']).not.toContain('INTEGRATION_SECRET_abc123');
+      expect(context['error.message']).toContain('[INT_REDACTED]');
+    });
+  });
+
   describe('Our Logging Integration', () => {
     it('Should provide logging API with real SDK', () => {
       expect(() => {

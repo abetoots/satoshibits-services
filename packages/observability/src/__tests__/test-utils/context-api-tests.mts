@@ -28,6 +28,25 @@ import { describe, it, expect } from "vitest";
 import type { UnifiedObservabilityClient } from "../../unified-smart-client.mjs";
 
 /**
+ * Check if async context propagation is available.
+ * - Node.js: Always available via AsyncLocalStorage
+ * - Browser: Requires Zone.js to be loaded BEFORE SDK initialization
+ *
+ * Note: In browser tests, Zone.js must be loaded before the SDK is imported.
+ * Due to Vitest browser mode's module loading order, this can be tricky.
+ * Tests that require async context propagation should skip if not available.
+ */
+const hasAsyncContextPropagation = (): boolean => {
+  // in Node.js, AsyncLocalStorage is always available
+  if (typeof window === "undefined") {
+    return true;
+  }
+  // in browser, check if Zone.js is loaded
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+  return typeof Zone !== "undefined" && Zone?.current !== undefined;
+};
+
+/**
  * Run shared Context API conformance tests
  *
  * @param getClient - Function that returns the client instance for testing
@@ -101,9 +120,9 @@ export function runSharedContextAPITests(
 
         const breadcrumbs = client.context.business.getBreadcrumbs();
         expect(breadcrumbs).toHaveLength(2);
-        expect(breadcrumbs[0].message).toBe("User logged in");
-        expect(breadcrumbs[1].message).toBe("Navigated to dashboard");
-        expect(breadcrumbs[1].data).toEqual({ path: "/dashboard" });
+        expect(breadcrumbs[0]!.message).toBe("User logged in");
+        expect(breadcrumbs[1]!.message).toBe("Navigated to dashboard");
+        expect(breadcrumbs[1]!.data).toEqual({ path: "/dashboard" });
       });
     });
 
@@ -120,28 +139,33 @@ export function runSharedContextAPITests(
       });
     });
 
-    it("should create nested contexts using context.business.withAdditional()", async () => {
-      const client = getClient();
-      await client.context.business.run({ userId: "user-123" }, async () => {
-        const outerCtx = client.context.business.get();
-        expect(outerCtx.userId).toBe("user-123");
-        expect(outerCtx.sessionId).toBeUndefined();
+    // note: this test requires async context propagation (Zone.js in browser, AsyncLocalStorage in Node)
+    // skip in browser if Zone.js wasn't loaded before SDK initialization
+    it.skipIf(!hasAsyncContextPropagation())(
+      "should create nested contexts using context.business.withAdditional()",
+      async () => {
+        const client = getClient();
+        await client.context.business.run({ userId: "user-123" }, async () => {
+          const outerCtx = client.context.business.get();
+          expect(outerCtx.userId).toBe("user-123");
+          expect(outerCtx.sessionId).toBeUndefined();
 
-        await client.context.business.withAdditional(
-          { sessionId: "session-456" },
-          async () => {
-            const innerCtx = client.context.business.get();
-            expect(innerCtx.userId).toBe("user-123");
-            expect(innerCtx.sessionId).toBe("session-456");
-          }
-        );
+          await client.context.business.withAdditional(
+            { sessionId: "session-456" },
+            async () => {
+              const innerCtx = client.context.business.get();
+              expect(innerCtx.userId).toBe("user-123");
+              expect(innerCtx.sessionId).toBe("session-456");
+            },
+          );
 
-        // back to outer context
-        const finalCtx = client.context.business.get();
-        expect(finalCtx.userId).toBe("user-123");
-        expect(finalCtx.sessionId).toBeUndefined();
-      });
-    });
+          // back to outer context
+          const finalCtx = client.context.business.get();
+          expect(finalCtx.userId).toBe("user-123");
+          expect(finalCtx.sessionId).toBeUndefined();
+        });
+      },
+    );
 
     it("should clear business context using context.business.clear()", async () => {
       const client = getClient();
@@ -273,32 +297,37 @@ export function runSharedContextAPITests(
   });
 
   describe("Context Inheritance via run() (Shared Conformance)", () => {
-    it("should allow nesting contexts to add values without affecting outer scope", async () => {
-      const client = getClient();
-      await client.context.business.run({ base: "value1" }, async () => {
-        // outer scope has only base value
-        const outerCtx = client.context.business.get();
-        expect(outerCtx.base).toBe("value1");
-        expect(outerCtx.additional).toBeUndefined();
+    // note: this test requires async context propagation (Zone.js in browser, AsyncLocalStorage in Node)
+    // skip in browser if Zone.js wasn't loaded before SDK initialization
+    it.skipIf(!hasAsyncContextPropagation())(
+      "should allow nesting contexts to add values without affecting outer scope",
+      async () => {
+        const client = getClient();
+        await client.context.business.run({ base: "value1" }, async () => {
+          // outer scope has only base value
+          const outerCtx = client.context.business.get();
+          expect(outerCtx.base).toBe("value1");
+          expect(outerCtx.additional).toBeUndefined();
 
-        // create nested context with additional value
-        const currentCtx = client.context.business.get();
-        await client.context.business.run(
-          { ...currentCtx, additional: "value2" },
-          async () => {
-            // inner scope has both values
-            const innerCtx = client.context.business.get();
-            expect(innerCtx.base).toBe("value1");
-            expect(innerCtx.additional).toBe("value2");
-          },
-        );
+          // create nested context with additional value
+          const currentCtx = client.context.business.get();
+          await client.context.business.run(
+            { ...currentCtx, additional: "value2" },
+            async () => {
+              // inner scope has both values
+              const innerCtx = client.context.business.get();
+              expect(innerCtx.base).toBe("value1");
+              expect(innerCtx.additional).toBe("value2");
+            },
+          );
 
-        // back in outer scope, additional is gone
-        const finalCtx = client.context.business.get();
-        expect(finalCtx.base).toBe("value1");
-        expect(finalCtx.additional).toBeUndefined();
-      });
-    });
+          // back in outer scope, additional is gone
+          const finalCtx = client.context.business.get();
+          expect(finalCtx.base).toBe("value1");
+          expect(finalCtx.additional).toBeUndefined();
+        });
+      },
+    );
 
     it("should set context properties via run() (immutable pattern)", async () => {
       const client = getClient();

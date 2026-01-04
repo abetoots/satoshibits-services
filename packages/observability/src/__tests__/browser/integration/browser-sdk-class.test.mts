@@ -37,7 +37,7 @@ describe("BrowserSDK Class-Based Pattern", () => {
         });
       } catch {
         // Fallback if location is not configurable in this environment
-        (window as Window & { location: MockLocation }).location = {
+        (window as unknown as { location: MockLocation }).location = {
           href: "http://localhost:3000/test",
           host: "localhost:3000",
           pathname: "/test",
@@ -48,11 +48,11 @@ describe("BrowserSDK Class-Based Pattern", () => {
 
     // Spy on window methods
     vi.spyOn(window, 'addEventListener');
-    vi.spyOn(window, 'setTimeout').mockImplementation((fn: TimerHandler) => { (fn as () => void)(); return 0; });
+    vi.spyOn(window, 'setTimeout').mockImplementation((fn: TimerHandler) => { (fn as () => void)(); return 0 as unknown as ReturnType<typeof setTimeout>; });
     vi.spyOn(window, 'clearTimeout');
 
     // Mock navigator properties if needed
-    if (navigator.sendBeacon) {
+    if (typeof navigator.sendBeacon === 'function') {
       vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true);
     }
 
@@ -112,22 +112,9 @@ describe("BrowserSDK Class-Based Pattern", () => {
       expect(sdk).toBeDefined();
     });
 
-    it("Should not access DOM globals during construction", () => {
-      // Temporarily hide DOM globals to ensure constructor doesn't access them
-      const origWindow = global.window;
-      const origDocument = global.document;
-      (global as GlobalWithBrowserGlobals).window = undefined;
-      (global as GlobalWithBrowserGlobals).document = undefined;
-
-      // Constructor should work without DOM access
-      expect(() => {
-        sdk = new BrowserSDK(mockConfig);
-      }).not.toThrow();
-
-      // Restore globals
-      (global as GlobalWithBrowserGlobals).window = origWindow;
-      (global as GlobalWithBrowserGlobals).document = origDocument;
-    });
+    // NOTE: "Should not access DOM globals during construction" test moved to
+    // node/browser-sdk-ssr-safety.test.mts - it tests SSR scenarios where
+    // browser globals can be removed, which is only possible in Node.js
   });
 
   describe("Start Method Pattern", () => {
@@ -187,10 +174,10 @@ describe("BrowserSDK Class-Based Pattern", () => {
   });
 
   describe("State Return Pattern", () => {
-    it("Should return shutdown function and sanitizer from start()", () => {
+    it("Should return shutdown function and sanitizer from start()", async () => {
       sdk = new BrowserSDK(mockConfig);
 
-      const result = sdk.start();
+      const result = await sdk.start();
 
       expect(result).toHaveProperty("shutdown");
       expect(typeof result.shutdown).toBe("function");
@@ -198,14 +185,14 @@ describe("BrowserSDK Class-Based Pattern", () => {
       expect(result.sanitizer).toBeDefined();
     });
 
-    it("Should not directly update global state in start()", () => {
+    it("Should not directly update global state in start()", async () => {
       // This test verifies the decoupling - BrowserSDK should not directly
       // update browserState global, that's the wrapper's responsibility
       sdk = new BrowserSDK(mockConfig);
 
       // The class itself doesn't expose global state, so we just verify
       // it returns the necessary components for state management
-      const result = sdk.start();
+      const result = await sdk.start();
 
       expect(result.shutdown).toBeInstanceOf(Function);
       expect(result.sanitizer).toBeDefined();
@@ -215,7 +202,7 @@ describe("BrowserSDK Class-Based Pattern", () => {
   describe("Shutdown Method", () => {
     it("Should shutdown gracefully", async () => {
       sdk = new BrowserSDK(mockConfig);
-      sdk.start();
+      await sdk.start();
 
       // Should not throw during shutdown
       await expect(sdk.shutdown()).resolves.toBeUndefined();
@@ -223,7 +210,7 @@ describe("BrowserSDK Class-Based Pattern", () => {
 
     it("Should be safe to call shutdown multiple times", async () => {
       sdk = new BrowserSDK(mockConfig);
-      sdk.start();
+      await sdk.start();
 
       await expect(sdk.shutdown()).resolves.toBeUndefined();
       await expect(sdk.shutdown()).resolves.toBeUndefined();
@@ -240,7 +227,7 @@ describe("BrowserSDK Class-Based Pattern", () => {
       const disableSpy = vi.spyOn(BrowserErrorInstrumentation.prototype, "disable");
 
       sdk = new BrowserSDK(mockConfig);
-      sdk.start();
+      await sdk.start();
 
       await sdk.shutdown();
 
@@ -306,53 +293,83 @@ describe("BrowserSDK Class-Based Pattern", () => {
     });
   });
 
-  describe("Error Handling", () => {
-    it("Should handle missing window gracefully", () => {
-      const origWindow = global.window;
-      (global as GlobalWithBrowserGlobals).window = undefined;
+  // NOTE: "Error Handling" tests (missing window/navigator/document) moved to
+  // node/browser-sdk-ssr-safety.test.mts - they test SSR scenarios where
+  // browser globals can be removed, which is only possible in Node.js.
+  // In real browsers, these globals are read-only and always exist.
 
-      sdk = new BrowserSDK(mockConfig);
-      expect(() => {
-        const result = sdk.start();
-        expect(result).toHaveProperty("shutdown");
-      }).not.toThrow();
+  describe("Batch Processor Config Validation (Multi-model Review Fixes)", () => {
+    it("should handle NaN values in batchProcessorOptions (Codex review)", async () => {
+      const config: BrowserClientConfig = {
+        ...mockConfig,
+        batchProcessorOptions: {
+          maxQueueSize: NaN,
+          maxExportBatchSize: NaN,
+          scheduledDelayMillis: NaN,
+        },
+      };
 
-      (global as GlobalWithBrowserGlobals).window = origWindow;
+      sdk = new BrowserSDK(config);
+      // should initialize without error - NaN values fall back to defaults
+      await expect(sdk.start()).resolves.toHaveProperty("shutdown");
     });
 
-    it("Should handle missing navigator gracefully", () => {
-      const origNavigator = global.navigator;
-      (global as GlobalWithBrowserGlobals).navigator = undefined;
+    it("should handle Infinity values in batchProcessorOptions (Codex review)", async () => {
+      const config: BrowserClientConfig = {
+        ...mockConfig,
+        batchProcessorOptions: {
+          maxQueueSize: Infinity,
+          maxExportBatchSize: Infinity,
+          scheduledDelayMillis: Infinity,
+        },
+      };
 
-      sdk = new BrowserSDK(mockConfig);
-      expect(() => {
-        const result = sdk.start();
-        expect(result).toHaveProperty("shutdown");
-      }).not.toThrow();
-
-      (global as GlobalWithBrowserGlobals).navigator = origNavigator;
+      sdk = new BrowserSDK(config);
+      // should initialize without error - Infinity values fall back to defaults
+      await expect(sdk.start()).resolves.toHaveProperty("shutdown");
     });
 
-    it("Should propagate errors from start() method", () => {
-      // Test error propagation by temporarily removing globals
-      sdk = new BrowserSDK(mockConfig);
+    it("should enforce maxQueueSize >= maxExportBatchSize (Gemini review)", async () => {
+      // when user sets queue size smaller than batch size, queue should be bumped up
+      const config: BrowserClientConfig = {
+        ...mockConfig,
+        batchProcessorOptions: {
+          maxQueueSize: 10, // too small for batch size
+          maxExportBatchSize: 100,
+        },
+      };
 
-      const origWindow = global.window;
-      const origNavigator = global.navigator;
-      const origDocument = global.document;
+      sdk = new BrowserSDK(config);
+      // should initialize without error - queue size adjusted to >= batch size
+      await expect(sdk.start()).resolves.toHaveProperty("shutdown");
+    });
 
-      // Remove essential globals to cause start() failure
-      (global as GlobalWithBrowserGlobals).window = undefined;
-      (global as GlobalWithBrowserGlobals).navigator = undefined;
-      (global as GlobalWithBrowserGlobals).document = undefined;
+    it("should handle negative values in batchProcessorOptions", async () => {
+      const config: BrowserClientConfig = {
+        ...mockConfig,
+        batchProcessorOptions: {
+          maxQueueSize: -10,
+          maxExportBatchSize: -5,
+          scheduledDelayMillis: -100,
+        },
+      };
 
-      // Should throw an error when trying to start without required globals
-      expect(() => sdk.start()).toThrow();
+      sdk = new BrowserSDK(config);
+      // should initialize without error - negative values clamped to minimums
+      await expect(sdk.start()).resolves.toHaveProperty("shutdown");
+    });
 
-      // Restore globals
-      (global as GlobalWithBrowserGlobals).window = origWindow;
-      (global as GlobalWithBrowserGlobals).navigator = origNavigator;
-      (global as GlobalWithBrowserGlobals).document = origDocument;
+    it("should allow zero scheduledDelayMillis for immediate flush", async () => {
+      const config: BrowserClientConfig = {
+        ...mockConfig,
+        batchProcessorOptions: {
+          scheduledDelayMillis: 0,
+        },
+      };
+
+      sdk = new BrowserSDK(config);
+      // should initialize without error - 0 is valid for immediate flush
+      await expect(sdk.start()).resolves.toHaveProperty("shutdown");
     });
   });
 });

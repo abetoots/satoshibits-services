@@ -3,11 +3,17 @@ import { defineConfig } from "vitest/config";
 const useBrowserRunner = process.env.USE_VITEST_BROWSER === "1";
 
 export default defineConfig({
+  // pre-bundle zone.js to prevent vite reloading during tests
+  optimizeDeps: {
+    include: ["zone.js"],
+  },
   test: {
     globals: true,
     // automatic mock cleanup - eliminates need for manual afterEach blocks
     restoreMocks: true, // auto-restore vi.spyOn after each test
     unstubGlobals: true, // auto-unstub vi.stubGlobal after each test
+    // note: zone.js must load before any SDK modules, so it's in global setup
+    // the setup file conditionally loads zone.js only in browser environments
     setupFiles: [
       "./src/__tests__/test-setup/setup.mts",
       "./src/__tests__/test-setup/vitest-browser-setup.mts",

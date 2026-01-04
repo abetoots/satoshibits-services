@@ -82,6 +82,7 @@ describe("SDK Wrapper - Real Module Tests", () => {
         serviceName: "test-wrapper",
         environment: "node",
         disableInstrumentation: true,
+        enableProcessHandlers: true, // API Boundary fix: handlers are now opt-in
         testSpanProcessor: new SimpleSpanProcessor(spanExporter),
         testMetricReader: metricReader,
       });
@@ -144,6 +145,7 @@ describe("SDK Wrapper - Real Module Tests", () => {
         serviceName: "test-sigterm",
         environment: "node",
         disableInstrumentation: true,
+        enableProcessHandlers: true,
         testSpanProcessor: new SimpleSpanProcessor(spanExporter),
         testMetricReader: metricReader,
       });
@@ -155,12 +157,14 @@ describe("SDK Wrapper - Real Module Tests", () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       // verify graceful shutdown message was logged
+      // Note: SDK logs "Graceful shutdown complete." not "SIGTERM received"
       expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringContaining("SIGTERM")
+        expect.stringContaining("Graceful shutdown")
       );
 
-      // verify exit was called (0 for graceful, 1 if error during shutdown)
-      expect(mockExit).toHaveBeenCalled();
+      // API Boundary Fix: SDK no longer calls process.exit()
+      // Consumer controls termination via onShutdownComplete callback
+      // This test verifies shutdown completed without errors
     });
 
     it("should handle shutdown gracefully when SDK is properly initialized", async () => {
@@ -170,6 +174,7 @@ describe("SDK Wrapper - Real Module Tests", () => {
         serviceName: "test-graceful",
         environment: "node",
         disableInstrumentation: true,
+        enableProcessHandlers: true,
         testSpanProcessor: new SimpleSpanProcessor(spanExporter),
         testMetricReader: metricReader,
       });
@@ -184,24 +189,30 @@ describe("SDK Wrapper - Real Module Tests", () => {
   });
 
   describe("uncaughtException Handler - Real Behavior", () => {
-    it("should log exception and trigger exit(1)", async () => {
+    it("should log exception and re-throw to preserve default Node behavior", async () => {
       vi.useRealTimers();
 
       await initializeSdk({
         serviceName: "test-uncaught",
         environment: "node",
         disableInstrumentation: true,
+        enableProcessHandlers: true,
         testSpanProcessor: new SimpleSpanProcessor(spanExporter),
         testMetricReader: metricReader,
       });
 
       const testError = new Error("Test uncaught exception");
 
+      // catch the re-thrown error to prevent it from escaping to Vitest
+      let caughtError: Error | undefined;
+      const catcher = (err: Error) => { caughtError = err; };
+      process.once("uncaughtException", catcher);
+
       // emit uncaughtException to trigger real handler
       process.emit("uncaughtException", testError);
 
-      // give async handler time to run
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // give async handler time to run (shutdown + setImmediate re-throw)
+      await new Promise((resolve) => setTimeout(resolve, 150));
 
       // verify error was logged
       expect(consoleErrorSpy).toHaveBeenCalledWith(
@@ -209,8 +220,12 @@ describe("SDK Wrapper - Real Module Tests", () => {
         testError
       );
 
-      // verify exit(1) was called - uncaught exceptions MUST exit
-      expect(mockExit).toHaveBeenCalledWith(1);
+      // verify error was re-thrown (preserves default Node.js crash behavior)
+      // Note: SDK no longer calls process.exit(1) - consumer controls exit via onUncaughtException callback
+      expect(caughtError).toBe(testError);
+
+      // cleanup
+      process.off("uncaughtException", catcher);
     });
 
     it("should use tracer to record exception span", async () => {
@@ -220,6 +235,7 @@ describe("SDK Wrapper - Real Module Tests", () => {
         serviceName: "test-uncaught-span",
         environment: "node",
         disableInstrumentation: true,
+        enableProcessHandlers: true,
         testSpanProcessor: new SimpleSpanProcessor(spanExporter),
         testMetricReader: metricReader,
       });
@@ -228,14 +244,79 @@ describe("SDK Wrapper - Real Module Tests", () => {
       const getTracerSpy = vi.spyOn(trace, "getTracer");
       const testError = new Error("Test error for span");
 
+      // catch the re-thrown error to prevent it from escaping to Vitest
+      let caughtError: Error | undefined;
+      const catcher = (err: Error) => { caughtError = err; };
+      process.once("uncaughtException", catcher);
+
       // emit exception - handler should create a span
       process.emit("uncaughtException", testError);
 
       // verify tracer was accessed with expected name
       expect(getTracerSpy).toHaveBeenCalledWith("global-error-handler");
 
-      // wait for async shutdown to complete
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // wait for async shutdown to complete + re-throw
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      // verify error was re-thrown
+      expect(caughtError).toBe(testError);
+
+      // cleanup
+      process.off("uncaughtException", catcher);
+    });
+
+    it("should unregister itself before re-throwing to prevent infinite loop (Doc 4 H4 Fix)", async () => {
+      vi.useRealTimers();
+
+      await initializeSdk({
+        serviceName: "test-h4-fix",
+        environment: "node",
+        disableInstrumentation: true,
+        enableProcessHandlers: true,
+        testSpanProcessor: new SimpleSpanProcessor(spanExporter),
+        testMetricReader: metricReader,
+        // no onUncaughtException callback - triggers the re-throw path
+      });
+
+      const initialListenerCount = process.listenerCount("uncaughtException");
+      expect(initialListenerCount).toBeGreaterThan(0);
+
+      const testError = new Error("Test H4 infinite loop prevention");
+
+      // track how many times "Uncaught exception detected" is logged
+      let uncaughtLogCount = 0;
+      const originalConsoleError = console.error;
+      vi.spyOn(console, "error").mockImplementation((...args) => {
+        if (typeof args[0] === "string" && args[0].includes("Uncaught exception")) {
+          uncaughtLogCount++;
+        }
+        // call original to preserve other logging
+        originalConsoleError.apply(console, args);
+      });
+
+      // add a temporary handler to catch the re-thrown error and prevent it from
+      // escaping to Vitest's global handler (we'll verify it's the same error)
+      let caughtRethrown: Error | undefined;
+      const catcher = (err: Error) => {
+        caughtRethrown = err;
+      };
+      process.once("uncaughtException", catcher);
+
+      // emit uncaughtException to trigger the SDK handler
+      process.emit("uncaughtException", testError);
+
+      // give async handler time to run (shutdown + setImmediate re-throw)
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      // verify the error was re-thrown via setImmediate (caught by our temp handler)
+      expect(caughtRethrown).toBe(testError);
+
+      // the error should only be logged ONCE by SDK (not infinite loop)
+      // our temp handler doesn't log, so this verifies no recursive calls
+      expect(uncaughtLogCount).toBe(1);
+
+      // cleanup: remove our catcher if it wasn't triggered yet
+      process.off("uncaughtException", catcher);
     });
   });
 
@@ -247,6 +328,7 @@ describe("SDK Wrapper - Real Module Tests", () => {
         serviceName: "test-rejection",
         environment: "node",
         disableInstrumentation: true,
+        enableProcessHandlers: true,
         testSpanProcessor: new SimpleSpanProcessor(spanExporter),
         testMetricReader: metricReader,
       });
@@ -256,13 +338,12 @@ describe("SDK Wrapper - Real Module Tests", () => {
 
       const rejectionReason = new Error("Promise rejection test");
 
-      // create a rejected promise and catch it to prevent actual unhandled rejection
-      const rejectedPromise = Promise.reject(rejectionReason);
-      // suppress the rejection - we're testing the handler, not the rejection itself
-      rejectedPromise.catch(vi.fn());
+      // create a fake promise object for the handler (just a placeholder)
+      // The handler only logs the reason, it doesn't use the promise itself
+      const fakePromise = Promise.resolve();
 
       // emit unhandledRejection to trigger real handler
-      process.emit("unhandledRejection", rejectionReason, rejectedPromise);
+      process.emit("unhandledRejection", rejectionReason, fakePromise);
 
       // verify tracer was accessed with expected name
       expect(getTracerSpy).toHaveBeenCalledWith("global-error-handler");
@@ -277,6 +358,7 @@ describe("SDK Wrapper - Real Module Tests", () => {
         serviceName: "test-cleanup",
         environment: "node",
         disableInstrumentation: true,
+        enableProcessHandlers: true,
         testSpanProcessor: new SimpleSpanProcessor(spanExporter),
         testMetricReader: metricReader,
       });
@@ -318,6 +400,7 @@ describe("SDK Wrapper - Real Module Tests", () => {
         serviceName: "test-no-double",
         environment: "node",
         disableInstrumentation: true,
+        enableProcessHandlers: true,
         testSpanProcessor: new SimpleSpanProcessor(spanExporter),
         testMetricReader: metricReader,
       });
@@ -332,6 +415,7 @@ describe("SDK Wrapper - Real Module Tests", () => {
         serviceName: "test-no-double-2",
         environment: "node",
         disableInstrumentation: true,
+        enableProcessHandlers: true,
       });
 
       const listenersAfterSecond = process.listenerCount("SIGTERM");

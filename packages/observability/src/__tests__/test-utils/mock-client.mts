@@ -360,7 +360,7 @@ export class MockObservabilityClient {
     },
 
     // Required method from UnifiedObservabilityClient
-    createLogger: (scope: string) => {
+    createErrorReporter: (scope: string) => {
       return {
         report: (error: Error, additionalContext?: Record<string, unknown>) => {
           this.errors.capture(error, { scope, ...additionalContext });
@@ -665,7 +665,12 @@ export class MockObservabilityClient {
 
   /**
    * Get scoped instrumentation (for testing high-cardinality scope validation)
-   * Returns a mock scoped instrument that validates scope names
+   * Returns a mock scoped instrument that validates scope names.
+   *
+   * Respects scopeNameValidation config option (API Boundary fix):
+   * - 'warn' (default): Logs warning but allows scope name
+   * - 'strict': Throws error for high-cardinality patterns
+   * - 'disabled': Skips validation entirely
    */
   getInstrumentation(name: string, version?: string): any {
     // create cache key
@@ -677,35 +682,49 @@ export class MockObservabilityClient {
       return scoped;
     }
 
-    // validate scope name for high-cardinality patterns (same as real client)
-    const highCardinalityPatterns = [
-      { pattern: /user[/_-]\d+/i, description: "user IDs" },
-      { pattern: /request[/_-][0-9a-f]{8,}/i, description: "request IDs" },
-      { pattern: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i, description: "UUIDs" },
-      { pattern: /\d{13,}/, description: "timestamps" },
-      { pattern: /session[/_-][0-9a-f]{8,}/i, description: "session IDs" },
-      { pattern: /tenant[/_-]\d+/i, description: "tenant IDs" },
-      { pattern: /customer[/_-]\d+/i, description: "customer IDs" },
-    ];
+    // get validation mode from config (default: 'warn' for API boundary compliance)
+    const validationMode = this.config.scopeNameValidation ?? "warn";
 
-    for (const { pattern, description } of highCardinalityPatterns) {
-      if (pattern.test(name)) {
-        throw new Error(
-          `High-cardinality scope name detected: "${name}" contains ${description}. ` +
-          `Scope names should be static module identifiers (e.g., "my-app/checkout"). ` +
-          `Use attributes for dynamic data: ` +
-          `instrument.metrics.increment("requests", 1, { userId: "123" }). ` +
-          `See: https://opentelemetry.io/docs/specs/otel/glossary/#instrumentation-scope`
+    // skip validation if disabled
+    if (validationMode !== "disabled") {
+      // validate scope name for high-cardinality patterns (same as real client)
+      const highCardinalityPatterns = [
+        { pattern: /user[/_-]\d+/i, description: "user IDs" },
+        { pattern: /request[/_-][0-9a-f]{8,}/i, description: "request IDs" },
+        { pattern: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i, description: "UUIDs" },
+        { pattern: /\d{13,}/, description: "timestamps" },
+        { pattern: /session[/_-][0-9a-f]{8,}/i, description: "session IDs" },
+        { pattern: /tenant[/_-]\d+/i, description: "tenant IDs" },
+        { pattern: /customer[/_-]\d+/i, description: "customer IDs" },
+      ];
+
+      for (const { pattern, description } of highCardinalityPatterns) {
+        if (pattern.test(name)) {
+          const message =
+            `High-cardinality scope name detected: "${name}" contains ${description}. ` +
+            `Scope names should be static module identifiers (e.g., "my-app/checkout"). ` +
+            `Use attributes for dynamic data: ` +
+            `instrument.metrics.increment("requests", 1, { userId: "123" }). ` +
+            `See: https://opentelemetry.io/docs/specs/otel/glossary/#instrumentation-scope`;
+
+          if (validationMode === "strict") {
+            throw new Error(message);
+          } else {
+            // 'warn' mode - log warning but allow the scope name
+            console.warn(`[MockObservabilityClient] ${message}`);
+          }
+          // only report once per scope name
+          break;
+        }
+      }
+
+      // warn for long scope names
+      if (name.length > 100) {
+        console.warn(
+          `[MockObservabilityClient] Scope name is unusually long (${name.length} chars): "${name}". ` +
+          `Consider using shorter, static scope names.`
         );
       }
-    }
-
-    // warn for long scope names
-    if (name.length > 100) {
-      console.warn(
-        `Scope name is unusually long (${name.length} chars): "${name}". ` +
-        `Consider using shorter, static scope names.`
-      );
     }
 
     // create and cache the scoped instrument

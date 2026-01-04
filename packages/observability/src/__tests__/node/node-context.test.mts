@@ -9,19 +9,19 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AsyncLocalStorage } from "async_hooks";
 import cluster from "cluster";
 import { setTimeout as setTimeoutPromise } from "timers/promises";
 
-import { SmartClient } from "../../index.mjs";
 import type { UnifiedObservabilityClient } from "../../unified-smart-client.mjs";
+import type { TestContext } from "../test-utils/setup-helpers.mjs";
+
+import { SmartClient } from "../../index.mjs";
+import { runSharedContextAPITests } from "../test-utils/context-api-tests.mjs";
+import { runInstanceIsolationTests } from "../test-utils/instance-isolation-tests.mjs";
 import {
   setupNodeTestClient,
   teardownTestClient,
-  type TestContext,
 } from "../test-utils/setup-helpers.mjs";
-import { runSharedContextAPITests } from "../test-utils/context-api-tests.mjs";
-import { runInstanceIsolationTests } from "../test-utils/instance-isolation-tests.mjs";
 
 describe("Node.js Context Management", () => {
   let testContext: TestContext;
@@ -69,21 +69,27 @@ describe("Node.js Context Management", () => {
       const results: Record<string, unknown>[] = [];
 
       // Start two parallel async chains with different contexts
-      const chain1 = client.context.business.run({ userId: "user-1" }, async () => {
-        await setTimeoutPromise(5);
-        results.push(client.context.business.get());
-      });
+      const chain1 = client.context.business.run(
+        { userId: "user-1" },
+        async () => {
+          await setTimeoutPromise(5);
+          results.push(client.context.business.get());
+        },
+      );
 
-      const chain2 = client.context.business.run({ userId: "user-2" }, async () => {
-        await setTimeoutPromise(10);
-        results.push(client.context.business.get());
-      });
+      const chain2 = client.context.business.run(
+        { userId: "user-2" },
+        async () => {
+          await setTimeoutPromise(10);
+          results.push(client.context.business.get());
+        },
+      );
 
       await Promise.all([chain1, chain2]);
 
       // Each chain should have its own context
-      expect(results[0].userId).toBe("user-1");
-      expect(results[1].userId).toBe("user-2");
+      expect(results[0]!.userId).toBe("user-1");
+      expect(results[1]!.userId).toBe("user-2");
     });
 
     it("should propagate context through Promise chains", async () => {
@@ -107,45 +113,51 @@ describe("Node.js Context Management", () => {
     });
 
     it("should handle nested context runs", async () => {
-      await client.context.business.run({ level: 1, userId: "user-1" }, async () => {
-        expect(client.context.business.get().level).toBe(1);
+      await client.context.business.run(
+        { level: 1, userId: "user-1" },
+        async () => {
+          expect(client.context.business.get().level).toBe(1);
 
-        await client.context.business.run(
-          { level: 2, sessionId: "session-2" },
-          async () => {
-            const ctx = client.context.business.get();
-            expect(ctx.level).toBe(2);
-            expect(ctx.userId).toBe("user-1"); // Inherited from parent
-            expect(ctx.sessionId).toBe("session-2");
+          await client.context.business.run(
+            { level: 2, sessionId: "session-2" },
+            async () => {
+              const ctx = client.context.business.get();
+              expect(ctx.level).toBe(2);
+              expect(ctx.userId).toBe("user-1"); // Inherited from parent
+              expect(ctx.sessionId).toBe("session-2");
 
-            await client.context.business.run({ level: 3 }, async () => {
-              const innerCtx = client.context.business.get();
-              expect(innerCtx.level).toBe(3);
-              expect(innerCtx.userId).toBe("user-1"); // Still inherited
-              expect(innerCtx.sessionId).toBe("session-2"); // Still inherited
-            });
-          },
-        );
+              await client.context.business.run({ level: 3 }, async () => {
+                const innerCtx = client.context.business.get();
+                expect(innerCtx.level).toBe(3);
+                expect(innerCtx.userId).toBe("user-1"); // Still inherited
+                expect(innerCtx.sessionId).toBe("session-2"); // Still inherited
+              });
+            },
+          );
 
-        // Back to level 1 context
-        expect(client.context.business.get().level).toBe(1);
-        expect(client.context.business.get().sessionId).toBeUndefined();
-      });
+          // Back to level 1 context
+          expect(client.context.business.get().level).toBe(1);
+          expect(client.context.business.get().sessionId).toBeUndefined();
+        },
+      );
     });
   });
 
   describe("Context Across Async Boundaries", () => {
     it("should maintain context across setTimeout", async () => {
-      await client.context.business.run({ timerContext: "timer-value" }, async () => {
-        await new Promise<void>((resolve) => {
-          setTimeout(() => {
-            expect(client.context.business.get().timerContext).toBe(
-              "timer-value",
-            );
-            resolve();
-          }, 10);
-        });
-      });
+      await client.context.business.run(
+        { timerContext: "timer-value" },
+        async () => {
+          await new Promise<void>((resolve) => {
+            setTimeout(() => {
+              expect(client.context.business.get().timerContext).toBe(
+                "timer-value",
+              );
+              resolve();
+            }, 10);
+          });
+        },
+      );
     });
 
     it("should maintain context across setInterval", async () => {
@@ -186,35 +198,43 @@ describe("Node.js Context Management", () => {
     });
 
     it("should maintain context across process.nextTick", async () => {
-      await client.context.business.run({ tickContext: "tick-value" }, async () => {
-        await new Promise<void>((resolve) => {
-          process.nextTick(() => {
-            expect(client.context.business.get().tickContext).toBe("tick-value");
-            resolve();
+      await client.context.business.run(
+        { tickContext: "tick-value" },
+        async () => {
+          await new Promise<void>((resolve) => {
+            process.nextTick(() => {
+              expect(client.context.business.get().tickContext).toBe(
+                "tick-value",
+              );
+              resolve();
+            });
           });
-        });
-      });
+        },
+      );
     });
 
     it("should maintain context across EventEmitter events", async () => {
       const { EventEmitter } = await import("events");
       const emitter = new EventEmitter();
 
-      await client.context.business.run({ eventContext: "event-value" }, async () => {
-        const promise = new Promise<void>((resolve) => {
-          emitter.once("test", () => {
-            expect(client.context.business.get().eventContext).toBe(
-              "event-value",
-            );
-            resolve();
+      await client.context.business.run(
+        { eventContext: "event-value" },
+        async () => {
+          const promise = new Promise<void>((resolve) => {
+            emitter.once("test", () => {
+              expect(client.context.business.get().eventContext).toBe(
+                "event-value",
+              );
+              resolve();
+            });
           });
-        });
 
-        // Emit event after a small delay
-        setTimeout(() => emitter.emit("test"), 10);
+          // Emit event after a small delay
+          setTimeout(() => emitter.emit("test"), 10);
 
-        await promise;
-      });
+          await promise;
+        },
+      );
     });
   });
 

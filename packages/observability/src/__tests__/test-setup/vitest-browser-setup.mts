@@ -2,8 +2,23 @@
  * Browser Test Environment Setup
  *
  * Provides environment-specific polyfills and configurations for browser tests.
- * This file is loaded before all browser tests via vitest.config.mts setupFiles.
+ * This file is loaded before all tests via vitest.config.mts setupFiles.
  */
+
+/**
+ * Zone.js for Async Context Propagation
+ *
+ * Zone.js is required for OpenTelemetry's ZoneContextManager to work in browsers.
+ * Without Zone.js, async context propagation is disabled and context won't flow
+ * through Promise chains, setTimeout, etc.
+ *
+ * IMPORTANT: Zone.js must be loaded BEFORE any OpenTelemetry code runs.
+ * This enables tests that verify context inheritance across async boundaries.
+ *
+ * Zone.js is safe to import in Node.js - it will detect the environment
+ * and apply only browser-relevant patches.
+ */
+import "zone.js";
 
 /**
  * Process Polyfill for Browser Tests

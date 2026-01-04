@@ -447,7 +447,7 @@ describe("RED: OTLP Compliance for FetchSpanExporter", () => {
 
       // should have spans array within scopeSpans
       expect(scopeSpans[0]).toHaveProperty("spans");
-      expect(Array.isArray(scopeSpans[0].spans)).toBe(true);
+      expect(Array.isArray(scopeSpans[0]!.spans)).toBe(true);
     });
 
     it("should preserve resource attributes in OTLP format", async () => {

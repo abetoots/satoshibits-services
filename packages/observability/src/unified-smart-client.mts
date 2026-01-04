@@ -3,6 +3,30 @@
  *
  * Single entry point for all observability needs.
  * Wraps OpenTelemetry SDK with smart defaults and enhanced features.
+ *
+ * ## API Pattern Guide (M6 fix)
+ *
+ * There are two primary API patterns - choose based on your use case:
+ *
+ * ### 1. Scoped Instrumentation (RECOMMENDED for modules)
+ * Use `client.getInstrumentation()` for module-level telemetry with proper scope attribution.
+ * This is the OpenTelemetry-recommended pattern for organizing telemetry by logical module.
+ * ```typescript
+ * const checkout = client.getInstrumentation("my-app/checkout", "1.0.0");
+ * checkout.metrics.increment("orders", 1, { status: "completed" });
+ * await checkout.traces.withSpan("process-order", async () => { ... });
+ * ```
+ *
+ * ### 2. Service-Level Convenience (for quick prototyping or simple apps)
+ * Use `client.metrics.*`, `client.traces.*`, `client.logs.*` for service-wide telemetry.
+ * These are convenience methods that delegate to `getInstrumentation(serviceName)`.
+ * ```typescript
+ * client.metrics.increment("requests.total", 1);
+ * await client.traces.withSpan("handle-request", async () => { ... });
+ * ```
+ *
+ * Both patterns produce valid OpenTelemetry telemetry - the scoped pattern just provides
+ * better organization by attributing telemetry to specific modules within your service.
  */
 
 import { metrics, SpanStatusCode, trace } from "@opentelemetry/api";
@@ -22,11 +46,18 @@ import {
   clearContext,
   ContextEnricher,
   getBusinessContext,
+  getOrCreateDefaultEnricher,
   runWithBusinessContext,
+  setDefaultEnricher,
   setUser,
 } from "./enrichment/context.mjs";
 // Import sanitization
-import { sanitize, SanitizerManager } from "./enrichment/sanitizer.mjs";
+import {
+  getOrCreateDefaultSanitizerManager,
+  sanitize,
+  SanitizerManager,
+  setDefaultSanitizerManager,
+} from "./enrichment/sanitizer.mjs";
 import { ScopedInstrument } from "./internal/scoped-instrument.mjs";
 import {
   categorizeErrorForObservability,
@@ -35,6 +66,9 @@ import {
 } from "./smart-errors.mjs";
 // Import environment utilities
 import { detectEnvironment, getProcessEnv } from "./utils/environment.mjs";
+// Doc 4 M3 Fix: static import replaces dynamic import to avoid CSP issues
+// client-instance.mts only has a type-only import from this module, so no circular dependency
+import { unregisterInstance } from "./client-instance.mjs";
 
 // Local lightweight instrument interfaces to avoid unsafe `any`
 interface CounterInstrument {
@@ -93,10 +127,8 @@ interface GaugeInstrument {
 export class UnifiedObservabilityClient {
   private readonly config: SmartClientConfig;
 
-  // Cache for scoped instrument clients
-  private readonly scopedClients = new LRUCache<string, ScopedInstrument>({
-    max: 100, // Reasonable limit for scoped clients
-  });
+  // Cache for scoped instrument clients (API Boundary Fix - Issue #10: configurable)
+  private readonly scopedClients: LRUCache<string, ScopedInstrument>;
 
   // Instance-level instrument cache (was previously global)
   // Prevents unbounded memory growth and ensures instance isolation
@@ -121,7 +153,28 @@ export class UnifiedObservabilityClient {
   constructor(config: SmartClientConfig) {
     this.config = config;
 
+    // API Boundary Fix - Issue #10: configurable scoped client cache
+    // Multi-model review (Codex): use Number.isFinite() to guard against NaN/Infinity
+    // before Math.max(), then fall back to safe defaults
+    const maxScopedClientsRaw = config.maxScopedClients;
+    const maxScopedClients = Number.isFinite(maxScopedClientsRaw)
+      ? Math.max(1, maxScopedClientsRaw as number)
+      : 100;
+    this.scopedClients = new LRUCache<string, ScopedInstrument>({
+      max: maxScopedClients,
+    });
+
     // initialize instrument cache (was global, now instance-level for isolation)
+    // API Boundary Fix - Issue #10: configurable TTL
+    // Multi-model review (Codex): use Number.isFinite() guard before Math.max()
+    const ttlMsRaw = config.instrumentCacheTtlMs;
+    const ttlMs = Number.isFinite(ttlMsRaw)
+      ? Math.max(0, ttlMsRaw as number)
+      : 1000 * 60 * 60; // default 1 hour
+    const maxCachedInstrumentsRaw = config.maxCachedInstruments;
+    const maxCachedInstruments = Number.isFinite(maxCachedInstrumentsRaw)
+      ? Math.max(1, maxCachedInstrumentsRaw as number)
+      : 2000;
     this.instrumentCache = new LRUCache<
       string,
       | CounterInstrument
@@ -129,32 +182,43 @@ export class UnifiedObservabilityClient {
       | HistogramInstrument
       | GaugeInstrument
     >({
-      max: config.maxCachedInstruments ?? 2000, // configurable limit
-      ttl: 1000 * 60 * 60, // 1 hour - instruments not used for 1 hour will be evicted
+      max: maxCachedInstruments,
+      ttl: ttlMs === 0 ? undefined : ttlMs, // 0 disables TTL
     });
 
-    // initialize sanitizer manager (was global in sanitizer.mts)
-    this.sanitizerManager = new SanitizerManager(config.sanitizerOptions, {
-      maxTenantSanitizers: config.maxTenantSanitizers,
-      tenantConfigProvider: config.tenantSanitizerConfigProvider,
-      contextProvider: () => {
-        const businessCtx = getBusinessContext();
-        if (businessCtx?.tenantId) {
-          return {
-            tenantId: businessCtx.tenantId,
-            region: businessCtx.region as string | undefined,
-          };
-        }
-        return undefined;
+    // adopt the default sanitizer manager to preserve any config applied before initialization
+    // this resolves C3: dual-path sanitizer architecture
+    // @see ARCHITECTURE_MULTI_MODEL_REVIEW.md - Issue C3 resolution
+    this.sanitizerManager = getOrCreateDefaultSanitizerManager(
+      config.sanitizerOptions,
+      {
+        maxTenantSanitizers: config.maxTenantSanitizers,
+        tenantConfigProvider: config.tenantSanitizerConfigProvider,
+        contextProvider: () => {
+          const businessCtx = getBusinessContext();
+          if (businessCtx?.tenantId) {
+            return {
+              tenantId: businessCtx.tenantId,
+              region: businessCtx.region as string | undefined,
+            };
+          }
+          return undefined;
+        },
       },
-    });
+    );
+    // set the adopted sanitizer as the default so getGlobalSanitizerManager returns the same instance
+    setDefaultSanitizerManager(this.sanitizerManager);
 
-    // initialize context enricher (was global in context.mts)
+    // adopt the default context enricher to preserve any data added before initialization
+    // this resolves C3: dual-path context architecture
+    // @see ARCHITECTURE_MULTI_MODEL_REVIEW.md - Issue C3 resolution
     if (config.enrichContext !== false) {
       const env = getProcessEnv();
       const environment = detectEnvironment();
 
-      this.contextEnricher = new ContextEnricher(
+      // get or create the default enricher, then adopt it
+      // this ensures breadcrumbs/user/tags added before init are preserved
+      this.contextEnricher = getOrCreateDefaultEnricher(
         {
           release: config.serviceName,
           version: config.serviceVersion ?? "0.0.0",
@@ -167,15 +231,25 @@ export class UnifiedObservabilityClient {
         },
         { sanitizerOptions: config.sanitizerOptions },
       );
+      // set the adopted enricher as the default so getGlobalContext returns the same instance
+      setDefaultEnricher(this.contextEnricher);
     } else {
-      // create a minimal context enricher even when enrichContext is false
-      this.contextEnricher = new ContextEnricher();
+      // even when enrichContext is false, adopt any existing default enricher
+      this.contextEnricher = getOrCreateDefaultEnricher();
+      setDefaultEnricher(this.contextEnricher);
     }
   }
 
   /**
-   * Service-level Metrics API
-   * Convenience proxy to the service-scoped instrumentation metrics
+   * Service-level Metrics API (convenience methods)
+   *
+   * Convenience proxy to the service-scoped instrumentation metrics.
+   * All methods delegate to `getInstrumentation(serviceName).metrics.*`.
+   *
+   * For better telemetry organization in larger applications, prefer using
+   * `client.getInstrumentation("my-app/module-name")` for module-scoped metrics.
+   *
+   * @see {@link getInstrumentation} for scoped instrumentation (recommended)
    */
   readonly metrics = {
     increment: (
@@ -233,8 +307,15 @@ export class UnifiedObservabilityClient {
   };
 
   /**
-   * Service-level Tracing API
-   * Convenience proxy to the service-scoped instrumentation traces
+   * Service-level Tracing API (convenience methods)
+   *
+   * Convenience proxy to the service-scoped instrumentation traces.
+   * All methods delegate to `getInstrumentation(serviceName).traces.*`.
+   *
+   * For better telemetry organization in larger applications, prefer using
+   * `client.getInstrumentation("my-app/module-name")` for module-scoped tracing.
+   *
+   * @see {@link getInstrumentation} for scoped instrumentation (recommended)
    */
   readonly traces = {
     startSpan: (name: string, options?: SpanOptions) =>
@@ -255,10 +336,22 @@ export class UnifiedObservabilityClient {
   };
 
   /**
-   * Get service-level meter from global OpenTelemetry APIs
+   * Get service-level meter from OpenTelemetry APIs
+   *
+   * API Boundary Fix - Issue #5: Supports "Bring Your Own Provider" mode.
+   * If existingMeterProvider is configured, uses that instead of global.
+   *
    * @private
    */
   private getMeter(): Meter {
+    // API Boundary Fix - Issue #5: Use provided meter provider if configured
+    if (this.config.existingMeterProvider) {
+      return this.config.existingMeterProvider.getMeter(
+        this.config.serviceName,
+        this.config.serviceVersion,
+      );
+    }
+    // Default: use globally registered meter provider
     return metrics.getMeter(
       this.config.serviceName,
       this.config.serviceVersion,
@@ -266,10 +359,22 @@ export class UnifiedObservabilityClient {
   }
 
   /**
-   * Get service-level tracer from global OpenTelemetry APIs
+   * Get service-level tracer from OpenTelemetry APIs
+   *
+   * API Boundary Fix - Issue #5: Supports "Bring Your Own Provider" mode.
+   * If existingTracerProvider is configured, uses that instead of global.
+   *
    * @private
    */
   private getTracer(): Tracer {
+    // API Boundary Fix - Issue #5: Use provided tracer provider if configured
+    if (this.config.existingTracerProvider) {
+      return this.config.existingTracerProvider.getTracer(
+        this.config.serviceName,
+        this.config.serviceVersion,
+      );
+    }
+    // Default: use globally registered tracer provider
     return trace.getTracer(this.config.serviceName, this.config.serviceVersion);
   }
 
@@ -282,10 +387,21 @@ export class UnifiedObservabilityClient {
   }
 
   /**
-   * Validates scope name to prevent high-cardinality patterns
+   * Validates scope name to prevent high-cardinality patterns.
+   *
+   * API Boundary Fix: Now respects scopeNameValidation config option.
+   * Default behavior changed from 'strict' (throw) to 'warn' (log warning).
+   *
    * @private
    */
   private validateScopeName(name: string): void {
+    const validationMode = this.config.scopeNameValidation ?? "warn";
+
+    // Skip validation entirely if disabled
+    if (validationMode === "disabled") {
+      return;
+    }
+
     // Patterns that indicate high-cardinality (dynamic) scope names
     const highCardinalityPatterns = [
       { pattern: /user[/_-]\d+/i, description: "user IDs" },
@@ -303,20 +419,28 @@ export class UnifiedObservabilityClient {
 
     for (const { pattern, description } of highCardinalityPatterns) {
       if (pattern.test(name)) {
-        throw new Error(
+        const message =
           `High-cardinality scope name detected: "${name}" contains ${description}. ` +
-            `Scope names should be static module identifiers (e.g., "my-app/checkout"). ` +
-            `Use attributes for dynamic data: ` +
-            `instrument.metrics.increment("requests", 1, { userId: "123" }). ` +
-            `See: https://opentelemetry.io/docs/specs/otel/glossary/#instrumentation-scope`,
-        );
+          `Scope names should be static module identifiers (e.g., "my-app/checkout"). ` +
+          `Use attributes for dynamic data: ` +
+          `instrument.metrics.increment("requests", 1, { userId: "123" }). ` +
+          `See: https://opentelemetry.io/docs/specs/otel/glossary/#instrumentation-scope`;
+
+        if (validationMode === "strict") {
+          throw new Error(message);
+        } else {
+          // 'warn' mode - log warning but allow the scope name
+          console.warn(`[Observability SDK] ${message}`);
+        }
+        // Only report once per scope name (first matching pattern)
+        return;
       }
     }
 
     // Warn if scope name is suspiciously long (likely contains dynamic data)
     if (name.length > 100) {
       console.warn(
-        `Scope name is unusually long (${name.length} chars): "${name}". ` +
+        `[Observability SDK] Scope name is unusually long (${name.length} chars): "${name}". ` +
           `Consider using shorter, static scope names.`,
       );
     }
@@ -334,13 +458,17 @@ export class UnifiedObservabilityClient {
    * meter, tracer, and logger instances for proper telemetry organization, all while
    * sharing the same underlying SDK configuration and resources.
    *
-   * **IMPORTANT:** Scope names must be static. Do not include dynamic data like user IDs,
+   * **IMPORTANT:** Scope names should be static. Do not include dynamic data like user IDs,
    * request IDs, or UUIDs. Use attributes for high-cardinality data instead.
+   *
+   * Validation behavior is controlled by `scopeNameValidation` config option:
+   * - `'warn'` (default): Logs a warning for high-cardinality patterns but allows the scope
+   * - `'strict'`: Throws an error for high-cardinality patterns (legacy behavior)
+   * - `'disabled'`: Skips validation entirely
    *
    * @param name - Instrumentation scope identifier (e.g., "my-app/user-service", "@company/http-client", "my-app/checkout")
    * @param version - Version of the instrumented module (optional, defaults to "latest")
    * @returns Scoped instrumentation client with metrics, traces, logs, result, and errors APIs
-   * @throws Error if scope name contains high-cardinality patterns (user IDs, UUIDs, etc.)
    *
    * @public
    * @since 2.0.0
@@ -354,9 +482,12 @@ export class UnifiedObservabilityClient {
    * // Use attributes for dynamic data
    * checkout.metrics.increment("orders", 1, { userId: "123", method: "stripe" });
    *
-   * // ❌ BAD - High-cardinality scope names (throws error)
-   * const userScope = client.getInstrumentation(`user/${userId}`); // Error!
-   * const requestScope = client.getInstrumentation(`request/${requestId}`); // Error!
+   * // ⚠️ NOT RECOMMENDED - High-cardinality scope names (warns by default)
+   * const userScope = client.getInstrumentation(`user/${userId}`); // Warning logged
+   * const requestScope = client.getInstrumentation(`request/${requestId}`); // Warning logged
+   *
+   * // To enforce strict validation (throws errors):
+   * // initialize({ serviceName: "my-app", scopeNameValidation: "strict", ... })
    * ```
    */
   getInstrumentation(name: string, version?: string): ScopedInstrument {
@@ -368,8 +499,13 @@ export class UnifiedObservabilityClient {
     let scoped = this.scopedClients.get(scopeKey);
     if (!scoped) {
       // Create properly scoped OpenTelemetry instruments
-      const meter = metrics.getMeter(name, version);
-      const tracer = trace.getTracer(name, version);
+      // API Boundary Fix - Issue #5: Use provided providers if configured
+      const meter = this.config.existingMeterProvider
+        ? this.config.existingMeterProvider.getMeter(name, version)
+        : metrics.getMeter(name, version);
+      const tracer = this.config.existingTracerProvider
+        ? this.config.existingTracerProvider.getTracer(name, version)
+        : trace.getTracer(name, version);
       const logger = logs.getLogger(name, version);
 
       scoped = new ScopedInstrument(meter, tracer, logger, this, scopeKey);
@@ -447,25 +583,33 @@ export class UnifiedObservabilityClient {
   }
 
   /**
-   * Service-level Logging API
-   * Convenience proxy to the service-scoped instrumentation logs
+   * Service-level Logging API (convenience methods)
+   *
+   * Convenience proxy to the service-scoped instrumentation logs.
+   * All methods delegate to `getInstrumentation(serviceName).logs.*`.
    *
    * Provides structured logging with automatic trace correlation, context enrichment,
    * and PII sanitization. All log entries automatically include trace context when
    * available for seamless correlation with spans and metrics.
+   *
+   * For better telemetry organization in larger applications, prefer using
+   * `client.getInstrumentation("my-app/module-name")` for module-scoped logging.
+   *
+   * @see {@link getInstrumentation} for scoped instrumentation (recommended)
    *
    * @public
    * @since 1.0.0
    *
    * @example
    * ```typescript
-   * // Basic logging
+   * // Basic logging (service-level)
    * client.logs.info("User logged in", { userId: "123" });
    * client.logs.warn("Rate limit approaching", { remaining: 10 });
    * client.logs.error("Database connection failed", error, { retries: 3 });
    *
-   * // Create scoped logger
-   * const userLogger = client.logs.createLogger("user-service");
+   * // Module-scoped logging (recommended for larger apps)
+   * const userModule = client.getInstrumentation("my-app/users");
+   * userModule.logs.info("User created", { userId: "123" });
    * ```
    */
   readonly logs = {
@@ -494,9 +638,25 @@ export class UnifiedObservabilityClient {
       this.getServiceInstrumentation().logs.error(message, error, attributes),
 
     /**
-     * Create a logger with a specific scope
+     * Create a scoped error reporter for structured error handling
+     *
+     * Returns an error reporter helper with `report()` and `reportResult()` methods,
+     * not a standard OpenTelemetry Logger. For raw log output, use `info()`, `warn()`,
+     * `error()`, or `debug()` methods above.
+     *
+     * M7 fix: Renamed from `createLogger` to accurately reflect the returned type.
+     *
+     * @param scope - Logical scope name for error attribution
+     * @returns Error reporter with pre-configured scope context
+     *
+     * @example
+     * ```typescript
+     * const userErrors = client.logs.createErrorReporter("user-service");
+     * userErrors.report(error, { userId: "123" });
+     * ```
      */
-    createLogger: (scope: string) => createErrorReporter({ scope }),
+    createErrorReporter: (scope: string) => createErrorReporter({ defaultContext: { scope } }),
+    // [H1] Removed deprecated createLogger() - use createErrorReporter() instead
   };
 
   /**
@@ -902,12 +1062,92 @@ export class UnifiedObservabilityClient {
       logger: this.getLogger(),
     };
   }
+
+  // ===== Instance Lifecycle Management (API Boundary Fix - Issue #4) =====
+
+  private _isDestroyed = false;
+
+  /**
+   * Check if this client instance has been destroyed
+   *
+   * @returns True if destroy() has been called on this instance
+   * @public
+   * @since 2.0.0
+   */
+  get isDestroyed(): boolean {
+    return this._isDestroyed;
+  }
+
+  /**
+   * Destroy this client instance and clean up its resources
+   *
+   * This method performs instance-level cleanup without affecting the global
+   * OpenTelemetry SDK or other client instances. Use this when:
+   * - A micro-frontend is being unmounted
+   * - A test is completing
+   * - A tenant context is ending
+   *
+   * **What gets cleaned up:**
+   * - Instance's instrument cache (counters, gauges, histograms)
+   * - Instance's scoped client cache
+   * - Instance's registration in the global instance registry
+   *
+   * **What remains shared (OpenTelemetry architectural limitation):**
+   * - The underlying OTel TracerProvider and MeterProvider
+   * - Global trace context propagation
+   * - Resource attributes (service.name) from first initialization
+   * - Other client instances continue to function
+   *
+   * @example
+   * ```typescript
+   * const client = await SmartClient.create({ serviceName: 'my-mfe', environment: 'browser' });
+   *
+   * // Use the client...
+   *
+   * // When the micro-frontend unmounts:
+   * await client.destroy();
+   * ```
+   *
+   * @remarks
+   * After calling destroy(), this client instance should not be used.
+   * All methods will continue to work but may produce warnings.
+   * Create a new instance if you need to reinitialize.
+   *
+   * @public
+   * @since 2.0.0
+   */
+  async destroy(): Promise<void> {
+    if (this._isDestroyed) {
+      console.warn("[Observability SDK] Client instance already destroyed");
+      return;
+    }
+
+    // set flag immediately to block concurrent destroy() calls (race condition fix)
+    this._isDestroyed = true;
+
+    // clear instance-level caches
+    this.scopedClients.clear();
+    this.instrumentCache.clear();
+
+    // Doc 4 M3 Fix: unregister from global instance registry
+    // using static import (no circular dependency since client-instance.mts only has type-only imports)
+    unregisterInstance(this);
+
+    console.debug(
+      `[Observability SDK] Client instance for '${this.config.serviceName}' destroyed`
+    );
+  }
 }
 
 // Factory function removed - use the one from index.mts which properly handles SDK init
 
-// Export types
-export { ErrorCategory } from "./smart-errors.mjs";
+// Export types and configuration functions
+export {
+  ErrorCategory,
+  type ErrorSanitizerPreset,
+  configureErrorSanitizer,
+  resetErrorSanitizer,
+} from "./smart-errors.mjs";
 export type { Result } from "@satoshibits/functional-errors";
 
 // Re-export config types and ScopedInstrument from extracted modules

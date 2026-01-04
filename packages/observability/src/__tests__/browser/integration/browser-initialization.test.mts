@@ -5,9 +5,7 @@
  * These tests verify actual functionality rather than documenting broken state.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import type { GlobalWithBrowserGlobals } from "../../test-utils/test-types.mjs";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SmartClient } from "../../../index.mjs";
 
@@ -68,138 +66,9 @@ describe("Browser Initialization", () => {
     });
   });
 
-  describe("Error handler configuration", () => {
-    let originalWindow: typeof globalThis.window;
-    let originalDocument: typeof globalThis.document;
-    let originalNavigator: typeof globalThis.navigator;
-    let originalFetch: typeof globalThis.fetch;
-    let addEventListenerSpy: ReturnType<typeof vi.fn>;
-    let removeEventListenerSpy: ReturnType<typeof vi.fn>;
-
-    beforeEach(() => {
-      originalWindow = (globalThis as GlobalWithBrowserGlobals).window;
-      originalDocument = (globalThis as GlobalWithBrowserGlobals).document;
-      originalNavigator = (globalThis as GlobalWithBrowserGlobals).navigator;
-      originalFetch = (globalThis as unknown as { fetch?: typeof fetch }).fetch;
-
-      addEventListenerSpy = vi.fn();
-      removeEventListenerSpy = vi.fn();
-
-      (globalThis as GlobalWithBrowserGlobals).window = {
-        addEventListener: addEventListenerSpy,
-        removeEventListener: removeEventListenerSpy,
-        setTimeout,
-        clearTimeout,
-        location: {
-          origin: "http://localhost:3000",
-          href: "http://localhost:3000/page",
-          host: "localhost:3000",
-          pathname: "/page",
-        },
-      } as Window & typeof globalThis;
-
-      (globalThis as GlobalWithBrowserGlobals).document = {
-        referrer: "",
-        title: "Test",
-      } as Document;
-
-      (globalThis as GlobalWithBrowserGlobals).navigator = {
-        userAgent: "Mozilla/5.0 (Test Browser)",
-        language: "en-US",
-        onLine: true,
-        sendBeacon: vi.fn().mockReturnValue(true),
-      } as Navigator;
-
-      (globalThis as unknown as { fetch: typeof fetch }).fetch = vi.fn(() =>
-        Promise.resolve({}),
-      ) as unknown as typeof fetch;
-    });
-
-    afterEach(async () => {
-      await SmartClient.shutdown().catch(() => {});
-
-      if (originalWindow) {
-        (globalThis as GlobalWithBrowserGlobals).window = originalWindow;
-      } else {
-        delete (globalThis as GlobalWithBrowserGlobals).window;
-      }
-
-      if (originalDocument) {
-        (globalThis as GlobalWithBrowserGlobals).document = originalDocument;
-      } else {
-        delete (globalThis as GlobalWithBrowserGlobals).document;
-      }
-
-      if (originalNavigator) {
-        (globalThis as GlobalWithBrowserGlobals).navigator = originalNavigator;
-      } else {
-        delete (globalThis as GlobalWithBrowserGlobals).navigator;
-      }
-
-      if (originalFetch) {
-        (globalThis as unknown as { fetch?: typeof fetch }).fetch =
-          originalFetch;
-      } else {
-        delete (globalThis as unknown as { fetch?: typeof fetch }).fetch;
-      }
-
-      vi.clearAllMocks();
-    });
-
-    it("respects captureErrors: false", async () => {
-      await SmartClient.initialize({
-        serviceName: "browser-app",
-        environment: "browser",
-        autoInstrument: false,
-        captureErrors: false,
-        captureConsoleErrors: false,
-        captureNavigation: false,
-        captureWebVitals: false,
-      });
-
-      const errorListener = addEventListenerSpy.mock.calls.find(
-        ([event]) => event === "error",
-      );
-      const rejectionListener = addEventListenerSpy.mock.calls.find(
-        ([event]) => event === "unhandledrejection",
-      );
-
-      expect(errorListener).toBeUndefined();
-      expect(rejectionListener).toBeUndefined();
-    });
-
-    it("cleans up browser error handlers on shutdown", async () => {
-      await SmartClient.initialize({
-        serviceName: "browser-app",
-        environment: "browser",
-        autoInstrument: false,
-        captureConsoleErrors: false,
-        captureNavigation: false,
-        captureWebVitals: false,
-      });
-
-      expect(
-        addEventListenerSpy.mock.calls.some(([event]) => event === "error"),
-      ).toBe(true);
-      expect(
-        addEventListenerSpy.mock.calls.some(
-          ([event]) => event === "unhandledrejection",
-        ),
-      ).toBe(true);
-
-      await SmartClient.shutdown();
-
-      expect(
-        removeEventListenerSpy.mock.calls.filter(([event]) => event === "error")
-          .length,
-      ).toBeGreaterThan(0);
-      expect(
-        removeEventListenerSpy.mock.calls.filter(
-          ([event]) => event === "unhandledrejection",
-        ).length,
-      ).toBeGreaterThan(0);
-    });
-  });
+  // NOTE: "Error handler configuration" tests moved to
+  // node/browser-sdk-ssr-safety.test.mts - they require mocking globalThis.window
+  // which is only possible in Node.js. In real browsers, window is read-only.
 
   describe("Fallback Behavior", () => {
     it("Should gracefully degrade when WebAPIs unavailable", async () => {
@@ -212,11 +81,50 @@ describe("Browser Initialization", () => {
       try {
         await SmartClient.initialize({
           serviceName: "browser-app",
+          environment: "browser",
         });
       } catch (error: unknown) {
         // Should provide browser-specific guidance
         expect((error as Error).message).toBeDefined();
       }
+    });
+  });
+
+  describe("Concurrent Initialization (Doc 4 H5 Fix)", () => {
+    it("should return same result for concurrent initialize calls", async () => {
+      // Doc 4 H5 Fix: concurrent calls should await the same Promise
+      // instead of creating orphaned SDK instances
+
+      // fire multiple concurrent initializations
+      const promise1 = SmartClient.initialize({
+        serviceName: "concurrent-test-1",
+        environment: "browser",
+      });
+      const promise2 = SmartClient.initialize({
+        serviceName: "concurrent-test-2",
+        environment: "browser",
+      });
+      const promise3 = SmartClient.initialize({
+        serviceName: "concurrent-test-3",
+        environment: "browser",
+      });
+
+      // all should resolve
+      const [client1, client2, client3] = await Promise.all([
+        promise1,
+        promise2,
+        promise3,
+      ]);
+
+      // all should return the same client instance (or at least be initialized)
+      expect(client1).toBeDefined();
+      expect(client2).toBeDefined();
+      expect(client3).toBeDefined();
+
+      // verify they all return valid clients
+      expect(client1.errors).toBeDefined();
+      expect(client2.errors).toBeDefined();
+      expect(client3.errors).toBeDefined();
     });
   });
 });

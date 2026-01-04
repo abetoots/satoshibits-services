@@ -339,13 +339,13 @@ importers:
         version: 0.64.6(@opentelemetry/api@1.9.0)(@opentelemetry/core@2.1.0(@opentelemetry/api@1.9.0))
       '@opentelemetry/auto-instrumentations-web':
         specifier: ^0.51.0
-        version: 0.51.3(@opentelemetry/api@1.9.0)(zone.js@0.15.1)
+        version: 0.51.3(@opentelemetry/api@1.9.0)(zone.js@0.15.0)
       '@opentelemetry/context-async-hooks':
         specifier: ^2.0.1
         version: 2.1.0(@opentelemetry/api@1.9.0)
       '@opentelemetry/context-zone-peer-dep':
         specifier: ^2.0.1
-        version: 2.1.0(@opentelemetry/api@1.9.0)(zone.js@0.15.1)
+        version: 2.1.0(@opentelemetry/api@1.9.0)(zone.js@0.15.0)
       '@opentelemetry/core':
         specifier: ^2.1.0
         version: 2.1.0(@opentelemetry/api@1.9.0)
@@ -452,6 +452,9 @@ importers:
       web-vitals:
         specifier: ^5.1.0
         version: 5.1.0
+      zone.js:
+        specifier: ^0.15.0
+        version: 0.15.0
     optionalDependencies:
       '@sentry/node':
         specifier: ^10.7.0
@@ -7873,8 +7876,8 @@ packages:
   zod@3.24.2:
     resolution: {integrity: sha512-lY7CDW43ECgW9u1TcT3IoXHflywfVqDYze4waEz812jR/bZ8FHDsl7pFQoSZTz5N+2NqRXs8GBwnAwo3ZNxqhQ==}
 
-  zone.js@0.15.1:
-    resolution: {integrity: sha512-XE96n56IQpJM7NAoXswY3XRLcWFW83xe0BiAOeMD7K5k5xecOeul3Qcpx6GqEeeHNkW5DWL5zOyTbEfB4eti8w==}
+  zone.js@0.15.0:
+    resolution: {integrity: sha512-9oxn0IIjbCZkJ67L+LkhYWRyAy7axphb3VgE2MBDlOqnmHMPWGYMxJxBYFueFq/JGY2GMwS0rU+UCLunEmy5UA==}
 
 snapshots:
 
@@ -9236,15 +9239,15 @@ snapshots:
       - encoding
       - supports-color
 
-  '@opentelemetry/auto-instrumentations-web@0.51.3(@opentelemetry/api@1.9.0)(zone.js@0.15.1)':
+  '@opentelemetry/auto-instrumentations-web@0.51.3(@opentelemetry/api@1.9.0)(zone.js@0.15.0)':
     dependencies:
       '@opentelemetry/api': 1.9.0
       '@opentelemetry/instrumentation': 0.205.0(@opentelemetry/api@1.9.0)
       '@opentelemetry/instrumentation-document-load': 0.51.2(@opentelemetry/api@1.9.0)
       '@opentelemetry/instrumentation-fetch': 0.205.0(@opentelemetry/api@1.9.0)
-      '@opentelemetry/instrumentation-user-interaction': 0.50.2(@opentelemetry/api@1.9.0)(zone.js@0.15.1)
+      '@opentelemetry/instrumentation-user-interaction': 0.50.2(@opentelemetry/api@1.9.0)(zone.js@0.15.0)
       '@opentelemetry/instrumentation-xml-http-request': 0.205.0(@opentelemetry/api@1.9.0)
-      zone.js: 0.15.1
+      zone.js: 0.15.0
     transitivePeerDependencies:
       - supports-color
 
@@ -9252,10 +9255,10 @@ snapshots:
     dependencies:
       '@opentelemetry/api': 1.9.0
 
-  '@opentelemetry/context-zone-peer-dep@2.1.0(@opentelemetry/api@1.9.0)(zone.js@0.15.1)':
+  '@opentelemetry/context-zone-peer-dep@2.1.0(@opentelemetry/api@1.9.0)(zone.js@0.15.0)':
     dependencies:
       '@opentelemetry/api': 1.9.0
-      zone.js: 0.15.1
+      zone.js: 0.15.0
 
   '@opentelemetry/core@2.1.0(@opentelemetry/api@1.9.0)':
     dependencies:
@@ -10028,13 +10031,13 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@opentelemetry/instrumentation-user-interaction@0.50.2(@opentelemetry/api@1.9.0)(zone.js@0.15.1)':
+  '@opentelemetry/instrumentation-user-interaction@0.50.2(@opentelemetry/api@1.9.0)(zone.js@0.15.0)':
     dependencies:
       '@opentelemetry/api': 1.9.0
       '@opentelemetry/core': 2.1.0(@opentelemetry/api@1.9.0)
       '@opentelemetry/instrumentation': 0.205.0(@opentelemetry/api@1.9.0)
       '@opentelemetry/sdk-trace-web': 2.1.0(@opentelemetry/api@1.9.0)
-      zone.js: 0.15.1
+      zone.js: 0.15.0
     transitivePeerDependencies:
       - supports-color
 
@@ -16284,4 +16287,4 @@ snapshots:
 
   zod@3.24.2: {}
 
-  zone.js@0.15.1: {}
+  zone.js@0.15.0: {}

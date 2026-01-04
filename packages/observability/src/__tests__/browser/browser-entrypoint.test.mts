@@ -21,9 +21,9 @@ describe("Browser entrypoint", () => {
   });
 
   it("registers and cleans up browser error listeners", async () => {
+    // H3 fix: environment is now automatically injected by the entry point
     initialize({
       serviceName: "browser-entrypoint-test",
-      environment: "browser",
       autoInstrument: false,
     });
 

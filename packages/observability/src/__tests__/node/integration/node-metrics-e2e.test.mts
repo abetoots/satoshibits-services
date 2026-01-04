@@ -21,7 +21,8 @@ describe('Node.js Metrics E2E Integration', () => {
       disableInstrumentation: true
     });
 
-    serviceInstrument = client.getServiceInstrumentation();
+    // cast to test type - actual ScopedInstrument has more methods
+    serviceInstrument = client.getServiceInstrumentation() as unknown as ServiceInstrumentType;
   });
   
   afterEach(async () => {
@@ -79,7 +80,7 @@ describe('Node.js Metrics E2E Integration', () => {
       }).not.toThrow();
       
       // Test sanitization directly - adjust expectations to match actual defaults
-      const sanitized = sanitize(sensitiveData);
+      const sanitized = sanitize(sensitiveData) as Record<string, unknown>;
       expect(sanitized.userId).toBe('user-123'); // Preserved
       expect(sanitized.operation).toBe('user-login'); // Preserved
       expect(sanitized.email).toBe('test@example.com'); // Not sanitized by default

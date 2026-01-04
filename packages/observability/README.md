@@ -1572,6 +1572,7 @@ This README provides a high-level overview. For detailed references and support:
 
 - 📖 **[Full Documentation](https://docs.satoshibits.com/observability)** - In-depth guides and tutorials
 - ⚙️ **[API Reference](./docs/api.md)** - Complete TypeScript definitions and method signatures
+- 📊 **[Metrics Recipes](./docs/examples/metrics-recipes.md)** - Common metric patterns for HTTP, database, and business metrics
 - 📦 **[Compatibility Matrix](./docs/compatibility.md)** - Up-to-date list of auto-instrumented libraries
 - 🔄 **[Changelog](./CHANGELOG.md)** - Recent updates and migration guides
 - 💬 **[Discord Community](https://discord.gg/satoshibits)** - Ask questions and share experiences

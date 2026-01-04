@@ -220,12 +220,14 @@ export interface ServiceInstrumentType {
     timer: (name: string) => { end: (attributes?: Record<string, unknown>) => number };
   };
   traces: {
+    // startSpan returns an OTel Span which has chainable methods
     startSpan: (name: string, options?: Record<string, unknown>) => {
       end: () => void;
-      setAttribute: (key: string, value: unknown) => void;
-      setAttributes: (attributes: Record<string, unknown>) => void;
+      // setAttribute returns Span for chaining in OTel, use unknown for flexibility
+      setAttribute: (key: string, value: unknown) => unknown;
+      setAttributes: (attributes: Record<string, unknown>) => unknown;
       recordException: (error: Error) => void;
-      setStatus: (status: { code: number; message?: string }) => void;
+      setStatus: (status: { code: number; message?: string }) => unknown;
     };
     getActiveSpan: () => unknown;
     withSpan: <T>(
@@ -280,14 +282,61 @@ export interface BrowserTestHandlers {
 }
 
 /**
- * Global with process for browser environment tests.
+ * Minimal process stub type for test environments.
+ * Methods return the stub for chaining (matching Node.js Process interface).
  */
-export interface GlobalWithProcess {
-  process?: {
-    env?: Record<string, string>;
-    [key: string]: unknown;
-  };
+export interface ProcessStub {
+  env: Record<string, string | undefined>;
+  listeners: (event: string) => (() => void)[];
+  removeListener: (event: string, listener: () => void) => ProcessStub;
+  on: (event: string, listener: () => void) => ProcessStub;
+  once: (event: string, listener: () => void) => ProcessStub;
+  emit: (event: string, ...args: unknown[]) => boolean;
+  removeAllListeners: (event?: string) => ProcessStub;
+  setMaxListeners: (n: number) => ProcessStub;
+  getMaxListeners: () => number;
+  eventNames: () => (string | symbol)[];
+  listenerCount: (event: string) => number;
+  // index signature for NodeJS.Process compatibility
+  [key: string]: unknown;
 }
+
+/**
+ * Creates a minimal process stub for browser environment tests.
+ * Returns the stub for direct use or assignment to globalThis.process.
+ */
+export function createProcessStub(): ProcessStub {
+  const stub: ProcessStub = {
+    env: {},
+    listeners: () => [],
+    removeListener() { return stub; },
+    on() { return stub; },
+    once() { return stub; },
+    emit: () => false,
+    removeAllListeners() { return stub; },
+    setMaxListeners() { return stub; },
+    getMaxListeners: () => 10,
+    eventNames: () => [],
+    listenerCount: () => 0,
+  };
+  return stub;
+}
+
+/**
+ * Installs a process stub on globalThis if not present.
+ * Safe to call multiple times - only installs once.
+ */
+export function installProcessStub(): void {
+  if (typeof globalThis.process === "undefined") {
+    (globalThis as { process?: unknown }).process = createProcessStub();
+  }
+}
+
+/**
+ * Global with process for browser environment tests.
+ * @deprecated Use installProcessStub() instead for cleaner type safety.
+ */
+export type GlobalWithProcess = typeof globalThis & { process?: ProcessStub };
 
 /**
  * Global with window/document for environment simulation.

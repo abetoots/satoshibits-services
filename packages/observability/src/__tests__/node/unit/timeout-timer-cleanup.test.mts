@@ -211,7 +211,7 @@ describe("RED: Timeout Timer Cleanup in errors.wrap()", () => {
         return `done-${delay}`;
       };
 
-      const wrapped = instrument.errors.wrap(fn, { timeout: 100 });
+      const wrapped = instrument.errors.wrap(fn as (...args: unknown[]) => unknown, { timeout: 100 }) as typeof fn;
 
       // start multiple calls
       const p1 = wrapped(10);

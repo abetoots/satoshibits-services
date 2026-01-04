@@ -43,7 +43,7 @@ describe('errors.wrap options (Node, no-network)', () => {
     const client = await SmartClient.create({ serviceName: 'wrap-test', environment: 'node' as const });
     const serviceInstrument = client.getServiceInstrumentation();
     const double = (x: number) => x * 2;
-    const wrapped = serviceInstrument.errors.wrap(double);
+    const wrapped = serviceInstrument.errors.wrap(double as (...args: unknown[]) => unknown) as typeof double;
     expect(wrapped(5)).toBe(10);
   });
 
@@ -63,7 +63,7 @@ describe('errors.wrap options (Node, no-network)', () => {
       throw new Error('Test error');
     };
 
-    const wrapped = serviceInstrument.errors.wrap(failingFn, { name: 'sensitiveOp' });
+    const wrapped = serviceInstrument.errors.wrap(failingFn as (...args: unknown[]) => unknown, { name: 'sensitiveOp' }) as typeof failingFn;
 
     try {
       wrapped('secret123', 'key-xyz');
@@ -93,10 +93,10 @@ describe('errors.wrap options (Node, no-network)', () => {
       throw new Error('Test error');
     };
 
-    const wrapped = serviceInstrument.errors.wrap(failingFn, {
+    const wrapped = serviceInstrument.errors.wrap(failingFn as (...args: unknown[]) => unknown, {
       name: 'mathOp',
       captureArgs: true // explicitly enable args capture
-    });
+    }) as typeof failingFn;
 
     try {
       wrapped(5, 10);
@@ -126,7 +126,7 @@ describe('errors.wrap options (Node, no-network)', () => {
       throw new Error('Async error');
     };
 
-    const wrapped = serviceInstrument.errors.wrap(failingAsync, { name: 'asyncOp', retry: 1 });
+    const wrapped = serviceInstrument.errors.wrap(failingAsync as (...args: unknown[]) => unknown, { name: 'asyncOp', retry: 1 }) as typeof failingAsync;
 
     try {
       await wrapped('secret456');

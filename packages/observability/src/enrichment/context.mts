@@ -30,12 +30,20 @@ export interface Breadcrumb {
 }
 
 /**
- * Configuration for ID generation customization
+ * Configuration for ID generation customization.
+ *
+ * Default generators return plain UUIDs for maximum portability.
+ * Provide custom generators to add prefixes, timestamps, or formats
+ * that match your existing infrastructure (AWS X-Ray, Jaeger, etc.).
  */
 export interface IDGeneratorOptions {
   /**
    * Custom session ID generator function.
-   * If not provided, defaults to library's built-in generator.
+   * If not provided, defaults to plain UUID for portability.
+   *
+   * @example
+   * // Add session prefix if your infrastructure expects it
+   * generateSessionId: () => `session_${crypto.randomUUID()}`
    *
    * @example
    * // AWS X-Ray trace ID format
@@ -56,11 +64,11 @@ export interface IDGeneratorOptions {
 
   /**
    * Custom request ID generator function.
-   * If not provided, defaults to library's built-in generator.
+   * If not provided, defaults to plain UUID for portability.
    *
    * @example
-   * // Standard UUID v4
-   * generateRequestId: () => crypto.randomUUID()
+   * // Add request prefix if your infrastructure expects it
+   * generateRequestId: () => `req_${crypto.randomUUID()}`
    *
    * @example
    * // Kubernetes pod-scoped IDs
@@ -286,6 +294,18 @@ export class ContextEnricher {
   }
 
   /**
+   * Set a core context field (release, version, environment)
+   * Unlike addTag, this updates the canonical context properties used by getContext() and getLabels()
+   */
+  setContextField(key: "release" | "version" | "environment", value: string): void {
+    if (key === "environment") {
+      this.context.environment = value as "production" | "staging" | "development" | "test";
+    } else {
+      this.context[key] = value;
+    }
+  }
+
+  /**
    * Add a tag
    */
   addTag(key: string, value: string): void {
@@ -477,37 +497,65 @@ export class ContextEnricher {
 
   /**
    * Default session ID generator (private implementation detail)
-   * Format: session_{timestamp}_{uuid}
+   * Returns a plain UUID for maximum portability across infrastructure.
+   * Consumers can provide custom generators with prefixes if needed.
+   *
+   * API Boundary Fix - Issue L1: removed 'session_' prefix from defaults
+   * to avoid conflicts with existing infrastructure ID formats.
    */
   private defaultSessionIdGenerator(): string {
-    const uniqueId = this.generateUniqueId();
-    return `session_${Date.now()}_${uniqueId}`;
+    return this.generateUniqueId();
   }
 
   /**
    * Default request ID generator (private implementation detail)
-   * Format: req_{timestamp}_{uuid}
+   * Returns a plain UUID for maximum portability across infrastructure.
+   * Consumers can provide custom generators with prefixes if needed.
+   *
+   * API Boundary Fix - Issue L1: removed 'req_' prefix from defaults
+   * to avoid conflicts with existing infrastructure ID formats.
    */
   private defaultRequestIdGenerator(): string {
-    const uniqueId = this.generateUniqueId();
-    return `req_${Date.now()}_${uniqueId}`;
+    return this.generateUniqueId();
   }
 
   /**
    * Generate a cryptographically secure unique ID when available
    * Uses crypto.randomUUID() when available, otherwise falls back to
-   * timestamp + counter for better uniqueness than Math.random()
+   * timestamp + counter + random for better uniqueness
+   *
+   * Doc 4 M5 Fix: fallback format is `timestamp-counter-random` (all base36)
    */
   private generateUniqueId(): string {
-    // Try browser crypto API first
+    // Try browser/Node crypto.randomUUID first (best option)
     if (typeof crypto !== "undefined" && crypto.randomUUID) {
       return crypto.randomUUID();
     }
 
-    // Fallback to timestamp + counter for better uniqueness than Math.random()
+    // Doc 4 M5 Fix: improved fallback with counter wrap and randomness
+    // Format: timestamp-counter-random (all base36, 3 segments)
     const timestamp = Date.now().toString(36);
-    const counter = (ContextEnricher.idCounter++).toString(36).padStart(4, '0');
-    return `${timestamp}-${counter}`;
+    // Wrap counter at 36^4 (1,679,616) to keep consistent format
+    const counter = (ContextEnricher.idCounter++ % 1679616).toString(36).padStart(4, "0");
+    // Codex review: prefer crypto.getRandomValues over Math.random when available
+    const random = this.generateRandomComponent();
+    return `${timestamp}-${counter}-${random}`;
+  }
+
+  /**
+   * Generate a random component for fallback IDs
+   * Codex review: use crypto.getRandomValues when available for better entropy
+   */
+  private generateRandomComponent(): string {
+    // Try crypto.getRandomValues first (available in most browsers even without randomUUID)
+    if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+      const array = new Uint32Array(1);
+      crypto.getRandomValues(array);
+      // Use modulo to get value in range, then format as base36
+      return (array[0]! % 1679616).toString(36).padStart(4, "0");
+    }
+    // Final fallback to Math.random
+    return Math.floor(Math.random() * 1679616).toString(36).padStart(4, "0");
   }
 }
 
@@ -561,6 +609,7 @@ export function mergeBusinessContext(additional: SmartContext): SmartContext {
 
 
 // Default context enricher for fail-safe operation
+// This is the single source of truth - client will adopt this instance
 let defaultContextEnricher: ContextEnricher | null = null;
 
 /**
@@ -578,6 +627,42 @@ export function getGlobalContext(): ContextEnricher {
     return defaultContextEnricher;
   }
   return client.getContextEnricher();
+}
+
+/**
+ * Get or create the default context enricher for adoption by client
+ * This ensures data added before client initialization is preserved
+ * @see ARCHITECTURE_MULTI_MODEL_REVIEW.md - Issue C3 resolution
+ */
+export function getOrCreateDefaultEnricher(
+  initialContext?: Partial<ApplicationContext>,
+  options?: {
+    maxBreadcrumbs?: number;
+    maxTags?: number;
+    maxExtraFields?: number;
+    sanitizerOptions?: SanitizerOptions;
+    idGenerator?: IDGeneratorOptions;
+  },
+): ContextEnricher {
+  if (!defaultContextEnricher) {
+    defaultContextEnricher = new ContextEnricher(initialContext, options);
+  } else if (initialContext) {
+    // update existing enricher's core context fields with new config if provided
+    // preserves any data already added (breadcrumbs, user, tags)
+    // uses setContextField to update the canonical context properties (not just tags)
+    if (initialContext.release) defaultContextEnricher.setContextField("release", initialContext.release);
+    if (initialContext.version) defaultContextEnricher.setContextField("version", initialContext.version);
+    if (initialContext.environment) defaultContextEnricher.setContextField("environment", initialContext.environment);
+  }
+  return defaultContextEnricher;
+}
+
+/**
+ * Set the default enricher (called when client adopts it)
+ * This allows the client to become the owner while preserving existing data
+ */
+export function setDefaultEnricher(enricher: ContextEnricher): void {
+  defaultContextEnricher = enricher;
 }
 
 /**

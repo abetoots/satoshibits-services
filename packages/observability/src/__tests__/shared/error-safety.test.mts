@@ -54,7 +54,7 @@ describe("Fail-Safe Fallbacks", () => {
       // initialize client first
       client = await SmartClient.initialize({
         serviceName: "test-context-safety",
-        environment: "test",
+        environment: "node",
         disableInstrumentation: true,
       });
 
@@ -122,7 +122,7 @@ describe("Fail-Safe Fallbacks", () => {
       // initialize client first
       client = await SmartClient.initialize({
         serviceName: "test-sanitizer-safety",
-        environment: "test",
+        environment: "node",
         disableInstrumentation: true,
       });
 
@@ -174,7 +174,7 @@ describe("Fail-Safe Fallbacks", () => {
       // initialize
       client = await SmartClient.initialize({
         serviceName: "test-consistency",
-        environment: "test",
+        environment: "node",
         disableInstrumentation: true,
       });
 

@@ -42,8 +42,8 @@ function assertMockCompatibility(): void {
   const _logsInfo: typeof mock.logs.info = mock.logs.info;
   const _logsWarn: typeof mock.logs.warn = mock.logs.warn;
   const _logsError: typeof mock.logs.error = mock.logs.error;
-  const _logsCreateLogger: typeof mock.logs.createLogger =
-    mock.logs.createLogger;
+  const _logsCreateErrorReporter: typeof mock.logs.createErrorReporter =
+    mock.logs.createErrorReporter;
 
   // Errors API compatibility
   const _errorsCapture: typeof mock.errors.capture = mock.errors.capture;
@@ -86,7 +86,7 @@ function assertMockCompatibility(): void {
   void _logsInfo;
   void _logsWarn;
   void _logsError;
-  void _logsCreateLogger;
+  void _logsCreateErrorReporter;
   void _errorsCapture;
   void _errorsRecord;
   void _errorsRecordResult;

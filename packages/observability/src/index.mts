@@ -34,8 +34,13 @@ import {
  * and business context enrichment out of the box.
  */
 
-// Re-export the singleton accessor for use by global helpers and external code
-export { getUnifiedClientInstance } from "./client-instance.mjs";
+// Re-export instance management for use by global helpers and external code
+// API Boundary Fix - Issue #4: Micro-Frontend Compatibility
+export {
+  getUnifiedClientInstance,
+  getAllInstances,
+  getInstanceCount,
+} from "./client-instance.mjs";
 
 /**
  * Convenience function to initialize observability and return the unified client (ASYNC)

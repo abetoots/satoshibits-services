@@ -20,6 +20,7 @@ import {
   createSanitizer,
   DataSanitizer,
   SanitizerManager,
+  BUILT_IN_SENSITIVE_FIELD_PATTERNS,
 } from "../../enrichment/sanitizer.mjs";
 import { SmartClient } from "../../index.mjs";
 import {
@@ -121,13 +122,112 @@ describe("Data Sanitization - Shared Functionality", () => {
       expect(result).not.toContain("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9");
     });
 
-    it("Should mask long alphanumeric keys in strict mode", () => {
+    it("Should mask API keys with known prefixes in strict mode (Doc 4 L2 Fix)", () => {
       const strictSanitizer = new DataSanitizer({ strictMode: true });
-      const input = "API Key: abcd1234567890123456789012345678";
+      // Doc 4 L2 Fix: use realistic API key format (sk_test_ prefix)
+      // Old pattern matched any 32+ char alphanumeric (too aggressive, caught hashes/UUIDs)
+      const input = "API Key: sk_test_4eC39HqLyjWDarjtT1zdp7dc";
       const result = strictSanitizer.sanitize(input);
 
       expect(result).toBe("API Key: [REDACTED]");
-      expect(result).not.toContain("abcd1234567890123456789012345678");
+      expect(result).not.toContain("sk_test_4eC39HqLyjWDarjtT1zdp7dc");
+    });
+
+    it("Should NOT mask plain hashes in strict mode (Doc 4 L2 Fix)", () => {
+      const strictSanitizer = new DataSanitizer({ strictMode: true });
+      // Doc 4 L2 Fix: plain alphanumeric strings (like hashes) should NOT be masked
+      const input = "Hash: abcd1234567890123456789012345678";
+      const result = strictSanitizer.sanitize(input);
+
+      // Plain 32-char alphanumeric should NOT be masked (could be hash, UUID, etc.)
+      expect(result).toContain("abcd1234567890123456789012345678");
+    });
+
+    // Doc 4 L2 Fix: comprehensive API key pattern coverage
+    describe("API Key Pattern Coverage (Doc 4 L2 Fix)", () => {
+      const strictSanitizer = new DataSanitizer({ strictMode: true });
+
+      it("Should mask AWS access keys (AKIA prefix)", () => {
+        const input = "AWS Key: AKIAIOSFODNN7EXAMPLE";
+        const result = strictSanitizer.sanitize(input);
+        expect(result).toBe("AWS Key: [REDACTED]");
+      });
+
+      it("Should mask AWS temporary credentials (ASIA prefix)", () => {
+        // AWS STS keys are exactly 20 characters: ASIA (4) + 16 alphanumeric
+        const input = "STS Key: ASIAJEXAMPLEXEG2JICE";
+        const result = strictSanitizer.sanitize(input);
+        expect(result).toBe("STS Key: [REDACTED]");
+      });
+
+      it("Should mask Google API keys (AIza prefix)", () => {
+        const input = "Google Key: AIzaSyDaGmWKa4JsXZ-HjGw7ISLn_3namBGewQe";
+        const result = strictSanitizer.sanitize(input);
+        expect(result).toBe("Google Key: [REDACTED]");
+      });
+
+      it("Should mask GitHub personal access tokens (ghp_ prefix)", () => {
+        const input = "GitHub Token: ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+        const result = strictSanitizer.sanitize(input);
+        expect(result).toBe("GitHub Token: [REDACTED]");
+      });
+
+      it("Should mask GitHub fine-grained tokens (github_pat_ prefix)", () => {
+        const input = "GitHub PAT: github_pat_11AXXXXXX_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+        const result = strictSanitizer.sanitize(input);
+        expect(result).toBe("GitHub PAT: [REDACTED]");
+      });
+
+      it("Should mask Slack bot tokens (xoxb prefix)", () => {
+        const input = "Slack Bot: xoxb-123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx";
+        const result = strictSanitizer.sanitize(input);
+        expect(result).toBe("Slack Bot: [REDACTED]");
+      });
+
+      it("Should mask Slack user tokens (xoxp prefix)", () => {
+        const input = "Slack User: xoxp-123456789012-1234567890123-1234567890123-abcdef";
+        const result = strictSanitizer.sanitize(input);
+        expect(result).toBe("Slack User: [REDACTED]");
+      });
+
+      it("Should mask SendGrid API keys (SG. prefix)", () => {
+        const input = "SendGrid: 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";
+        const result = strictSanitizer.sanitize(input);
+        expect(result).toBe("SendGrid: [REDACTED]");
+      });
+
+      it("Should mask OpenAI API keys (sk-proj prefix)", () => {
+        const input = "OpenAI: sk-proj-xxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+        const result = strictSanitizer.sanitize(input);
+        expect(result).toBe("OpenAI: [REDACTED]");
+      });
+
+      it("Should mask Anthropic API keys (sk-ant prefix)", () => {
+        const input = "Anthropic: sk-ant-api03-xxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+        const result = strictSanitizer.sanitize(input);
+        expect(result).toBe("Anthropic: [REDACTED]");
+      });
+
+      it("Should mask Stripe live keys (sk_live prefix)", () => {
+        const input = "Stripe: sk_live_4eC39HqLyjWDarjtT1zdp7dc";
+        const result = strictSanitizer.sanitize(input);
+        expect(result).toBe("Stripe: [REDACTED]");
+      });
+
+      it("Should mask generic prefixed tokens (api_, key_, token_, secret_)", () => {
+        const cases = [
+          { input: "api_1234567890abcdef1234567890abcdef", name: "api_" },
+          { input: "key_1234567890abcdef1234567890abcdef", name: "key_" },
+          { input: "token_1234567890abcdef1234567890abcdef", name: "token_" },
+          { input: "secret_1234567890abcdef1234567890abcdef", name: "secret_" },
+          { input: "auth_1234567890abcdef1234567890abcdef", name: "auth_" },
+          { input: "bearer_1234567890abcdef1234567890abcdef", name: "bearer_" },
+        ];
+        for (const { input, name } of cases) {
+          const result = strictSanitizer.sanitize(`Token: ${input}`);
+          expect(result).toBe("Token: [REDACTED]");
+        }
+      });
     });
 
     it("Should not mask API keys in normal mode", () => {
@@ -457,9 +557,9 @@ describe("Data Sanitization - Shared Functionality", () => {
         }
       });
 
-      it("should handle circular references within arrays without crashing", () => {
-        // note: arrays with circular references currently recurse until depth limit
-        // (unlike objects, which use WeakSet tracking). this test verifies fail-safe behavior.
+      it("should handle circular references within arrays (Doc 4 C2 Fix)", () => {
+        // Doc 4 C2 Fix: Arrays are now tracked in visitedObjects to detect circular references
+        // (same as objects). Previously, circular arrays would recurse until depth limit.
         const arr: { id: number }[] = [{ id: 1 }];
         //@ts-expect-error -- adding circular reference for test
         arr.push(arr); // arr[1] is reference to arr itself
@@ -472,8 +572,72 @@ describe("Data Sanitization - Shared Functionality", () => {
         if (isSanitizedArray(result) && isSanitizedObject(result[0])) {
           // first element should be sanitized correctly
           expect(result[0]).toEqual({ id: 1 });
-          // second element will be deeply nested until depth limit (current behavior)
-          expect(Array.isArray(result[1])).toBe(true);
+          // Doc 4 C2 Fix: circular array reference should now be marked as [CIRCULAR]
+          expect(result[1]).toBe("[CIRCULAR]");
+        }
+      });
+
+      it("should handle self-referencing array (Doc 4 C2 regression test)", () => {
+        // Direct regression test: array that contains only itself
+        const selfRef: unknown[] = [];
+        selfRef.push(selfRef);
+
+        expect(() => sanitizer.sanitize(selfRef)).not.toThrow();
+
+        const result = sanitizer.sanitize(selfRef);
+        if (isSanitizedArray(result)) {
+          expect(result[0]).toBe("[CIRCULAR]");
+        }
+      });
+
+      it("should handle mixed array/object cycles (Doc 4 C2 edge case)", () => {
+        // edge case: cycle crosses array/object boundary
+        const arr: unknown[] = [];
+        const obj = { arr };
+        arr.push(obj);
+
+        expect(() => sanitizer.sanitize(arr)).not.toThrow();
+        expect(() => sanitizer.sanitize(obj)).not.toThrow();
+
+        // sanitizing from arr: arr -> obj -> arr (circular)
+        const resultFromArr = sanitizer.sanitize(arr);
+        if (
+          isSanitizedArray(resultFromArr) &&
+          isSanitizedObject(resultFromArr[0])
+        ) {
+          expect(resultFromArr[0].arr).toBe("[CIRCULAR]");
+        }
+
+        // sanitizing from obj: obj -> arr -> obj (circular)
+        const resultFromObj = sanitizer.sanitize(obj);
+        if (
+          isSanitizedObject(resultFromObj) &&
+          isSanitizedArray(resultFromObj.arr)
+        ) {
+          expect(resultFromObj.arr[0]).toBe("[CIRCULAR]");
+        }
+      });
+
+      it("should handle mutually-referential arrays (Doc 4 C2 edge case)", () => {
+        // edge case: two arrays referencing each other
+        const a: unknown[] = [];
+        const b: unknown[] = [];
+        a.push(b);
+        b.push(a);
+
+        expect(() => sanitizer.sanitize(a)).not.toThrow();
+        expect(() => sanitizer.sanitize(b)).not.toThrow();
+
+        // sanitizing a: a -> b -> a (circular)
+        const resultA = sanitizer.sanitize(a);
+        if (isSanitizedArray(resultA) && isSanitizedArray(resultA[0])) {
+          expect(resultA[0][0]).toBe("[CIRCULAR]");
+        }
+
+        // sanitizing b: b -> a -> b (circular)
+        const resultB = sanitizer.sanitize(b);
+        if (isSanitizedArray(resultB) && isSanitizedArray(resultB[0])) {
+          expect(resultB[0][0]).toBe("[CIRCULAR]");
         }
       });
 
@@ -636,6 +800,22 @@ describe("Data Sanitization - Shared Functionality", () => {
       const result = customSanitizer.sanitize(input);
 
       expect(result).toBe("Reference: [CUSTOM_REDACTED] and [CUSTOM_REDACTED]");
+    });
+
+    it("Should replace all matches even when custom pattern lacks 'g' flag (Doc 4 M1 Fix)", () => {
+      // this test verifies that patterns without the global flag still replace ALL matches
+      const customSanitizer = new DataSanitizer({
+        customPatterns: [
+          // intentionally omit 'g' flag - fix should still replace all matches
+          { pattern: /secret/i, replacement: "[SECRET]" },
+        ],
+      });
+
+      const input = "secret data with SECRET info and another secret value";
+      const result = customSanitizer.sanitize(input);
+
+      // all three occurrences should be replaced, not just the first
+      expect(result).toBe("[SECRET] data with [SECRET] info and another [SECRET] value");
     });
 
     it("Should handle strict mode for additional patterns", () => {
@@ -1317,6 +1497,135 @@ describe("Data Sanitization - Shared Functionality", () => {
 
       expect(context).toBe(explicitContext);
       expect(contextProvider).not.toHaveBeenCalled();
+    });
+  });
+});
+
+/**
+ * excludeBuiltInPatterns Tests - API Boundary Fix L2
+ *
+ * Tests for the new pattern exclusion feature that allows consumers
+ * to reduce false positives from built-in sensitive field patterns.
+ */
+describe("Pattern Exclusion (L2 API Boundary Fix)", () => {
+  describe("BUILT_IN_SENSITIVE_FIELD_PATTERNS export", () => {
+    it("should export the built-in patterns array", () => {
+      expect(BUILT_IN_SENSITIVE_FIELD_PATTERNS).toBeDefined();
+      expect(Array.isArray(BUILT_IN_SENSITIVE_FIELD_PATTERNS)).toBe(true);
+      expect(BUILT_IN_SENSITIVE_FIELD_PATTERNS.length).toBeGreaterThan(0);
+    });
+
+    it("should include common sensitive patterns", () => {
+      // check a few known patterns are present
+      const patternSources = BUILT_IN_SENSITIVE_FIELD_PATTERNS.map(p => p.source);
+      expect(patternSources).toContain("password");
+      expect(patternSources).toContain("token");
+      expect(patternSources).toContain("address");
+    });
+  });
+
+  describe("excludeBuiltInPatterns option", () => {
+    it("should allow excluding specific patterns (address false positive fix)", () => {
+      // the 'address' pattern matches 'ip_address', causing false positive
+      const sanitizerWithoutExclusion = new DataSanitizer();
+      const sanitizerWithExclusion = new DataSanitizer({
+        excludeBuiltInPatterns: [/address/i],
+      });
+
+      // without exclusion, 'ip_address' field should be redacted
+      expect(sanitizerWithoutExclusion.shouldRedactField("ip_address")).toBe(true);
+      expect(sanitizerWithoutExclusion.shouldRedactField("home_address")).toBe(true);
+
+      // with exclusion, 'ip_address' and 'home_address' should NOT be redacted
+      expect(sanitizerWithExclusion.shouldRedactField("ip_address")).toBe(false);
+      expect(sanitizerWithExclusion.shouldRedactField("home_address")).toBe(false);
+
+      // but password should still be redacted
+      expect(sanitizerWithExclusion.shouldRedactField("password")).toBe(true);
+    });
+
+    it("should allow excluding cell pattern (cell_count false positive fix)", () => {
+      const sanitizer = new DataSanitizer({
+        excludeBuiltInPatterns: [/cell/i],
+      });
+
+      // 'cell' pattern no longer matches
+      expect(sanitizer.shouldRedactField("cell_count")).toBe(false);
+      expect(sanitizer.shouldRedactField("grid_cell")).toBe(false);
+
+      // but other patterns still work
+      expect(sanitizer.shouldRedactField("password")).toBe(true);
+      expect(sanitizer.shouldRedactField("api_key")).toBe(true);
+    });
+
+    it("should allow excluding multiple patterns", () => {
+      const sanitizer = new DataSanitizer({
+        excludeBuiltInPatterns: [/address/i, /cell/i, /phone/i, /mobile/i],
+      });
+
+      // excluded patterns don't match
+      expect(sanitizer.shouldRedactField("ip_address")).toBe(false);
+      expect(sanitizer.shouldRedactField("cell_count")).toBe(false);
+      expect(sanitizer.shouldRedactField("phone_number")).toBe(false);
+      expect(sanitizer.shouldRedactField("mobile_device")).toBe(false);
+
+      // security patterns still work
+      expect(sanitizer.shouldRedactField("password")).toBe(true);
+      expect(sanitizer.shouldRedactField("secret")).toBe(true);
+      expect(sanitizer.shouldRedactField("api_key")).toBe(true);
+    });
+
+    it("should keep all patterns when excludeBuiltInPatterns is empty", () => {
+      const sanitizer = new DataSanitizer({
+        excludeBuiltInPatterns: [],
+      });
+
+      // all patterns should still match
+      expect(sanitizer.shouldRedactField("password")).toBe(true);
+      expect(sanitizer.shouldRedactField("ip_address")).toBe(true);
+      expect(sanitizer.shouldRedactField("cell_phone")).toBe(true);
+    });
+
+    it("should work with customRedactFields", () => {
+      const sanitizer = new DataSanitizer({
+        excludeBuiltInPatterns: [/address/i],
+        customRedactFields: ["custom_secret"],
+      });
+
+      // excluded pattern no longer matches
+      expect(sanitizer.shouldRedactField("email_address")).toBe(false);
+
+      // custom field still works
+      expect(sanitizer.shouldRedactField("custom_secret")).toBe(true);
+
+      // built-in patterns still work
+      expect(sanitizer.shouldRedactField("password")).toBe(true);
+    });
+
+    it("should allow keeping only auth patterns", () => {
+      // keep only authentication-related patterns
+      const authPatterns = [/password/i, /passwd/i, /pwd/i, /secret/i, /token/i, /api[_-]?key/i, /apikey/i, /auth/i, /credential/i, /private[_-]?key/i];
+      const authPatternSources = new Set(authPatterns.map(p => p.source + '|' + p.flags));
+
+      // exclude everything except auth patterns
+      const excludePatterns = BUILT_IN_SENSITIVE_FIELD_PATTERNS.filter(
+        p => !authPatternSources.has(p.source + '|' + p.flags)
+      );
+
+      const sanitizer = new DataSanitizer({
+        excludeBuiltInPatterns: excludePatterns,
+      });
+
+      // auth patterns should still work
+      expect(sanitizer.shouldRedactField("password")).toBe(true);
+      expect(sanitizer.shouldRedactField("api_key")).toBe(true);
+      expect(sanitizer.shouldRedactField("secret")).toBe(true);
+
+      // PII patterns should NOT work (excluded)
+      expect(sanitizer.shouldRedactField("ssn")).toBe(false);
+      expect(sanitizer.shouldRedactField("address")).toBe(false);
+      expect(sanitizer.shouldRedactField("phone")).toBe(false);
+      expect(sanitizer.shouldRedactField("credit_card")).toBe(false);
     });
   });
 });

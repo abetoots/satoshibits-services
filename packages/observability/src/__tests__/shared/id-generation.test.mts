@@ -2,19 +2,28 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { ContextEnricher } from '../../enrichment/context.mjs';
 
 describe('ID Generation Configuration (Issue #10)', () => {
-  describe('Default ID generation', () => {
-    it('should generate session IDs with default format', () => {
+  // uuid regex for crypto.randomUUID() format
+  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  // Doc 4 M5 Fix: fallback format is now timestamp-counter-random (3 segments, all base36)
+  // Format: [timestamp]-[counter 4 chars]-[random 4 chars]
+  const FALLBACK_ID_REGEX = /^[0-9a-z]+-[0-9a-z]{4}-[0-9a-z]{4}$/;
+
+  describe('Default ID generation (L1 fix: plain UUIDs for portability)', () => {
+    it('should generate session IDs as plain UUIDs (no prefix)', () => {
       const enricher = new ContextEnricher();
       const context = enricher.getContext();
 
-      expect(context.sessionId).toMatch(/^session_\d+_/);
+      // L1 fix: defaults now return plain UUID for portability
+      // accepts both crypto.randomUUID format and fallback format
+      expect(context.sessionId).toMatch(UUID_REGEX.test(context.sessionId!) ? UUID_REGEX : FALLBACK_ID_REGEX);
     });
 
-    it('should generate request IDs with default format', () => {
+    it('should generate request IDs as plain UUIDs (no prefix)', () => {
       const enricher = new ContextEnricher();
       const context = enricher.getContext();
 
-      expect(context.requestId).toMatch(/^req_\d+_/);
+      // L1 fix: defaults now return plain UUID for portability
+      expect(context.requestId).toMatch(UUID_REGEX.test(context.requestId!) ? UUID_REGEX : FALLBACK_ID_REGEX);
     });
 
     it('should generate unique session IDs for each instance', () => {
@@ -193,12 +202,13 @@ describe('ID Generation Configuration (Issue #10)', () => {
       const enricher = new ContextEnricher();
 
       const initialSessionId = enricher.getContext().sessionId;
-      expect(initialSessionId).toMatch(/^session_\d+_/);
+      // L1 fix: defaults now return plain UUID for portability
+      expect(initialSessionId).toMatch(UUID_REGEX.test(initialSessionId!) ? UUID_REGEX : FALLBACK_ID_REGEX);
 
       enricher.resetSession();
 
       const newSessionId = enricher.getContext().sessionId;
-      expect(newSessionId).toMatch(/^session_\d+_/);
+      expect(newSessionId).toMatch(UUID_REGEX.test(newSessionId!) ? UUID_REGEX : FALLBACK_ID_REGEX);
       expect(newSessionId).not.toBe(initialSessionId);
     });
   });
@@ -298,7 +308,7 @@ describe('ID Generation Configuration (Issue #10)', () => {
 
     it('should support regulatory compliance with audit-friendly IDs', () => {
       const generateAuditId = () => {
-        const date = new Date().toISOString().split('T')[0].replace(/-/g, '');
+        const date = new Date().toISOString().split('T')[0]!.replace(/-/g, '');
         const sequence = Math.random().toString(36).substring(2, 10).toUpperCase();
         return `AUDIT-${date}-${sequence}`;
       };

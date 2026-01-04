@@ -178,20 +178,20 @@ describe("Logging API - Shared Functionality", () => {
     });
   });
 
-  describe("Logger Factory", () => {
-    it("Should create scoped logger", () => {
-      const scopedLogger = client.logs.createLogger("payment-service");
+  describe("Error Reporter Factory", () => {
+    it("Should create scoped error reporter", () => {
+      const scopedReporter = client.logs.createErrorReporter("payment-service");
 
-      expect(scopedLogger).toBeDefined();
-      expect(typeof scopedLogger.report).toBe("function");
-      expect(typeof scopedLogger.reportResult).toBe("function");
+      expect(scopedReporter).toBeDefined();
+      expect(typeof scopedReporter.report).toBe("function");
+      expect(typeof scopedReporter.reportResult).toBe("function");
     });
 
-    it("Should report errors through scoped logger", () => {
-      const paymentLogger = client.logs.createLogger("payment-service");
+    it("Should report errors through scoped reporter", () => {
+      const paymentReporter = client.logs.createErrorReporter("payment-service");
       const paymentError = new Error("Credit card declined");
 
-      paymentLogger.report(paymentError, { cardType: "visa", amount: 150.0 });
+      paymentReporter.report(paymentError, { cardType: "visa", amount: 150.0 });
 
       const errors = client.errors.getRecorded();
       expect(errors).toHaveLength(1);
@@ -203,8 +203,8 @@ describe("Logging API - Shared Functionality", () => {
       });
     });
 
-    it("Should report result errors through scoped logger", () => {
-      const authLogger = client.logs.createLogger("auth-service");
+    it("Should report result errors through scoped reporter", () => {
+      const authReporter = client.logs.createErrorReporter("auth-service");
 
       // Mock a failed result
       const failedResult = {
@@ -212,7 +212,7 @@ describe("Logging API - Shared Functionality", () => {
         error: new Error("Invalid credentials"),
       };
 
-      authLogger.reportResult(failedResult, {
+      authReporter.reportResult(failedResult, {
         attemptCount: 3,
         ip: "192.168.1.1",
       });
@@ -228,7 +228,7 @@ describe("Logging API - Shared Functionality", () => {
     });
 
     it("Should not report successful results", () => {
-      const userLogger = client.logs.createLogger("user-service");
+      const userReporter = client.logs.createErrorReporter("user-service");
 
       // Mock a successful result
       const successResult = {
@@ -236,7 +236,7 @@ describe("Logging API - Shared Functionality", () => {
         value: { id: "123", name: "John Doe" },
       };
 
-      userLogger.reportResult(successResult, { operation: "getUserById" });
+      userReporter.reportResult(successResult, { operation: "getUserById" });
 
       const errors = client.errors.getRecorded();
       expect(errors).toHaveLength(0);
@@ -374,8 +374,8 @@ describe("Logging API - Shared Functionality", () => {
       const breadcrumbs = client.context.business.getBreadcrumbs();
 
       expect(user?.id).toBe("user_789");
-      expect(tags[0].key).toBe("environment");
-      expect(breadcrumbs[0].message).toBe("User navigation");
+      expect(tags[0]!.key).toBe("environment");
+      expect(breadcrumbs[0]!.message).toBe("User navigation");
     });
 
     it("Should maintain consistent logging across context changes", () => {
@@ -396,7 +396,7 @@ describe("Logging API - Shared Functionality", () => {
       expect(logs[0]?.message).toBe("Request started");
       expect(logs[1]?.message).toBe("User context established");
       expect(logs[2]?.message).toBe("Processing user data");
-      expect(logs[3].message).toBe("Request completed");
+      expect(logs[3]!.message).toBe("Request completed");
     });
   });
 
@@ -482,9 +482,10 @@ describe("Logging API - Shared Functionality", () => {
       });
 
       const logs = client.logs.getRecorded();
-      expect(logs[0]?.attributes?.user?.id).toBe("123");
-      expect(logs[0]?.attributes?.user?.profile?.name).toBe("John Doe");
-      expect(logs[0]?.attributes?.metadata?.version).toBe("1.0.0");
+      const attrs = logs[0]?.attributes as { user?: { id?: string; profile?: { name?: string } }; metadata?: { version?: string } } | undefined;
+      expect(attrs?.user?.id).toBe("123");
+      expect(attrs?.user?.profile?.name).toBe("John Doe");
+      expect(attrs?.metadata?.version).toBe("1.0.0");
     });
   });
 

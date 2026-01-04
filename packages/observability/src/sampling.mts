@@ -21,59 +21,14 @@ import {
 
 import { getBusinessContext } from "./enrichment/context.mjs";
 
-/**
- * Adaptive sampling configuration for AdaptiveSampler
- * @internal - Not part of public API, kept for future use
- */
-interface AdaptiveSamplerConfig {
-  /** time window for resetting counters in milliseconds (default: 60000 = 1 minute) */
-  resetInterval?: number;
-  /** requests per minute threshold for "high traffic" (default: 1000) */
-  highTrafficThreshold?: number;
-  /** error rate threshold for increased sampling (default: 0.1 = 10%) */
-  highErrorRateThreshold?: number;
-  /** multiplier for base rate during high traffic (default: 0.1 = 10x reduction) */
-  highTrafficRateMultiplier?: number;
-  /**
-   * Custom function to control adaptive behavior completely.
-   *
-   * **Performance Note:** This function is on a hot path and will be invoked for every span.
-   * Keep it fast and avoid expensive operations.
-   *
-   * Return null to use standard adaptive behavior, or return an object to override:
-   * - shouldReduce: whether to reduce sampling rate
-   * - reducedRate: the rate to use (0.0 to 1.0)
-   * - reason: optional reason for telemetry (added to sampling.reason attribute)
-   *
-   * @example
-   * // Only adapt during business hours
-   * customAdaptation: (stats) => {
-   *   const hour = new Date().getHours();
-   *   if (hour >= 9 && hour <= 17 && stats.requestsPerMinute > 100) {
-   *     return {
-   *       shouldReduce: true,
-   *       reducedRate: stats.baseRate * 0.5,
-   *       reason: 'business_hours_adaptation'
-   *     };
-   *   }
-   *   return null; // use standard behavior
-   * }
-   */
-  customAdaptation?: (stats: {
-    requestCount: number;
-    errorCount: number;
-    errorRate: number;
-    requestsPerMinute: number;
-    baseRate: number;
-  }) => { shouldReduce: boolean; reducedRate: number; reason?: string } | null;
-}
+// [H3] Removed AdaptiveSamplerConfig interface - was used by removed AdaptiveSampler
 
 /**
  * Sampling configuration
  *
  * Public API includes commonly-used options for simple sampling strategies.
- * Advanced features (tier-based, operation-based, adaptive sampling) are
- * available internally but not exposed to prevent API bloat.
+ * Advanced features (tier-based, operation-based sampling) are available
+ * internally but not exposed to prevent API bloat.
  */
 export interface SmartSamplerConfig {
   /** base sampling rate for normal operations (0.0 to 1.0, default: 0.1) */
@@ -95,8 +50,7 @@ export interface SmartSamplerConfig {
  * @internal - Not part of public API, used internally by SmartSampler
  */
 interface InternalSamplerConfig extends SmartSamplerConfig {
-  /** type of sampler to use (default: 'smart') */
-  type?: "smart" | "adaptive";
+  // [H3] Removed type?: "smart" | "adaptive" - AdaptiveSampler was removed
   /** sampling rates per customer tier */
   tierRates?: {
     free?: number;
@@ -114,8 +68,7 @@ interface InternalSamplerConfig extends SmartSamplerConfig {
     attributes: Attributes;
     businessContext: Record<string, unknown>;
   }) => boolean;
-  /** adaptive sampling configuration (only used by AdaptiveSampler) */
-  adaptive?: AdaptiveSamplerConfig;
+  // [H3] Removed adaptive?: AdaptiveSamplerConfig - was used by removed AdaptiveSampler
 }
 
 /**
@@ -347,11 +300,15 @@ export class SmartSampler implements Sampler {
   protected hasError(attributes: Attributes): boolean {
     // check for error status
     if (attributes.error === true) return true;
-    if (
-      attributes["http.status_code"] &&
-      Number(attributes["http.status_code"]) >= 500
-    )
-      return true;
+    // Doc 4 L4 Fix: safe numeric coercion for http.status_code
+    // Codex review: use Number() not parseInt() to reject partial parses like "500foo"
+    const rawStatusCode = attributes["http.status_code"];
+    if (rawStatusCode !== undefined) {
+      const normalized =
+        typeof rawStatusCode === "string" ? rawStatusCode.trim() : rawStatusCode;
+      const statusCode = Number(normalized);
+      if (Number.isFinite(statusCode) && statusCode >= 500) return true;
+    }
     if (attributes["status.code"] === "ERROR") return true;
     if (attributes["exception.type"]) return true;
 
@@ -428,9 +385,23 @@ export class SmartSampler implements Sampler {
       hash = (hash << 5) - hash + traceId.charCodeAt(i);
       hash = hash & hash; // convert to 32-bit integer
     }
-    // convert to 0-1 range
-    return Math.abs(hash) / 0x7fffffff;
+    return normalizeHash(hash);
   }
+}
+
+/**
+ * Normalize a 32-bit signed integer hash to a value between 0 and 1.
+ *
+ * Doc 4 C1 Fix: Handle MIN_INT32 edge case where Math.abs(-2147483648) = 2147483648
+ * which exceeds 0x7fffffff (2147483647), producing a value > 1.0
+ *
+ * @internal Exported for testing purposes only - not part of the public API
+ * @param hash - 32-bit signed integer hash value
+ * @returns Normalized value in range [0, 1]
+ */
+export function normalizeHash(hash: number): number {
+  const absHash = hash === -2147483648 ? 2147483647 : Math.abs(hash);
+  return absHash / 0x7fffffff;
 }
 
 /**
@@ -440,218 +411,6 @@ export function createSmartSampler(config?: SmartSamplerConfig): SmartSampler {
   return new SmartSampler(config);
 }
 
-/**
- * Adaptive sampler that adjusts rates based on traffic
- *
- * @internal - Not part of stable public API. Exported only for testing.
- * @deprecated - Use SmartSampler instead. This may be re-introduced in future versions.
- */
-export class AdaptiveSampler extends SmartSampler {
-  private requestCount = 0;
-  private errorCount = 0;
-  private lastReset = Date.now();
-  private readonly resetInterval: number;
-  private readonly highTrafficThreshold: number;
-  private readonly highErrorRateThreshold: number;
-  private readonly highTrafficRateMultiplier: number;
-  private readonly customAdaptation?: AdaptiveSamplerConfig["customAdaptation"];
-
-  // performance optimizations: cache calculated rates
-  private cachedHighTrafficRate: number;
-
-  constructor(config: InternalSamplerConfig = {}) {
-    super(config);
-
-    // Default values for validation fallback
-    const DEFAULTS = {
-      RESET_INTERVAL: 60000,
-      HIGH_TRAFFIC_THRESHOLD: 1000,
-      HIGH_ERROR_RATE_THRESHOLD: 0.1,
-      HIGH_TRAFFIC_RATE_MULTIPLIER: 0.1,
-      MIN_RESET_INTERVAL: 1000, // 1 second minimum
-    };
-
-    // extract adaptive configuration with defaults
-    const adaptiveConfig = config.adaptive ?? {};
-    let resetInterval = adaptiveConfig.resetInterval ?? DEFAULTS.RESET_INTERVAL;
-    let highTrafficThreshold =
-      adaptiveConfig.highTrafficThreshold ?? DEFAULTS.HIGH_TRAFFIC_THRESHOLD;
-    let highErrorRateThreshold =
-      adaptiveConfig.highErrorRateThreshold ??
-      DEFAULTS.HIGH_ERROR_RATE_THRESHOLD;
-    let highTrafficRateMultiplier =
-      adaptiveConfig.highTrafficRateMultiplier ??
-      DEFAULTS.HIGH_TRAFFIC_RATE_MULTIPLIER;
-
-    // Validate adaptive configuration
-    if (resetInterval < DEFAULTS.MIN_RESET_INTERVAL) {
-      console.warn(
-        `Invalid resetInterval: ${resetInterval}. Must be >= ${DEFAULTS.MIN_RESET_INTERVAL}ms. Using default ${DEFAULTS.RESET_INTERVAL}ms.`,
-      );
-      resetInterval = DEFAULTS.RESET_INTERVAL;
-    }
-    if (highTrafficThreshold < 0) {
-      console.warn(
-        `Invalid highTrafficThreshold: ${highTrafficThreshold}. Must be non-negative. Using default ${DEFAULTS.HIGH_TRAFFIC_THRESHOLD}.`,
-      );
-      highTrafficThreshold = DEFAULTS.HIGH_TRAFFIC_THRESHOLD;
-    }
-    if (highErrorRateThreshold < 0 || highErrorRateThreshold > 1) {
-      console.warn(
-        `Invalid highErrorRateThreshold: ${highErrorRateThreshold}. Must be between 0 and 1. Using default ${DEFAULTS.HIGH_ERROR_RATE_THRESHOLD}.`,
-      );
-      highErrorRateThreshold = DEFAULTS.HIGH_ERROR_RATE_THRESHOLD;
-    }
-    if (highTrafficRateMultiplier < 0 || highTrafficRateMultiplier > 1) {
-      console.warn(
-        `Invalid highTrafficRateMultiplier: ${highTrafficRateMultiplier}. Must be between 0 and 1. Using default ${DEFAULTS.HIGH_TRAFFIC_RATE_MULTIPLIER}.`,
-      );
-      highTrafficRateMultiplier = DEFAULTS.HIGH_TRAFFIC_RATE_MULTIPLIER;
-    }
-
-    this.resetInterval = resetInterval;
-    this.highTrafficThreshold = highTrafficThreshold;
-    this.highErrorRateThreshold = highErrorRateThreshold;
-    this.highTrafficRateMultiplier = highTrafficRateMultiplier;
-    this.customAdaptation = adaptiveConfig.customAdaptation;
-
-    // pre-calculate the high traffic rate
-    this.cachedHighTrafficRate =
-      this.config.baseRate * this.highTrafficRateMultiplier;
-  }
-
-  shouldSample(
-    context: Context,
-    traceId: string,
-    spanName: string,
-    spanKind: SpanKind,
-    attributes: Attributes,
-    links: Link[],
-  ): SamplingResult {
-    // reset counters periodically
-    this.resetCountersIfNeeded();
-
-    // track request count
-    this.requestCount++;
-
-    // track error count
-    if (this.hasError(attributes)) {
-      this.errorCount++;
-    }
-
-    // calculate stats for adaptation decisions
-    const errorRate = this.errorCount / Math.max(this.requestCount, 1);
-    const elapsedMs = Date.now() - this.lastReset;
-    const requestsPerMinute =
-      elapsedMs > 0 ? this.requestCount / (elapsedMs / 60000) : 0;
-
-    // try custom adaptation callback first
-    if (this.customAdaptation) {
-      try {
-        const adaptationResult = this.customAdaptation({
-          requestCount: this.requestCount,
-          errorCount: this.errorCount,
-          errorRate,
-          requestsPerMinute,
-          baseRate: this.config.baseRate,
-        });
-
-        if (adaptationResult) {
-          // custom adaptation returned a result - use it
-          if (adaptationResult.shouldReduce) {
-            // reduce sampling - check if this trace should be sampled at reduced rate
-            if (
-              this.shouldSampleWithRate(adaptationResult.reducedRate, traceId)
-            ) {
-              return {
-                decision: SamplingDecision.RECORD_AND_SAMPLED,
-                attributes: {
-                  "sampling.reason":
-                    adaptationResult.reason ?? "custom_adaptation",
-                  "sampling.adaptive": true,
-                  "sampling.requests_per_minute": Math.round(requestsPerMinute),
-                },
-              };
-            } else {
-              return {
-                decision: SamplingDecision.NOT_RECORD,
-              };
-            }
-          } else {
-            // shouldReduce = false, fall through to parent sampler
-            return super.shouldSample(
-              context,
-              traceId,
-              spanName,
-              spanKind,
-              attributes,
-              links,
-            );
-          }
-        }
-        // customAdaptation returned null, fall through to standard behavior
-      } catch (error) {
-        console.error(
-          "[@satoshibits/observability] AdaptiveSampler: customAdaptation callback threw an error. " +
-            "Falling back to standard adaptive behavior. Error:",
-          error,
-        );
-        // fall through to standard behavior
-      }
-    }
-
-    // standard adaptive behavior: adjust sampling based on error rate
-    if (errorRate > this.highErrorRateThreshold) {
-      // high error rate - sample more aggressively
-      return super.shouldSample(
-        context,
-        traceId,
-        spanName,
-        spanKind,
-        {
-          ...attributes,
-          "sampling.adaptive": true,
-          "sampling.error_rate": errorRate,
-        },
-        links,
-      );
-    }
-
-    // standard adaptive behavior: adjust sampling based on traffic volume
-    if (requestsPerMinute > this.highTrafficThreshold) {
-      // high traffic - use cached reduced sampling rate
-      if (this.shouldSampleWithRate(this.cachedHighTrafficRate, traceId)) {
-        return {
-          decision: SamplingDecision.RECORD_AND_SAMPLED,
-          attributes: {
-            "sampling.reason": "base_rate_adjusted",
-            "sampling.adaptive": true,
-            "sampling.high_traffic": true,
-            "sampling.requests_per_minute": Math.round(requestsPerMinute),
-          },
-        };
-      }
-      return {
-        decision: SamplingDecision.NOT_RECORD,
-      };
-    }
-
-    return super.shouldSample(
-      context,
-      traceId,
-      spanName,
-      spanKind,
-      attributes,
-      links,
-    );
-  }
-
-  private resetCountersIfNeeded() {
-    const now = Date.now();
-    if (now - this.lastReset > this.resetInterval) {
-      this.requestCount = 0;
-      this.errorCount = 0;
-      this.lastReset = now;
-    }
-  }
-}
+// [H3] Removed deprecated AdaptiveSampler class (~210 lines)
+// @see 3-SIMPLICITY_AND_DEAD_CODE_MULTI_MODEL_REVIEW.md - Issue H3
+// Use SmartSampler instead. Can be recovered from git if needed.

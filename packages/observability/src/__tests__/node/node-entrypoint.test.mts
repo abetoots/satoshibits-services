@@ -18,7 +18,7 @@ import { initialize } from "../../node.mjs";
 function snapshotListeners(
   event: NodeJS.Signals | "uncaughtException" | "unhandledRejection",
 ) {
-  return new Set(process.listeners(event));
+  return new Set(process.listeners(event as NodeJS.Signals));
 }
 
 describe("Node entrypoint", () => {
@@ -50,9 +50,9 @@ describe("Node entrypoint", () => {
 
   it("registers and cleans up global process handlers", async () => {
     // initialize is async - must await before checking handlers
+    // H3 fix: environment is now automatically injected by the entry point
     const state = await initialize({
       serviceName: "node-entrypoint-test",
-      environment: "node",
       disableInstrumentation: true,
       testSpanProcessor: new SimpleSpanProcessor(spanExporter),
       testMetricReader: metricReader,

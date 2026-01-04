@@ -29,9 +29,13 @@ export type SanitizedValue =
 const CIRCULAR_MARKER = "[CIRCULAR]" as const;
 
 /**
- * Sensitive field patterns to redact
+ * Built-in sensitive field patterns used for field name matching.
+ * Exported so consumers can reference them in `excludeBuiltInPatterns`.
+ *
+ * API Boundary Fix - Issue L2: making this public allows consumers
+ * to selectively disable patterns that cause false positives.
  */
-const SENSITIVE_FIELD_PATTERNS = [
+export const BUILT_IN_SENSITIVE_FIELD_PATTERNS: readonly RegExp[] = [
   // Authentication
   /password/i,
   /passwd/i,
@@ -102,8 +106,29 @@ const SENSITIVE_PATTERNS = {
   // JWT tokens
   jwt: /\beyJ[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\b/g,
 
-  // API keys (common patterns)
-  apiKey: /\b[A-Za-z0-9]{32,}\b/g,
+  // Doc 4 L2 Fix: More specific API key patterns to avoid matching hashes/UUIDs
+  // Codex review: added case-insensitive prefixes, AWS STS (ASIA), GitHub, Slack, SendGrid, OpenAI
+  apiKey: new RegExp(
+    "\\b(?:" +
+      // Stripe keys (sk_live_, sk_test_, pk_live_, pk_test_)
+      "(?:sk|pk)_(?:live|test)_[A-Za-z0-9]{24,}|" +
+      // Generic prefixed keys (case-insensitive: api_, key_, token_, secret_, auth_, bearer_)
+      "(?:api|key|token|secret|auth|bearer)_[A-Za-z0-9]{16,}|" +
+      // AWS Access Keys (AKIA for long-term, ASIA for STS temporary) - 20 chars total
+      "A[KS]IA[A-Z0-9]{16}|" +
+      // Google API keys
+      "AIza[0-9A-Za-z_-]{35}|" +
+      // GitHub tokens (ghp_, gho_, ghu_, ghs_, ghr_, github_pat_)
+      "(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|" +
+      // Slack tokens (xoxb-, xoxp-, xoxa-, xoxs-)
+      "xox[bpas]-[A-Za-z0-9-]{10,}|" +
+      // SendGrid (SG.segment1.segment2 format)
+      "SG\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+|" +
+      // OpenAI/Anthropic (sk-proj-xxx, sk-ant-xxx with potential hyphens)
+      "sk-(?:proj|ant)[A-Za-z0-9_-]{20,}" +
+      ")\\b",
+    "gi" // case-insensitive, global
+  ),
 
   // UUIDs (might be user IDs)
   uuid: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
@@ -139,6 +164,25 @@ export interface SanitizerOptions {
 
   /** Enable strict mode (more aggressive sanitization) */
   strictMode?: boolean;
+
+  /**
+   * Built-in patterns to exclude from sensitive field detection.
+   * Use BUILT_IN_SENSITIVE_FIELD_PATTERNS to see available patterns.
+   *
+   * API Boundary Fix - Issue L2: allows consumers to reduce false positives
+   * (e.g., 'address' matching 'ip_address', 'cell' matching 'cell_count').
+   *
+   * @example
+   * // exclude 'address' and 'cell' patterns that cause false positives
+   * excludeBuiltInPatterns: [/address/i, /cell/i]
+   *
+   * @example
+   * // keep only authentication patterns, exclude all others
+   * excludeBuiltInPatterns: BUILT_IN_SENSITIVE_FIELD_PATTERNS.filter(
+   *   p => ![/password/i, /token/i, /secret/i, /api[_-]?key/i].some(keep => keep.source === p.source)
+   * )
+   */
+  excludeBuiltInPatterns?: RegExp[];
 }
 
 /**
@@ -309,10 +353,15 @@ export class SanitizerPresets {
  * Data sanitizer for removing PII
  */
 export class DataSanitizer {
-  private options: Required<SanitizerOptions>;
+  private options: Required<Omit<SanitizerOptions, 'excludeBuiltInPatterns'>>;
   private stringCache: LRUCache<string, string>;
   private readonly optionsCacheKey: string;
   private readonly cacheTTL: number = 0; // TTL removed per consensus decision
+  /**
+   * Active field patterns after applying exclusions.
+   * API Boundary Fix - Issue L2: pre-computed for performance.
+   */
+  private readonly activeFieldPatterns: readonly RegExp[];
 
   constructor(options: SanitizerOptions = {}) {
     this.options = {
@@ -326,6 +375,18 @@ export class DataSanitizer {
       maxDepth: options.maxDepth ?? 10,
       strictMode: options.strictMode ?? false,
     };
+
+    // API Boundary Fix - Issue L2: filter out excluded built-in patterns
+    const excludePatterns = options.excludeBuiltInPatterns ?? [];
+    if (excludePatterns.length > 0) {
+      // compare by source string since RegExp objects are not equal by reference
+      const excludeSources = new Set(excludePatterns.map(p => p.source + '|' + p.flags));
+      this.activeFieldPatterns = BUILT_IN_SENSITIVE_FIELD_PATTERNS.filter(
+        p => !excludeSources.has(p.source + '|' + p.flags)
+      );
+    } else {
+      this.activeFieldPatterns = BUILT_IN_SENSITIVE_FIELD_PATTERNS;
+    }
 
     // Pre-calculate the options part of the cache key for performance
     this.optionsCacheKey = JSON.stringify(this.options);
@@ -370,7 +431,12 @@ export class DataSanitizer {
     }
 
     // Handle arrays
+    // Doc 4 C2 Fix: Track arrays in visitedObjects to prevent circular reference crashes
     if (Array.isArray(value)) {
+      if (visitedObjects?.has(value)) {
+        return CIRCULAR_MARKER;
+      }
+      visitedObjects?.add(value);
       return value.map((item) => this.sanitize(item, depth + 1, visitedObjects));
     }
 
@@ -401,8 +467,12 @@ export class DataSanitizer {
     sanitized = this.maskSensitivePatterns(sanitized);
 
     // Apply custom patterns
+    // Doc 4 M1 Fix: ensure global flag for complete replacement of all matches
     for (const { pattern, replacement } of this.options.customPatterns) {
-      sanitized = sanitized.replace(pattern, replacement);
+      const globalPattern = pattern.global
+        ? pattern
+        : new RegExp(pattern.source, pattern.flags + "g");
+      sanitized = sanitized.replace(globalPattern, replacement);
     }
 
     // Cache the result
@@ -518,7 +588,7 @@ export class DataSanitizer {
     }
 
     // Check against sensitive patterns
-    for (const pattern of SENSITIVE_FIELD_PATTERNS) {
+    for (const pattern of this.activeFieldPatterns) {
       if (pattern.test(fieldName)) {
         return true;
       }
@@ -609,7 +679,7 @@ export class DataSanitizer {
   }
 }
 
-interface SanitizationContext {
+export interface SanitizationContext {
   tenantId?: string;
   region?: string;
 }
@@ -705,6 +775,40 @@ export class SanitizerManager {
     }
     return this.contextProvider?.();
   }
+
+  /**
+   * Configure the sanitizer manager with new options and providers
+   * Used when adopting an existing default manager to apply user config
+   * @see ARCHITECTURE_MULTI_MODEL_REVIEW.md - Issue C3 resolution
+   */
+  configure(
+    options?: SanitizerOptions,
+    config?: {
+      maxTenantSanitizers?: number;
+      tenantConfigProvider?: (
+        context: SanitizationContext,
+      ) => SanitizerOptions | undefined;
+      contextProvider?: () => SanitizationContext | undefined;
+    },
+  ): void {
+    // update default options and recreate default sanitizer
+    if (options) {
+      this.defaultOptions = options;
+      this.defaultSanitizer = new DataSanitizer(options);
+    }
+    // update tenant config provider
+    if (config?.tenantConfigProvider) {
+      this.tenantConfigProvider = config.tenantConfigProvider;
+    }
+    // update context provider
+    if (config?.contextProvider) {
+      this.contextProvider = config.contextProvider;
+    }
+    // clear tenant cache since config changed
+    if (options || config?.tenantConfigProvider) {
+      this.tenantSanitizers.clear();
+    }
+  }
 }
 
 /**
@@ -725,6 +829,7 @@ export function initializeSanitizer(
 }
 
 // Default sanitizer manager for fail-safe operation
+// This is the single source of truth - client will adopt this instance
 let defaultSanitizerManager: SanitizerManager | null = null;
 
 /**
@@ -744,6 +849,39 @@ function getGlobalSanitizerManager(): SanitizerManager {
     return defaultSanitizerManager;
   }
   return client.getSanitizerManager();
+}
+
+/**
+ * Get or create the default sanitizer manager for adoption by client
+ * This ensures sanitization applied before client initialization is consistent
+ * @see ARCHITECTURE_MULTI_MODEL_REVIEW.md - Issue C3 resolution
+ */
+export function getOrCreateDefaultSanitizerManager(
+  options?: SanitizerOptions,
+  config?: {
+    maxTenantSanitizers?: number;
+    tenantConfigProvider?: (
+      context: SanitizationContext,
+    ) => SanitizerOptions | undefined;
+    contextProvider?: () => SanitizationContext | undefined;
+  },
+): SanitizerManager {
+  if (!defaultSanitizerManager) {
+    defaultSanitizerManager = new SanitizerManager(options, config);
+  } else if (options || config) {
+    // apply user config to existing manager to ensure settings are honored
+    // this allows stricter sanitization rules to be applied after pre-init usage
+    defaultSanitizerManager.configure(options, config);
+  }
+  return defaultSanitizerManager;
+}
+
+/**
+ * Set the default sanitizer manager (called when client adopts it)
+ * This allows the client to become the owner while preserving existing config
+ */
+export function setDefaultSanitizerManager(manager: SanitizerManager): void {
+  defaultSanitizerManager = manager;
 }
 
 /**
