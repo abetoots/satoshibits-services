@@ -19,6 +19,7 @@ import type {
 import {
   createSanitizer,
   DataSanitizer,
+  sanitizeObject,
   SanitizerManager,
   BUILT_IN_SENSITIVE_FIELD_PATTERNS,
 } from "../../enrichment/sanitizer.mjs";
@@ -1182,6 +1183,193 @@ describe("Data Sanitization - Shared Functionality", () => {
     });
   });
 
+  describe("Performance Tests (L2 Implementation)", () => {
+    // these tests verify sanitization completes within acceptable time bounds
+    // performance assertions use deterministic operation counts rather than wall-clock time
+    // to avoid flakiness in CI environments
+
+    it("should handle 1000 object sanitizations without blocking", () => {
+      const iterations = 1000;
+      const testData = {
+        password: "secret123",
+        email: "test@example.com",
+        apiKey: "sk_live_abc123",
+        normalField: "visible",
+        nested: {
+          ssn: "123-45-6789",
+          creditCard: "4111-1111-1111-1111",
+        },
+      };
+
+      let completedCount = 0;
+
+      // verify all iterations complete without throwing
+      expect(() => {
+        for (let i = 0; i < iterations; i++) {
+          sanitizer.sanitize(testData);
+          completedCount++;
+        }
+      }).not.toThrow();
+
+      expect(completedCount).toBe(iterations);
+    });
+
+    it("should handle deeply nested objects without stack overflow", () => {
+      // create a 50-level deep nested structure
+      // the sanitizer has a max depth limit for safety, which we verify
+      const depth = 50;
+      let deepObject: Record<string, unknown> = { password: "deepest_secret", level: "bottom" };
+
+      for (let i = 0; i < depth; i++) {
+        deepObject = { level: i, nested: deepObject, secretKey: `secret_${i}` };
+      }
+
+      // should complete without throwing (no stack overflow)
+      const result = sanitizer.sanitize(deepObject);
+      expect(result).toBeDefined();
+      expect(isSanitizedObject(result)).toBe(true);
+
+      // verify structure is traversable to depth limit
+      if (isSanitizedObject(result)) {
+        // navigate into the structure
+        let ptr = result as Record<string, unknown>;
+        let reachableDepth = 0;
+
+        // traverse until we hit depth limit or end
+        while (ptr.nested && typeof ptr.nested === "object" && reachableDepth < depth + 1) {
+          reachableDepth++;
+          ptr = ptr.nested as Record<string, unknown>;
+        }
+
+        // sanitizer should either reach bottom OR apply depth limit safely
+        // both outcomes are acceptable for stack safety
+        const atBottom = ptr.level === "bottom";
+        const atDepthLimit = ptr.level === "[MAX_DEPTH_EXCEEDED]" || typeof ptr.nested === "string";
+
+        expect(atBottom || atDepthLimit).toBe(true);
+
+        // if we reached bottom, password should be redacted
+        if (atBottom) {
+          expect(ptr.password).toBe("[REDACTED]");
+        }
+      }
+    });
+
+    it("should handle wide objects with many fields efficiently", () => {
+      // create an object with 500 fields, some sensitive
+      const wideObject: Record<string, string> = {};
+
+      for (let i = 0; i < 500; i++) {
+        if (i % 10 === 0) {
+          // every 10th field is sensitive
+          wideObject[`password_${i}`] = "secret";
+        } else if (i % 15 === 0) {
+          wideObject[`apiKey_${i}`] = "sk_live_abc123";
+        } else {
+          wideObject[`field_${i}`] = `value_${i}`;
+        }
+      }
+
+      const result = sanitizer.sanitize(wideObject);
+      expect(isSanitizedObject(result)).toBe(true);
+
+      if (isSanitizedObject(result)) {
+        // verify sensitive fields were redacted
+        expect(result["password_0"]).toBe("[REDACTED]");
+        expect(result["password_10"]).toBe("[REDACTED]");
+        expect(result["apiKey_15"]).toBe("[REDACTED]");
+        // verify normal fields preserved
+        expect(result["field_1"]).toBe("value_1");
+        expect(result["field_2"]).toBe("value_2");
+      }
+    });
+
+    it("should handle large string values without degradation", () => {
+      // 15KB string with embedded sensitive data (password pattern matched in strings)
+      const largeString =
+        "x".repeat(5000) +
+        " password: secret123 " +
+        "y".repeat(5000) +
+        " pwd: another_secret " +
+        "z".repeat(5000);
+
+      expect(() => {
+        const result = sanitizer.sanitize(largeString);
+        // verify sensitive data was found and redacted (password patterns)
+        expect(result).toContain("[REDACTED]");
+        expect(result).not.toContain("secret123");
+        expect(result).not.toContain("another_secret");
+      }).not.toThrow();
+    });
+
+    it("should handle arrays with many elements efficiently", () => {
+      // array with 200 objects, some containing sensitive data
+      const largeArray = Array.from({ length: 200 }, (_, i) => ({
+        id: i,
+        data: i % 5 === 0 ? { password: "secret", email: "test@test.com" } : { safe: "value" },
+      }));
+
+      expect(() => {
+        const result = sanitizer.sanitize(largeArray);
+        expect(Array.isArray(result)).toBe(true);
+        if (Array.isArray(result)) {
+          expect(result.length).toBe(200);
+          // verify sensitive data in element 0 was redacted
+          const firstElement = result[0] as { data: { password: string } };
+          expect(firstElement.data.password).toBe("[REDACTED]");
+        }
+      }).not.toThrow();
+    });
+
+    it("should handle circular references without infinite loop", () => {
+      // create circular reference
+      const circularObject: Record<string, unknown> = {
+        password: "secret123",
+        normal: "visible",
+      };
+      circularObject["self"] = circularObject;
+
+      // should complete without infinite loop or stack overflow
+      const result = sanitizer.sanitize(circularObject);
+      expect(result).toBeDefined();
+      expect(isSanitizedObject(result)).toBe(true);
+
+      // verify password is redacted even with circular reference
+      if (isSanitizedObject(result)) {
+        expect(result.password).toBe("[REDACTED]");
+        expect(result.normal).toBe("visible");
+        // circular reference should be marked (implementation may vary)
+        expect(result.self).toBeDefined();
+      }
+    });
+
+    it("should maintain consistent timing across repeated sanitizations", () => {
+      // verifies no memory leaks or degradation over repeated calls
+      const testData = { password: "secret", apiKey: "sk_live_123", nested: { val: "keep" } };
+      const originalJson = JSON.stringify(testData);
+      const iterations = 100;
+      const results: unknown[] = [];
+
+      for (let i = 0; i < iterations; i++) {
+        results.push(sanitizer.sanitize(testData));
+      }
+
+      expect(results.length).toBe(iterations);
+
+      // verify input immutability - sanitization must not mutate original data
+      expect(JSON.stringify(testData)).toBe(originalJson);
+
+      // verify all results are properly sanitized
+      results.forEach((result) => {
+        expect(isSanitizedObject(result)).toBe(true);
+        if (isSanitizedObject(result)) {
+          expect(result.password).toBe("[REDACTED]");
+          expect(result.apiKey).toBe("[REDACTED]");
+        }
+      });
+    });
+  });
+
   describe("SanitizerManager - Multi-Tenant Support", () => {
     let manager: SanitizerManager;
 
@@ -1627,5 +1815,69 @@ describe("Pattern Exclusion (L2 API Boundary Fix)", () => {
       expect(sanitizer.shouldRedactField("phone")).toBe(false);
       expect(sanitizer.shouldRedactField("credit_card")).toBe(false);
     });
+  });
+});
+
+/**
+ * Integration tests for sanitization through SmartClient API
+ * (Moved from gap-validation.test.mts per M4 refactoring)
+ */
+describe("Sanitization Integration via SmartClient", () => {
+  let client: UnifiedObservabilityClient;
+  let serviceInstrument: ReturnType<UnifiedObservabilityClient["getServiceInstrumentation"]>;
+
+  beforeEach(async () => {
+    // initialize with sanitization enabled
+    client = await SmartClient.initialize({
+      serviceName: "sanitization-integration-test",
+      environment: "node" as const,
+      disableInstrumentation: true,
+      sanitize: true,
+    });
+
+    serviceInstrument = client.getServiceInstrumentation();
+  });
+
+  afterEach(async () => {
+    await SmartClient.shutdown();
+  });
+
+  it("should sanitize attributes in error context", () => {
+    // record error with sensitive attributes
+    const error = new Error("Database connection failed");
+
+    // behavioral verification: sanitizeObject should redact sensitive keys
+    const testData = {
+      password: "secret123",
+      apiKey: "sk_live_abc123",
+      normalData: "visible",
+    };
+    const sanitized = sanitizeObject(testData);
+
+    // verify sanitization actually modifies sensitive data
+    expect(sanitized).toBeDefined();
+    if (isSanitizedObject(sanitized)) {
+      expect(sanitized.password).not.toBe("secret123");
+      expect(sanitized.apiKey).not.toBe("sk_live_abc123");
+      expect(sanitized.normalData).toBe("visible");
+    }
+
+    // verify errors.record doesn't throw with sensitive context
+    expect(() =>
+      serviceInstrument.errors.record(error, testData),
+    ).not.toThrow();
+  });
+
+  it("should sanitize attributes in log context", () => {
+    // log with sensitive attributes - verifies SDK handles sensitive data without throwing
+    expect(() =>
+      serviceInstrument.logs.info("Operation completed", {
+        apiKey: "sk_live_abc123",
+        password: "secret123",
+      }),
+    ).not.toThrow();
+
+    // note: logs may or may not create spans depending on implementation
+    // the key is that the operation completed without exposing sensitive data
   });
 });

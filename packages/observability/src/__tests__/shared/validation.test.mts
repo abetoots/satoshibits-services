@@ -29,7 +29,7 @@ describe('Input Validation (Real Client Integration)', () => {
   });
 
   describe('Metric Name Validation', () => {
-    it('should handle null metric names gracefully', () => {
+    it('should handle null metric names gracefully with descriptive warning', () => {
       const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       // observability libraries must not throw - fail gracefully
@@ -38,13 +38,17 @@ describe('Input Validation (Real Client Integration)', () => {
         client.metrics.increment(null);
       }).not.toThrow();
 
-      // but should warn about invalid input
+      // should warn with descriptive message about invalid input (L4 fix)
       expect(consoleSpy).toHaveBeenCalled();
+      const warningMessage = consoleSpy.mock.calls[0]?.[0];
+      expect(typeof warningMessage).toBe('string');
+      // warning should mention the issue (metric name or invalid)
+      expect(warningMessage).toMatch(/metric|name|invalid|null/i);
 
       consoleSpy.mockRestore();
     });
 
-    it('should handle undefined metric names gracefully', () => {
+    it('should handle undefined metric names gracefully with descriptive warning', () => {
       const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       expect(() => {
@@ -52,57 +56,77 @@ describe('Input Validation (Real Client Integration)', () => {
         client.metrics.increment(undefined);
       }).not.toThrow();
 
+      // verify warning content (L4 fix)
       expect(consoleSpy).toHaveBeenCalled();
+      const warningMessage = consoleSpy.mock.calls[0]?.[0];
+      expect(typeof warningMessage).toBe('string');
+      expect(warningMessage).toMatch(/metric|name|invalid|undefined/i);
 
       consoleSpy.mockRestore();
     });
 
-    it('should handle empty string metric names gracefully', () => {
+    it('should handle empty string metric names gracefully with descriptive warning', () => {
       const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       expect(() => {
         client.metrics.increment('');
       }).not.toThrow();
 
+      // verify warning content (L4 fix)
       expect(consoleSpy).toHaveBeenCalled();
+      const warningMessage = consoleSpy.mock.calls[0]?.[0];
+      expect(typeof warningMessage).toBe('string');
+      expect(warningMessage).toMatch(/metric|name|invalid|empty/i);
 
       consoleSpy.mockRestore();
     });
   });
 
   describe('Metric Value Validation', () => {
-    it('should handle NaN values gracefully', () => {
+    it('should handle NaN values gracefully with descriptive warning', () => {
       const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       expect(() => {
         client.metrics.gauge('test_metric', NaN);
       }).not.toThrow();
 
+      // verify warning content (L4 fix)
       expect(consoleSpy).toHaveBeenCalled();
+      const warningMessage = consoleSpy.mock.calls[0]?.[0];
+      expect(typeof warningMessage).toBe('string');
+      expect(warningMessage).toMatch(/value|NaN|invalid|number/i);
 
       consoleSpy.mockRestore();
     });
 
-    it('should handle Infinity values gracefully', () => {
+    it('should handle Infinity values gracefully with descriptive warning', () => {
       const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       expect(() => {
         client.metrics.record('test_metric', Infinity);
       }).not.toThrow();
 
+      // verify warning content (L4 fix)
       expect(consoleSpy).toHaveBeenCalled();
+      const warningMessage = consoleSpy.mock.calls[0]?.[0];
+      expect(typeof warningMessage).toBe('string');
+      expect(warningMessage).toMatch(/value|Infinity|invalid|number/i);
 
       consoleSpy.mockRestore();
     });
 
-    it('should handle negative Infinity values gracefully', () => {
+    it('should handle negative Infinity values gracefully with descriptive warning', () => {
       const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       expect(() => {
         client.metrics.record('test_metric', -Infinity);
       }).not.toThrow();
 
+      // verify warning content (L4 fix)
       expect(consoleSpy).toHaveBeenCalled();
+      const warningMessage = consoleSpy.mock.calls[0]?.[0];
+      expect(typeof warningMessage).toBe('string');
+      expect(warningMessage).toMatch(/value|Infinity|invalid|number/i);
 
       consoleSpy.mockRestore();
     });
@@ -457,6 +481,159 @@ describe('Input Validation (Real Client Integration)', () => {
         client.metrics.gauge('test', -42);
         client.metrics.record('test', -123.45);
       }).not.toThrow();
+    });
+  });
+
+  describe('Unicode and Whitespace Metric Names (L7 Implementation)', () => {
+    it('should handle whitespace-only metric names gracefully (no warning per current impl)', () => {
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      // whitespace-only names should not throw (fail-safe)
+      // NOTE: Current implementation uses `!name` check (metric-validation.mts:130)
+      // which only catches falsy values (empty string, null, undefined).
+      // Whitespace-only strings are truthy in JS so they pass validation.
+      // This documents actual behavior; consider if whitespace-only should warn.
+      expect(() => {
+        client.metrics.increment('   ');
+        client.metrics.gauge('\t', 42);
+        client.metrics.record('\n', 100);
+        client.metrics.increment('  \t\n  ');
+      }).not.toThrow();
+
+      // current impl: whitespace-only is truthy, so no warning (unlike empty string)
+      expect(consoleSpy).not.toHaveBeenCalled();
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should handle leading/trailing whitespace in metric names', () => {
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      // leading/trailing whitespace should not throw
+      expect(() => {
+        client.metrics.increment('  metric_name');
+        client.metrics.gauge('metric_name  ', 42);
+        client.metrics.record('  metric_name  ', 100);
+      }).not.toThrow();
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should handle unicode characters in metric names without warning', () => {
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      // valid unicode names should not throw and should not warn
+      expect(() => {
+        client.metrics.increment('метрика'); // cyrillic
+        client.metrics.gauge('メトリック', 42); // japanese
+        client.metrics.record('指标', 100); // chinese
+        client.metrics.increment('μέτρηση'); // greek
+      }).not.toThrow();
+
+      // valid unicode characters should not trigger warnings
+      expect(consoleSpy).not.toHaveBeenCalled();
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should handle emoji in metric names without warning', () => {
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      // emoji names should not throw and should not warn
+      expect(() => {
+        client.metrics.increment('metric_🚀');
+        client.metrics.gauge('📊_count', 42);
+        client.metrics.record('errors_❌', 100);
+      }).not.toThrow();
+
+      // emojis are valid unicode, should not warn
+      expect(consoleSpy).not.toHaveBeenCalled();
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should handle mixed unicode and ASCII in metric names without warning', () => {
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      expect(() => {
+        client.metrics.increment('http_requests_успех');
+        client.metrics.gauge('api_calls_成功', 42);
+        client.metrics.record('cache_hits_キャッシュ', 100);
+      }).not.toThrow();
+
+      // mixed unicode + ASCII should not warn
+      expect(consoleSpy).not.toHaveBeenCalled();
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should handle control characters in metric names gracefully', () => {
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      // control characters should not throw (fail-safe)
+      expect(() => {
+        client.metrics.increment('metric\x00name'); // null byte
+        client.metrics.gauge('metric\x07bell', 42); // bell
+        client.metrics.record('metric\x1bescape', 100); // escape
+      }).not.toThrow();
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should handle zero-width characters in metric names', () => {
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      // zero-width characters should not throw (fail-safe)
+      expect(() => {
+        client.metrics.increment('metric\u200Bname'); // zero-width space
+        client.metrics.gauge('metric\u200Cname', 42); // zero-width non-joiner
+        client.metrics.record('metric\uFEFFname', 100); // byte order mark
+      }).not.toThrow();
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should handle unpaired surrogate characters gracefully (Gemini fix)', () => {
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      // unpaired surrogates are invalid unicode but should not throw (fail-safe)
+      expect(() => {
+        client.metrics.increment('metric\uD800name'); // lone high surrogate
+        client.metrics.gauge('metric\uDC00name', 42); // lone low surrogate
+        client.metrics.record('\uD800', 100); // just high surrogate
+      }).not.toThrow();
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should handle very long unicode metric names', () => {
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      // long unicode string should not throw
+      const longUnicode = '指'.repeat(200);
+      expect(() => {
+        client.metrics.increment(longUnicode);
+        client.metrics.gauge(longUnicode, 42);
+        client.metrics.record(longUnicode, 100);
+      }).not.toThrow();
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should handle RTL characters in metric names without warning', () => {
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      // right-to-left characters should not throw
+      expect(() => {
+        client.metrics.increment('מדד_בדיקה'); // hebrew
+        client.metrics.gauge('مقياس_اختبار', 42); // arabic
+        client.metrics.record('آزمایش_متری', 100); // persian
+      }).not.toThrow();
+
+      // RTL characters are valid unicode, should not warn
+      expect(consoleSpy).not.toHaveBeenCalled();
+
+      consoleSpy.mockRestore();
     });
   });
 });

@@ -5,7 +5,7 @@
  * Uses MockObservabilityClient to verify API behavior and metric recording.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MockObservabilityClient } from "../test-utils/mock-client.mjs";
 
@@ -296,6 +296,150 @@ describe("Metrics API - Shared Functionality", () => {
       expect(client.metrics.hasRecorded("concurrent_op_2")).toBe(true);
 
       vi.useRealTimers();
+    });
+  });
+
+  describe("Async Timing Operations (L5 Implementation)", () => {
+    // these tests verify MockClient.timing() works correctly with vi.useFakeTimers()
+    // the async nature + Date.now() requires careful handling
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("should measure timing with async callback using fake timers", async () => {
+      vi.useFakeTimers();
+
+      const timingPromise = client.metrics.timing("async_operation", async () => {
+        await new Promise((r) => setTimeout(r, 50));
+        return "timing-result";
+      });
+
+      // advance fake timers to resolve the timeout
+      await vi.advanceTimersByTimeAsync(50);
+      const result = await timingPromise;
+
+      expect(result).toBe("timing-result");
+      expect(client.metrics.hasRecorded("async_operation.duration")).toBe(true);
+
+      // strict equality - fake timers are deterministic (Codex/Gemini fix)
+      const recordedValue = client.metrics.getRecorded("async_operation.duration");
+      expect(recordedValue).toBe(50);
+    });
+
+    it("should capture errors from timing callback and still record duration", async () => {
+      vi.useFakeTimers();
+
+      // wrap the timing call to catch the error properly
+      let caughtError: Error | null = null;
+      const timingPromise = client.metrics.timing("error_operation", async () => {
+        await new Promise((r) => setTimeout(r, 25));
+        throw new Error("timing callback error");
+      }).catch((e: Error) => {
+        caughtError = e;
+      });
+
+      await vi.advanceTimersByTimeAsync(25);
+      await timingPromise;
+
+      // verify error was propagated
+      expect(caughtError).toBeInstanceOf(Error);
+      expect(caughtError!.message).toBe("timing callback error");
+
+      // duration should still be recorded even on error
+      expect(client.metrics.hasRecorded("error_operation.duration")).toBe(true);
+
+      // strict equality - fake timers are deterministic (Codex/Gemini fix)
+      const recordedValue = client.metrics.getRecorded("error_operation.duration");
+      expect(recordedValue).toBe(25);
+
+      // verify error attribute was added
+      const metrics = client.getMetrics();
+      const errorMetric = metrics.find((m) => m.name === "error_operation.duration");
+      expect(errorMetric?.attributes).toEqual(expect.objectContaining({ error: true }));
+    });
+
+    it("should support synchronous callbacks in timing method", async () => {
+      vi.useFakeTimers();
+
+      // timing() can also accept sync functions
+      const result = await client.metrics.timing("sync_operation", () => {
+        return "sync-result";
+      });
+
+      expect(result).toBe("sync-result");
+      expect(client.metrics.hasRecorded("sync_operation.duration")).toBe(true);
+    });
+
+    it("should handle multiple concurrent timing operations with fake timers", async () => {
+      vi.useFakeTimers();
+
+      const timing1 = client.metrics.timing("concurrent_1", async () => {
+        await new Promise((r) => setTimeout(r, 30));
+        return "first";
+      });
+
+      const timing2 = client.metrics.timing("concurrent_2", async () => {
+        await new Promise((r) => setTimeout(r, 60));
+        return "second";
+      });
+
+      // advance to complete first timing
+      await vi.advanceTimersByTimeAsync(30);
+      const result1 = await timing1;
+
+      // advance to complete second timing
+      await vi.advanceTimersByTimeAsync(30);
+      const result2 = await timing2;
+
+      expect(result1).toBe("first");
+      expect(result2).toBe("second");
+
+      expect(client.metrics.hasRecorded("concurrent_1.duration")).toBe(true);
+      expect(client.metrics.hasRecorded("concurrent_2.duration")).toBe(true);
+
+      // strict equality - verify exact durations, not just ordering (Codex fix)
+      const duration1 = client.metrics.getRecorded("concurrent_1.duration");
+      const duration2 = client.metrics.getRecorded("concurrent_2.duration");
+
+      expect(duration1).toBe(30);
+      expect(duration2).toBe(60);
+      expect(duration2).toBeGreaterThan(duration1!);
+    });
+
+    it("should correctly measure multiple sequential timeouts in single callback (Codex fix)", async () => {
+      vi.useFakeTimers();
+
+      const timingPromise = client.metrics.timing("sequential_ops", async () => {
+        await new Promise((r) => setTimeout(r, 20));
+        await new Promise((r) => setTimeout(r, 40));
+        return "sequential-complete";
+      });
+
+      // advance total time for both timeouts
+      await vi.advanceTimersByTimeAsync(20);
+      await vi.advanceTimersByTimeAsync(40);
+      const result = await timingPromise;
+
+      expect(result).toBe("sequential-complete");
+
+      // total duration should be sum of all awaited timeouts
+      const recordedValue = client.metrics.getRecorded("sequential_ops.duration");
+      expect(recordedValue).toBe(60);
+    });
+
+    it("should handle immediate resolve with 0ms delay (Gemini fix)", async () => {
+      vi.useFakeTimers();
+
+      const result = await client.metrics.timing("immediate_op", async () => {
+        return "immediate-result";
+      });
+
+      expect(result).toBe("immediate-result");
+      expect(client.metrics.hasRecorded("immediate_op.duration")).toBe(true);
+
+      // no time should have passed
+      const recordedValue = client.metrics.getRecorded("immediate_op.duration");
+      expect(recordedValue).toBe(0);
     });
   });
 

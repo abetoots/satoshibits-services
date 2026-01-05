@@ -708,3 +708,512 @@ describe('SmartSampler config logic (unit)', () => {
   });
 });
 
+/**
+ * M8: SmartSampler Logic Tests - Error/Slow Detection and Tier Fallbacks
+ *
+ * These tests specifically target the sampling decision logic gaps identified
+ * in the multi-model test quality review:
+ * - Error detection via various attribute patterns
+ * - Slow operation detection via duration attributes
+ * - Tier rate fallbacks when tier is unknown or rate is 0
+ */
+describe('SmartSampler error detection (M8)', () => {
+  const mockContext = context.active();
+  const traceId = 'trace-error-detection';
+  const spanKind = SpanKind.INTERNAL;
+  const links: Link[] = [];
+
+  it('should sample when error attribute is true', () => {
+    const sampler = new SmartSampler({ baseRate: 0.0 }); // 0 base rate to prove error override
+    const result = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'error-span',
+      spanKind,
+      { error: true },
+      links
+    );
+
+    expect(result.decision).toBe(SamplingDecision.RECORD_AND_SAMPLED);
+    expect(result.attributes?.['sampling.reason']).toBe('error');
+  });
+
+  it('should sample when http.status_code >= 500 (numeric)', () => {
+    const sampler = new SmartSampler({ baseRate: 0.0 });
+    const result = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'http-error-span',
+      spanKind,
+      { 'http.status_code': 500 },
+      links
+    );
+
+    expect(result.decision).toBe(SamplingDecision.RECORD_AND_SAMPLED);
+    expect(result.attributes?.['sampling.reason']).toBe('error');
+  });
+
+  it('should sample when http.status_code >= 500 (string)', () => {
+    const sampler = new SmartSampler({ baseRate: 0.0 });
+    const result = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'http-error-span',
+      spanKind,
+      { 'http.status_code': '503' },
+      links
+    );
+
+    expect(result.decision).toBe(SamplingDecision.RECORD_AND_SAMPLED);
+    expect(result.attributes?.['sampling.reason']).toBe('error');
+  });
+
+  it('should NOT sample when http.status_code < 500', () => {
+    const sampler = new SmartSampler({ baseRate: 0.0 });
+    const result = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'http-ok-span',
+      spanKind,
+      { 'http.status_code': 404 },
+      links
+    );
+
+    expect(result.decision).toBe(SamplingDecision.NOT_RECORD);
+  });
+
+  it('should NOT sample when http.status_code is 499 (boundary check)', () => {
+    // boundary test: 499 is just below the 500 error threshold
+    const sampler = new SmartSampler({ baseRate: 0.0 });
+    const result = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'boundary-status-span',
+      spanKind,
+      { 'http.status_code': 499 },
+      links
+    );
+
+    expect(result.decision).toBe(SamplingDecision.NOT_RECORD);
+  });
+
+  it('should sample when status.code is ERROR', () => {
+    const sampler = new SmartSampler({ baseRate: 0.0 });
+    const result = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'status-error-span',
+      spanKind,
+      { 'status.code': 'ERROR' },
+      links
+    );
+
+    expect(result.decision).toBe(SamplingDecision.RECORD_AND_SAMPLED);
+    expect(result.attributes?.['sampling.reason']).toBe('error');
+  });
+
+  it('should sample when exception.type is present', () => {
+    const sampler = new SmartSampler({ baseRate: 0.0 });
+    const result = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'exception-span',
+      spanKind,
+      { 'exception.type': 'TypeError' },
+      links
+    );
+
+    expect(result.decision).toBe(SamplingDecision.RECORD_AND_SAMPLED);
+    expect(result.attributes?.['sampling.reason']).toBe('error');
+  });
+
+  it('should NOT sample when error attribute is false', () => {
+    const sampler = new SmartSampler({ baseRate: 0.0 });
+    const result = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'no-error-span',
+      spanKind,
+      { error: false },
+      links
+    );
+
+    expect(result.decision).toBe(SamplingDecision.NOT_RECORD);
+  });
+
+  it('should NOT sample when http.status_code is invalid string (Doc 4 L4 regression)', () => {
+    // regression test: prior parseInt implementation would parse "500foo" as 500
+    // Number() correctly rejects partial parses
+    const sampler = new SmartSampler({ baseRate: 0.0 });
+
+    // "500foo" should NOT be treated as 500
+    const result = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'invalid-status-span',
+      spanKind,
+      { 'http.status_code': '500foo' },
+      links
+    );
+
+    expect(result.decision).toBe(SamplingDecision.NOT_RECORD);
+  });
+
+  it('should NOT sample when http.status_code is non-numeric string', () => {
+    const sampler = new SmartSampler({ baseRate: 0.0 });
+
+    const result = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'non-numeric-status-span',
+      spanKind,
+      { 'http.status_code': 'error' },
+      links
+    );
+
+    expect(result.decision).toBe(SamplingDecision.NOT_RECORD);
+  });
+});
+
+describe('SmartSampler slow operation detection (M8)', () => {
+  const mockContext = context.active();
+  const traceId = 'trace-slow-detection';
+  const spanKind = SpanKind.INTERNAL;
+  const links: Link[] = [];
+
+  it('should sample when duration.ms exceeds slowThresholdMs', () => {
+    const sampler = new SmartSampler({
+      baseRate: 0.0,
+      slowThresholdMs: 1000,
+    });
+    const result = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'slow-span',
+      spanKind,
+      { 'duration.ms': 1500 },
+      links
+    );
+
+    expect(result.decision).toBe(SamplingDecision.RECORD_AND_SAMPLED);
+    expect(result.attributes?.['sampling.reason']).toBe('slow_operation');
+  });
+
+  it('should sample when duration attribute exceeds slowThresholdMs', () => {
+    const sampler = new SmartSampler({
+      baseRate: 0.0,
+      slowThresholdMs: 500,
+    });
+    const result = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'slow-span',
+      spanKind,
+      { duration: 600 },
+      links
+    );
+
+    expect(result.decision).toBe(SamplingDecision.RECORD_AND_SAMPLED);
+    expect(result.attributes?.['sampling.reason']).toBe('slow_operation');
+  });
+
+  it('should sample when slow attribute is true', () => {
+    const sampler = new SmartSampler({ baseRate: 0.0 });
+    const result = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'marked-slow-span',
+      spanKind,
+      { slow: true },
+      links
+    );
+
+    expect(result.decision).toBe(SamplingDecision.RECORD_AND_SAMPLED);
+    expect(result.attributes?.['sampling.reason']).toBe('slow_operation');
+  });
+
+  it('should sample when duration.ms is string exceeding threshold', () => {
+    // isSlow uses Number() coercion, so string durations should work
+    const sampler = new SmartSampler({
+      baseRate: 0.0,
+      slowThresholdMs: 1000,
+    });
+    const result = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'slow-span-string',
+      spanKind,
+      { 'duration.ms': '1500' }, // string value
+      links
+    );
+
+    expect(result.decision).toBe(SamplingDecision.RECORD_AND_SAMPLED);
+    expect(result.attributes?.['sampling.reason']).toBe('slow_operation');
+  });
+
+  it('should NOT sample when duration.ms is invalid string', () => {
+    const sampler = new SmartSampler({
+      baseRate: 0.0,
+      slowThresholdMs: 1000,
+    });
+    const result = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'invalid-duration-span',
+      spanKind,
+      { 'duration.ms': 'slow' }, // non-numeric string
+      links
+    );
+
+    expect(result.decision).toBe(SamplingDecision.NOT_RECORD);
+  });
+
+  it('should NOT sample when duration is negative (clock skew protection)', () => {
+    // negative durations can occur due to clock skew or measurement errors
+    const sampler = new SmartSampler({
+      baseRate: 0.0,
+      slowThresholdMs: 1000,
+    });
+    const result = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'negative-duration-span',
+      spanKind,
+      { 'duration.ms': -100 },
+      links
+    );
+
+    expect(result.decision).toBe(SamplingDecision.NOT_RECORD);
+  });
+
+  it('should NOT sample when duration is below threshold', () => {
+    const sampler = new SmartSampler({
+      baseRate: 0.0,
+      slowThresholdMs: 1000,
+    });
+    const result = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'fast-span',
+      spanKind,
+      { 'duration.ms': 500 },
+      links
+    );
+
+    expect(result.decision).toBe(SamplingDecision.NOT_RECORD);
+  });
+
+  it('should use default slowThresholdMs of 1000 when not configured', () => {
+    const sampler = new SmartSampler({ baseRate: 0.0 });
+
+    // 999ms should not trigger slow sampling
+    const fastResult = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'fast-span',
+      spanKind,
+      { 'duration.ms': 999 },
+      links
+    );
+    expect(fastResult.decision).toBe(SamplingDecision.NOT_RECORD);
+
+    // 1001ms should trigger slow sampling
+    const slowResult = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'slow-span',
+      spanKind,
+      { 'duration.ms': 1001 },
+      links
+    );
+    expect(slowResult.decision).toBe(SamplingDecision.RECORD_AND_SAMPLED);
+    expect(slowResult.attributes?.['sampling.reason']).toBe('slow_operation');
+  });
+});
+
+describe('SmartSampler tier rate configuration (M8)', () => {
+  // note: tier rate APPLICATION (with business context) is tested in SpanKind-based tests above
+  // these tests verify tier rate CONFIGURATION and validation
+
+  it('should use default tier rates when not configured', () => {
+    // default tier rates: free: 0.01, pro: 0.1, enterprise: 0.5
+    const sampler = new SmartSampler({});
+
+    // access config via protected property (cast for test)
+    const config = (sampler as unknown as { config: { tierRates: Record<string, number> } }).config;
+
+    expect(config.tierRates.free).toBe(0.01);
+    expect(config.tierRates.pro).toBe(0.1);
+    expect(config.tierRates.enterprise).toBe(0.5);
+  });
+
+  it('should allow custom tier rates', () => {
+    const sampler = new SmartSampler({
+      tierRates: {
+        free: 0.05,
+        pro: 0.25,
+        enterprise: 0.75,
+      },
+    });
+
+    const config = (sampler as unknown as { config: { tierRates: Record<string, number> } }).config;
+
+    expect(config.tierRates.free).toBe(0.05);
+    expect(config.tierRates.pro).toBe(0.25);
+    expect(config.tierRates.enterprise).toBe(0.75);
+  });
+
+  it('should reset to defaults if any tier rate is invalid', () => {
+    const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const sampler = new SmartSampler({
+      tierRates: {
+        free: 0.05,
+        pro: 1.5, // invalid: > 1.0
+        enterprise: 0.75,
+      },
+    });
+
+    const config = (sampler as unknown as { config: { tierRates: Record<string, number> } }).config;
+
+    // should reset to defaults
+    expect(config.tierRates.free).toBe(0.01);
+    expect(config.tierRates.pro).toBe(0.1);
+    expect(config.tierRates.enterprise).toBe(0.5);
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Invalid tier rate for pro')
+    );
+
+    consoleSpy.mockRestore();
+  });
+
+  it('should fall back to baseRate when no tier matches (via SpanKind logic)', () => {
+    // for INTERNAL spans, tier-based sampling is skipped entirely
+    // this tests that baseRate is used as fallback
+    const sampler = new SmartSampler({
+      baseRate: 1.0, // 100% base rate
+      tierRates: {
+        enterprise: 0.0, // even if enterprise, wouldn't be checked for INTERNAL
+      },
+    });
+
+    const result = sampler.shouldSample(
+      context.active(),
+      'trace-internal',
+      'internal-span',
+      SpanKind.INTERNAL, // INTERNAL skips tier checks
+      {},
+      []
+    );
+
+    expect(result.decision).toBe(SamplingDecision.RECORD_AND_SAMPLED);
+    expect(result.attributes?.['sampling.reason']).toBe('base_rate');
+  });
+
+  it('should allow 0% tier rate (falls through to baseRate)', () => {
+    // when tier rate is 0, shouldSampleWithRate returns false,
+    // so sampling falls through to next priority (baseRate)
+    const sampler = new SmartSampler({
+      baseRate: 1.0,
+      tierRates: {
+        enterprise: 0.0, // 0% = never sample via tier
+      },
+    });
+
+    const config = (sampler as unknown as { config: { tierRates: Record<string, number> } }).config;
+
+    // 0 is a valid rate (means never sample via this tier)
+    expect(config.tierRates.enterprise).toBe(0.0);
+  });
+});
+
+describe('SmartSampler priority ordering (M8)', () => {
+  const mockContext = context.active();
+  const traceId = 'trace-priority';
+  const spanKind = SpanKind.INTERNAL;
+  const links: Link[] = [];
+
+  it('should prioritize error sampling over slow sampling', () => {
+    const sampler = new SmartSampler({ baseRate: 0.0 });
+
+    // span has both error and slow attributes
+    const result = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'error-and-slow-span',
+      spanKind,
+      {
+        error: true,
+        'duration.ms': 5000, // also slow
+      },
+      links
+    );
+
+    // error check happens before slow check, so reason should be 'error'
+    expect(result.decision).toBe(SamplingDecision.RECORD_AND_SAMPLED);
+    expect(result.attributes?.['sampling.reason']).toBe('error');
+  });
+
+  it('should prioritize neverSample over error attributes', () => {
+    const sampler = new SmartSampler({
+      baseRate: 0.0,
+      neverSample: ['health-check'],
+    });
+
+    const result = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'health-check', // in neverSample list
+      spanKind,
+      { error: true }, // has error
+      links
+    );
+
+    // neverSample takes priority
+    expect(result.decision).toBe(SamplingDecision.NOT_RECORD);
+    expect(result.attributes?.['sampling.reason']).toBe('never_sample_list');
+  });
+
+  it('should prioritize alwaysSample over baseRate of 0', () => {
+    const sampler = new SmartSampler({
+      baseRate: 0.0, // would not sample
+      alwaysSample: ['critical-operation'],
+    });
+
+    const result = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'critical-operation',
+      spanKind,
+      {},
+      links
+    );
+
+    expect(result.decision).toBe(SamplingDecision.RECORD_AND_SAMPLED);
+    expect(result.attributes?.['sampling.reason']).toBe('always_sample_list');
+  });
+
+  it('should prioritize neverSample over alwaysSample (configuration conflict)', () => {
+    // edge case: span in both lists - neverSample should win (security/cost control)
+    const sampler = new SmartSampler({
+      baseRate: 0.0,
+      neverSample: ['conflict-span'],
+      alwaysSample: ['conflict-span'],
+    });
+
+    const result = sampler.shouldSample(
+      mockContext,
+      traceId,
+      'conflict-span',
+      spanKind,
+      {},
+      links
+    );
+
+    // neverSample takes priority (checked first in shouldSample)
+    expect(result.decision).toBe(SamplingDecision.NOT_RECORD);
+    expect(result.attributes?.['sampling.reason']).toBe('never_sample_list');
+  });
+});
+

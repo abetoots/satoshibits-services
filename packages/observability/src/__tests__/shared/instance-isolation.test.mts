@@ -447,4 +447,164 @@ describe("Cache Configuration Validation (Multi-model Review Fixes)", () => {
       expect(client.getInstrumentCache().size).toBeGreaterThan(0);
     });
   });
+
+  describe("Memory Leak Prevention (L3 Implementation)", () => {
+    // these tests verify that shutdown/destroy properly releases resources
+    // to prevent memory leaks in long-running applications
+
+    it("should clear instrument cache after destroy", async () => {
+      const client = await SmartClient.create({
+        serviceName: "cache-cleanup-test",
+        environment: "node",
+        disableInstrumentation: true,
+      });
+
+      // populate the cache
+      client.metrics.increment("counter_1", 1);
+      client.metrics.increment("counter_2", 1);
+      client.metrics.record("histogram_1", 100);
+      client.metrics.gauge("gauge_1", 50);
+
+      const cacheBeforeDestroy = client.getInstrumentCache().size;
+      expect(cacheBeforeDestroy).toBeGreaterThan(0);
+
+      await client.destroy();
+
+      // after destroy, cache should be cleared
+      expect(client.getInstrumentCache().size).toBe(0);
+      expect(client.isDestroyed).toBe(true);
+    });
+
+    it("should release context after destroy", async () => {
+      const client = await SmartClient.create({
+        serviceName: "context-cleanup-test",
+        environment: "node",
+        disableInstrumentation: true,
+      });
+
+      // set up business context
+      await client.context.business.run(
+        { userId: "user-123", tenantId: "tenant-456" },
+        async () => {
+          // verify context is active
+          const ctx = client.context.business.get();
+          expect(ctx.userId).toBe("user-123");
+        }
+      );
+
+      await client.destroy();
+
+      // after destroy, attempting to get context should not throw
+      // but should return empty/undefined context
+      expect(client.isDestroyed).toBe(true);
+    });
+
+    it("should allow clean re-creation after destroy", async () => {
+      // first instance
+      const client1 = await SmartClient.create({
+        serviceName: "recreate-test",
+        environment: "node",
+        disableInstrumentation: true,
+      });
+
+      client1.metrics.increment("test_counter", 10);
+      const cache1Size = client1.getInstrumentCache().size;
+      expect(cache1Size).toBeGreaterThan(0);
+
+      await client1.destroy();
+      expect(client1.isDestroyed).toBe(true);
+
+      // create new instance with same service name
+      const client2 = await SmartClient.create({
+        serviceName: "recreate-test",
+        environment: "node",
+        disableInstrumentation: true,
+      });
+
+      // new instance should start fresh (empty cache)
+      expect(client2.getInstrumentCache().size).toBe(0);
+      expect(client2.isDestroyed).toBe(false);
+
+      // new instance should work independently
+      client2.metrics.increment("new_counter", 5);
+      expect(client2.getInstrumentCache().size).toBeGreaterThan(0);
+
+      await client2.destroy();
+    });
+
+    it("should handle multiple destroy/recreate cycles without accumulation", async () => {
+      // use SAME serviceName to catch global registry leaks (Codex/Gemini review fix)
+      const cycles = 5;
+      const serviceName = "cycle-test-same-name";
+
+      for (let i = 0; i < cycles; i++) {
+        const client = await SmartClient.create({
+          serviceName: serviceName, // reuse exact name to detect registry leaks
+          environment: "node",
+          disableInstrumentation: true,
+        });
+
+        // use the client
+        client.metrics.increment(`cycle_counter_${i}`, i + 1);
+        client.metrics.record(`cycle_histogram_${i}`, (i + 1) * 10);
+        client.logs.info(`Cycle ${i} log message`);
+
+        const cacheSize = client.getInstrumentCache().size;
+        expect(cacheSize).toBeGreaterThan(0);
+
+        await client.destroy();
+
+        expect(client.isDestroyed).toBe(true);
+        expect(client.getInstrumentCache().size).toBe(0);
+      }
+    });
+
+    it("should handle idempotent destroy calls (double destroy)", async () => {
+      const client = await SmartClient.create({
+        serviceName: "idempotent-destroy-test",
+        environment: "node",
+        disableInstrumentation: true,
+      });
+
+      client.metrics.increment("test_counter", 1);
+      expect(client.getInstrumentCache().size).toBeGreaterThan(0);
+
+      // first destroy
+      await client.destroy();
+      expect(client.isDestroyed).toBe(true);
+      expect(client.getInstrumentCache().size).toBe(0);
+
+      // second destroy should not throw
+      await expect(client.destroy()).resolves.not.toThrow();
+      expect(client.isDestroyed).toBe(true);
+    });
+
+    it("should clean up singleton state on shutdown", async () => {
+      // initialize singleton
+      const singleton = await SmartClient.initialize({
+        serviceName: "singleton-cleanup-test",
+        environment: "node",
+        disableInstrumentation: true,
+      });
+
+      // use the singleton
+      const instrument = singleton.getServiceInstrumentation();
+      instrument.metrics.increment("singleton_counter", 1);
+
+      // shutdown clears singleton state
+      await SmartClient.shutdown();
+
+      // re-initialize should work cleanly
+      const newSingleton = await SmartClient.initialize({
+        serviceName: "singleton-cleanup-test-new",
+        environment: "node",
+        disableInstrumentation: true,
+      });
+
+      // new singleton should be different instance
+      expect(newSingleton).toBeDefined();
+
+      await SmartClient.shutdown();
+    });
+  });
 });

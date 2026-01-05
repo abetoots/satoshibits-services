@@ -6,6 +6,13 @@
  * - Context across async boundaries
  * - Worker threads context
  * - Cluster context sharing
+ *
+ * M2 Note: These tests REQUIRE real timers to verify actual AsyncLocalStorage
+ * context propagation across async boundaries. Using fake timers would defeat
+ * the purpose of these tests as they test real Node.js async behavior.
+ *
+ * To minimize CI flakiness, we use slightly increased timeout values (50ms
+ * instead of 5-10ms) to provide buffer against CI load variance.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -29,6 +36,7 @@ describe("Node.js Context Management", () => {
 
   beforeEach(async () => {
     // set up in-memory exporters for testing
+    // NOTE: Uses real timers to test actual AsyncLocalStorage context propagation
     testContext = await setupNodeTestClient({
       serviceName: "test-context",
     });
@@ -54,8 +62,8 @@ describe("Node.js Context Management", () => {
           expect(ctx1.userId).toBe("user-123");
           expect(ctx1.tenantId).toBe("tenant-456");
 
-          // Wait for async operation
-          await setTimeoutPromise(10);
+          // wait for async operation (M2: increased to 50ms for CI stability)
+          await setTimeoutPromise(50);
 
           // Context should still be available
           const ctx2 = client.context.business.get();
@@ -68,11 +76,12 @@ describe("Node.js Context Management", () => {
     it("should isolate context between different async chains", async () => {
       const results: Record<string, unknown>[] = [];
 
-      // Start two parallel async chains with different contexts
+      // start two parallel async chains with different contexts
+      // M2: using real timers with increased delays for CI stability
       const chain1 = client.context.business.run(
         { userId: "user-1" },
         async () => {
-          await setTimeoutPromise(5);
+          await setTimeoutPromise(25);
           results.push(client.context.business.get());
         },
       );
@@ -80,14 +89,14 @@ describe("Node.js Context Management", () => {
       const chain2 = client.context.business.run(
         { userId: "user-2" },
         async () => {
-          await setTimeoutPromise(10);
+          await setTimeoutPromise(50);
           results.push(client.context.business.get());
         },
       );
 
       await Promise.all([chain1, chain2]);
 
-      // Each chain should have its own context
+      // each chain should have its own context
       expect(results[0]!.userId).toBe("user-1");
       expect(results[1]!.userId).toBe("user-2");
     });
@@ -145,6 +154,7 @@ describe("Node.js Context Management", () => {
 
   describe("Context Across Async Boundaries", () => {
     it("should maintain context across setTimeout", async () => {
+      // M2: uses real timers with increased delays for CI stability
       await client.context.business.run(
         { timerContext: "timer-value" },
         async () => {
@@ -154,13 +164,14 @@ describe("Node.js Context Management", () => {
                 "timer-value",
               );
               resolve();
-            }, 10);
+            }, 50);
           });
         },
       );
     });
 
     it("should maintain context across setInterval", async () => {
+      // M2: uses real timers with increased delays for CI stability
       await client.context.business.run(
         { intervalContext: "interval-value" },
         async () => {
@@ -175,7 +186,7 @@ describe("Node.js Context Management", () => {
                 clearInterval(interval);
                 resolve();
               }
-            }, 5);
+            }, 25);
           });
         },
       );
@@ -217,6 +228,7 @@ describe("Node.js Context Management", () => {
       const { EventEmitter } = await import("events");
       const emitter = new EventEmitter();
 
+      // M2: uses real timers with increased delays for CI stability
       await client.context.business.run(
         { eventContext: "event-value" },
         async () => {
@@ -229,8 +241,8 @@ describe("Node.js Context Management", () => {
             });
           });
 
-          // Emit event after a small delay
-          setTimeout(() => emitter.emit("test"), 10);
+          // emit event after a small delay
+          setTimeout(() => emitter.emit("test"), 50);
 
           await promise;
         },
@@ -258,22 +270,22 @@ describe("Node.js Context Management", () => {
     });
 
     it("should maintain context when handling worker messages", async () => {
-      // Test that context is maintained during async worker communication
+      // M2: uses real timers with increased delays for CI stability
       await client.context.business.run({ requestId: "req-456" }, async () => {
-        // Context should be available before worker communication
+        // context should be available before worker communication
         expect(client.context.business.get().requestId).toBe("req-456");
 
-        // Simulate async worker response handling
+        // simulate async worker response handling
         await new Promise<void>((resolve) => {
-          // In real usage, this would be worker.on('message', ...)
+          // in real usage, this would be worker.on('message', ...)
           setTimeout(() => {
-            // Context should still be available in callback
+            // context should still be available in callback
             expect(client.context.business.get().requestId).toBe("req-456");
             resolve();
-          }, 0);
+          }, 25);
         });
 
-        // Context should still be available after worker communication
+        // context should still be available after worker communication
         expect(client.context.business.get().requestId).toBe("req-456");
       });
     });

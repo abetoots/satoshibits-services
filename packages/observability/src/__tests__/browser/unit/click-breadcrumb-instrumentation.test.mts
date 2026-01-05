@@ -280,6 +280,91 @@ describe("BrowserClickBreadcrumbInstrumentation", () => {
 
       expect(addBreadcrumb).toHaveBeenCalledTimes(3);
     });
+
+    it("should sample deterministically based on Math.random threshold (0.5 rate)", () => {
+      // deterministic test: mock Math.random to return alternating values
+      // implementation uses: if (Math.random() > sampleRate) skip
+      // so random <= sampleRate means sampled, random > sampleRate means skipped
+      const randomValues = [0.1, 0.6, 0.2, 0.7, 0.3, 0.8, 0.4, 0.9, 0.05, 0.95];
+      let callIndex = 0;
+      vi.spyOn(Math, "random").mockImplementation(() => {
+        const val = randomValues[callIndex % randomValues.length];
+        callIndex++;
+        return val;
+      });
+
+      instrumentation = new BrowserClickBreadcrumbInstrumentation({
+        interactionHandler,
+        sampleRate: 0.5,
+        throttleMs: 0,
+      });
+      instrumentation.enable();
+
+      for (let i = 0; i < 10; i++) {
+        const button = document.createElement("button");
+        button.id = `test-btn-${i}`;
+        container.appendChild(button);
+        button.click();
+      }
+
+      // exactly 5 should be sampled (0.1, 0.2, 0.3, 0.4, 0.05 are <= 0.5)
+      expect(addBreadcrumb).toHaveBeenCalledTimes(5);
+
+      vi.restoreAllMocks();
+    });
+
+    it("should sample when random equals sampleRate (boundary test)", () => {
+      // boundary condition: random() returning exactly the sampleRate
+      // implementation: if (Math.random() > sampleRate) skip
+      // so random == sampleRate is NOT > sampleRate, meaning it IS sampled
+      vi.spyOn(Math, "random").mockReturnValue(0.5);
+
+      instrumentation = new BrowserClickBreadcrumbInstrumentation({
+        interactionHandler,
+        sampleRate: 0.5,
+        throttleMs: 0,
+      });
+      instrumentation.enable();
+
+      const button = document.createElement("button");
+      button.id = "boundary-btn";
+      container.appendChild(button);
+      button.click();
+
+      // 0.5 is NOT > 0.5, so it IS sampled (inclusive boundary)
+      expect(addBreadcrumb).toHaveBeenCalledTimes(1);
+
+      vi.restoreAllMocks();
+    });
+
+    it("should sample at configured fractional rate (0.25) - statistical verification", () => {
+      // statistical test with tighter tolerance based on binomial distribution
+      // for n=100, p=0.25: σ = sqrt(p(1-p)/n) ≈ 0.043, 3σ ≈ 0.13
+      const totalClicks = 100;
+      const expectedRate = 0.25;
+      const tolerance = 0.13; // 3σ tolerance for 100 samples
+
+      instrumentation = new BrowserClickBreadcrumbInstrumentation({
+        interactionHandler,
+        sampleRate: expectedRate,
+        throttleMs: 0,
+      });
+      instrumentation.enable();
+
+      for (let i = 0; i < totalClicks; i++) {
+        const button = document.createElement("button");
+        button.id = `test-btn-quarter-${i}`;
+        container.appendChild(button);
+        button.click();
+      }
+
+      const capturedCount = addBreadcrumb.mock.calls.length;
+      const actualRate = capturedCount / totalClicks;
+
+      // verify rate is within 3σ (12%-38% range for 25% sample rate)
+      expect(actualRate).toBeGreaterThanOrEqual(expectedRate - tolerance);
+      expect(actualRate).toBeLessThanOrEqual(expectedRate + tolerance);
+    });
   });
 
   describe("throttling", () => {
