@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "skipLibCheck": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strictNullChecks": true,
+    "types": ["vitest", "node"]
+    // "lib": ["ESNext", "DOM"],
+  },
+  "include": ["vitest.config.mts", "eslint.config.mts"]
+}

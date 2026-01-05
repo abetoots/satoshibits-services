@@ -1,0 +1,19 @@
+{
+  "name": "observability-demo-cli",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "migrate": "tsx src/migrate-data.ts",
+    "queue": "tsx src/process-queue.ts",
+    "dev:migrate": "tsx watch src/migrate-data.ts",
+    "dev:queue": "tsx watch src/process-queue.ts"
+  },
+  "dependencies": {
+    "@satoshibits/observability": "file:../../.."
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.1",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}
