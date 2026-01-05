@@ -63,7 +63,7 @@ describe('Retry Classification (Issue #7)', () => {
     it('should use custom function for complete control over retry logic', () => {
       // api gateway service - retry only network and timeout
       configureRetryClassification({
-        isRetryable: (error, category) => {
+        isRetryable: (_error, category) => {
           return (
             category === ErrorCategory.TIMEOUT ||
             category === ErrorCategory.NETWORK
@@ -107,7 +107,7 @@ describe('Retry Classification (Issue #7)', () => {
     it('should prioritize custom function over default logic', () => {
       // make validation errors retryable (unusual but demonstrates control)
       configureRetryClassification({
-        isRetryable: (error, category) => {
+        isRetryable: (_error, category) => {
           return category === ErrorCategory.VALIDATION;
         },
       });
@@ -178,7 +178,7 @@ describe('Retry Classification (Issue #7)', () => {
 
   describe('Error handling in callbacks', () => {
     it('should handle errors in custom retry function gracefully', () => {
-      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => { /* noop */ });
 
       configureRetryClassification({
         isRetryable: () => {

@@ -189,8 +189,8 @@ describe("Browser/Node API Parity", () => {
 
     // Should not throw when calling context.business.run
     expect(() => {
-      client.context.business.run({ testKey: "testValue" }, () => {
-        // Context execution should work
+      void client.context.business.run({ testKey: "testValue" }, () => {
+        // context execution should work
       });
     }).not.toThrow();
   });

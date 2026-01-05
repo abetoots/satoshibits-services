@@ -104,7 +104,7 @@ function createSpanTrackingTracer() {
           event.timestamp = normalizedTime;
         } else if (attributesOrTime && typeof attributesOrTime === "object" && !Array.isArray(attributesOrTime) && !(attributesOrTime instanceof Date)) {
           // attributes case
-          event.attributes = attributesOrTime as Record<string, unknown>;
+          event.attributes = attributesOrTime;
           const ts = normalizeTimestamp(timestamp);
           if (ts !== undefined) {
             event.timestamp = ts;
@@ -405,8 +405,8 @@ describe("Span Events and Links Tests (M5 Fix)", () => {
       span.end();
 
       const trackedSpan = mockTracer.getSpan("linked-operation");
-      expect(trackedSpan!.links[0].context.traceId).toBe("linked-trace");
-      expect(trackedSpan!.links[0].attributes).toBeUndefined();
+      expect(trackedSpan?.links[0]?.context.traceId).toBe("linked-trace");
+      expect(trackedSpan?.links[0]?.attributes).toBeUndefined();
     });
 
     it("should handle unsampled linked traces", () => {
@@ -428,7 +428,7 @@ describe("Span Events and Links Tests (M5 Fix)", () => {
       span.end();
 
       const trackedSpan = mockTracer.getSpan("follow-unsampled");
-      expect(trackedSpan!.links[0].context.traceFlags).toBe(TraceFlags.NONE);
+      expect(trackedSpan?.links[0]?.context.traceFlags).toBe(TraceFlags.NONE);
     });
   });
 
@@ -455,8 +455,8 @@ describe("Span Events and Links Tests (M5 Fix)", () => {
       span.end();
 
       const trackedSpan = mockTracer.getSpan("async-job");
-      expect(trackedSpan!.links).toHaveLength(1);
-      expect(trackedSpan!.links[0].context.traceId).toBe("trigger-trace");
+      expect(trackedSpan?.links).toHaveLength(1);
+      expect(trackedSpan?.links[0]?.context.traceId).toBe("trigger-trace");
       expect(trackedSpan!.events).toHaveLength(4);
       expect(trackedSpan!.events.map((e) => e.name)).toEqual([
         "job.started",
@@ -493,9 +493,9 @@ describe("Span Events and Links Tests (M5 Fix)", () => {
       expect(new Set(spanIds).size).toBe(3);
 
       // verify events are correctly associated
-      expect(allSpans[0]!.events[0].attributes?.requestId).toBe("req-001");
-      expect(allSpans[1]!.events[0].attributes?.requestId).toBe("req-002");
-      expect(allSpans[2]!.events[0].attributes?.requestId).toBe("req-003");
+      expect(allSpans[0]?.events[0]?.attributes?.requestId).toBe("req-001");
+      expect(allSpans[1]?.events[0]?.attributes?.requestId).toBe("req-002");
+      expect(allSpans[2]?.events[0]?.attributes?.requestId).toBe("req-003");
     });
 
     it("should return first span with getSpan for backward compatibility", () => {
@@ -536,9 +536,9 @@ describe("Span Events and Links Tests (M5 Fix)", () => {
       consumerSpan.end();
 
       const trackedSpan = mockTracer.getSpan("kafka.message.process");
-      expect(trackedSpan!.links[0].context.traceId).toBe("kafka-producer-trace");
-      expect(trackedSpan!.events).toHaveLength(3);
-      expect(trackedSpan!.attributes["messaging.system"]).toBe("kafka");
+      expect(trackedSpan?.links[0]?.context.traceId).toBe("kafka-producer-trace");
+      expect(trackedSpan?.events).toHaveLength(3);
+      expect(trackedSpan?.attributes["messaging.system"]).toBe("kafka");
     });
 
     it("should support HTTP request with retry events", () => {
@@ -556,13 +556,13 @@ describe("Span Events and Links Tests (M5 Fix)", () => {
       span.end();
 
       const trackedSpan = mockTracer.getSpan("http.request");
-      expect(trackedSpan!.events).toHaveLength(5);
+      expect(trackedSpan?.events).toHaveLength(5);
 
       // verify retry flow is captured
-      const attemptEvents = trackedSpan!.events.filter((e) => e.name === "request.attempt");
+      const attemptEvents = trackedSpan?.events.filter((e) => e.name === "request.attempt") ?? [];
       expect(attemptEvents).toHaveLength(2);
-      expect(attemptEvents[0].attributes?.attemptNumber).toBe(1);
-      expect(attemptEvents[1].attributes?.attemptNumber).toBe(2);
+      expect(attemptEvents[0]?.attributes?.attemptNumber).toBe(1);
+      expect(attemptEvents[1]?.attributes?.attemptNumber).toBe(2);
     });
 
     it("should support cron job with linked scheduled task trace", () => {
@@ -586,8 +586,8 @@ describe("Span Events and Links Tests (M5 Fix)", () => {
       span.end();
 
       const trackedSpan = mockTracer.getSpan("cron.daily-cleanup");
-      expect(trackedSpan!.links[0].attributes?.["cron.schedule"]).toBe("0 0 * * *");
-      expect(trackedSpan!.events[3].attributes?.totalRowsDeleted).toBe(47201);
+      expect(trackedSpan?.links[0]?.attributes?.["cron.schedule"]).toBe("0 0 * * *");
+      expect(trackedSpan?.events[3]?.attributes?.totalRowsDeleted).toBe(47201);
     });
   });
 });

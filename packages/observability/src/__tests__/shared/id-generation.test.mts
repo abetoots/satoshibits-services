@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { ContextEnricher } from '../../enrichment/context.mjs';
 
 describe('ID Generation Configuration (Issue #10)', () => {
@@ -15,7 +15,8 @@ describe('ID Generation Configuration (Issue #10)', () => {
 
       // L1 fix: defaults now return plain UUID for portability
       // accepts both crypto.randomUUID format and fallback format
-      expect(context.sessionId).toMatch(UUID_REGEX.test(context.sessionId!) ? UUID_REGEX : FALLBACK_ID_REGEX);
+      const sessionId = context.sessionId ?? "";
+      expect(sessionId).toMatch(UUID_REGEX.test(sessionId) ? UUID_REGEX : FALLBACK_ID_REGEX);
     });
 
     it('should generate request IDs as plain UUIDs (no prefix)', () => {
@@ -23,7 +24,8 @@ describe('ID Generation Configuration (Issue #10)', () => {
       const context = enricher.getContext();
 
       // L1 fix: defaults now return plain UUID for portability
-      expect(context.requestId).toMatch(UUID_REGEX.test(context.requestId!) ? UUID_REGEX : FALLBACK_ID_REGEX);
+      const requestId = context.requestId ?? "";
+      expect(requestId).toMatch(UUID_REGEX.test(requestId) ? UUID_REGEX : FALLBACK_ID_REGEX);
     });
 
     it('should generate unique session IDs for each instance', () => {
@@ -201,14 +203,14 @@ describe('ID Generation Configuration (Issue #10)', () => {
     it('should use default generator when resetting session without custom generator', () => {
       const enricher = new ContextEnricher();
 
-      const initialSessionId = enricher.getContext().sessionId;
+      const initialSessionId = enricher.getContext().sessionId ?? "";
       // L1 fix: defaults now return plain UUID for portability
-      expect(initialSessionId).toMatch(UUID_REGEX.test(initialSessionId!) ? UUID_REGEX : FALLBACK_ID_REGEX);
+      expect(initialSessionId).toMatch(UUID_REGEX.test(initialSessionId) ? UUID_REGEX : FALLBACK_ID_REGEX);
 
       enricher.resetSession();
 
-      const newSessionId = enricher.getContext().sessionId;
-      expect(newSessionId).toMatch(UUID_REGEX.test(newSessionId!) ? UUID_REGEX : FALLBACK_ID_REGEX);
+      const newSessionId = enricher.getContext().sessionId ?? "";
+      expect(newSessionId).toMatch(UUID_REGEX.test(newSessionId) ? UUID_REGEX : FALLBACK_ID_REGEX);
       expect(newSessionId).not.toBe(initialSessionId);
     });
   });

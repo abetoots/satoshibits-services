@@ -245,10 +245,11 @@ describe("Logging API - Shared Functionality", () => {
 
   describe("Integration with Tracing", () => {
     it("Should log within span context", async () => {
-      await client.traces.withSpan("traced_operation", async () => {
+      await client.traces.withSpan("traced_operation", () => {
         client.logs.info("Operation started", { step: "initialization" });
         client.logs.debug("Processing data", { recordCount: 42 });
         client.logs.info("Operation completed", { step: "finalization" });
+        return Promise.resolve();
       });
 
       // Verify both tracing and logging worked
@@ -265,11 +266,12 @@ describe("Logging API - Shared Functionality", () => {
       await client.traces.withSpan("parent_operation", async () => {
         client.logs.info("Parent operation started");
 
-        await client.traces.withSpan("child_operation", async () => {
+        await client.traces.withSpan("child_operation", () => {
           client.logs.debug("Child operation processing");
           client.logs.warn("Child operation warning", {
             concern: "high_latency",
           });
+          return Promise.resolve();
         });
 
         client.logs.info("Parent operation completed");
@@ -319,11 +321,11 @@ describe("Logging API - Shared Functionality", () => {
       const boundaryError = new Error("Boundary caught error");
 
       const result = await client.errors.boundary(
-        async () => {
+        () => {
           client.logs.info("Entering protected operation");
           throw boundaryError;
         },
-        async (error) => {
+        (error) => {
           client.logs.warn("Error boundary activated", {
             errorMessage: error.message,
           });

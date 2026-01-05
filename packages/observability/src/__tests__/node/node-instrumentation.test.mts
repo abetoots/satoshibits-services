@@ -73,7 +73,7 @@ describe("Node.js Instrumentation Integration", () => {
   it("enriches metrics with business context and sanitizes attributes", async () => {
     const instrument = client.getServiceInstrumentation();
 
-    await client.context.business.run({ tenantId: "tenant-123" }, async () => {
+    await client.context.business.run({ tenantId: "tenant-123" }, () => {
       instrument.metrics.increment("node.instrumentation.counter", 1, {
         apiKey: "sk_live_secret",
         region: "us-east-1",
@@ -95,7 +95,7 @@ describe("Node.js Instrumentation Integration", () => {
     expect(counterPoint?.attributes.tenant_id).toBe("tenant-123");
   });
 
-  it("reuses scoped instrumentation across calls", async () => {
+  it("reuses scoped instrumentation across calls", () => {
     const instrument = client.getInstrumentation("orders-service", "1.0.0");
     const instrument2 = client.getInstrumentation("orders-service", "1.0.0");
 
@@ -115,7 +115,7 @@ describe("Node.js Instrumentation Integration", () => {
 
     // withSpan should handle errors correctly and rethrow
     await expect(
-      instrument.traces.withSpan("failing-operation", async () => {
+      instrument.traces.withSpan("failing-operation", () => {
         const error = new Error("integration failure");
         // errors.record should sanitize sensitive data
         instrument.errors.record(error, { apiKey: "sk_live_123" });

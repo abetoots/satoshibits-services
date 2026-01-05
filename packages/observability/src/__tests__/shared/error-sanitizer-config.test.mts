@@ -6,12 +6,11 @@
  * instead of being forced to use hardcoded GDPR/Stripe patterns.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   configureErrorSanitizer,
   resetErrorSanitizer,
   extractErrorContext,
-  type ErrorSanitizerPreset,
 } from "../../smart-errors.mjs";
 
 describe("Error Sanitizer Configuration (API Boundary Fix)", () => {

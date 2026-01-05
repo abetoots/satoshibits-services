@@ -15,19 +15,22 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { initialize } from "../../node.mjs";
 
+// type for process event listeners
+type ProcessListener = (...args: unknown[]) => void;
+
 function snapshotListeners(
   event: NodeJS.Signals | "uncaughtException" | "unhandledRejection",
-) {
-  return new Set(process.listeners(event as NodeJS.Signals));
+): Set<ProcessListener> {
+  return new Set(process.listeners(event as NodeJS.Signals) as ProcessListener[]);
 }
 
 describe("Node entrypoint", () => {
   let spanExporter: InMemorySpanExporter;
   let metricExporter: InMemoryMetricExporter;
   let metricReader: PeriodicExportingMetricReader;
-  let initialUncaught: Set<Function>;
-  let initialRejection: Set<Function>;
-  let initialSigterm: Set<Function>;
+  let initialUncaught: Set<ProcessListener>;
+  let initialRejection: Set<ProcessListener>;
+  let initialSigterm: Set<ProcessListener>;
 
   beforeEach(() => {
     spanExporter = new InMemorySpanExporter();

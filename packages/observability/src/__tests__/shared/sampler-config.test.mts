@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SmartSampler, normalizeHash } from '../../sampling.mjs';
-import { Context, SpanKind, trace, context, TraceFlags, SpanContext, Link } from '@opentelemetry/api';
+import { SpanKind, trace, context, TraceFlags, type SpanContext, type Link } from '@opentelemetry/api';
 import { SamplingDecision } from '@opentelemetry/sdk-trace-base';
 
 // test subclass to expose protected methods for unit testing
@@ -99,7 +99,7 @@ describe('SmartSampler config logic (unit)', () => {
     });
 
     it('should use custom isImportantOperation callback when provided', () => {
-      const customCallback = vi.fn(({ spanName }) => {
+      const customCallback = vi.fn(({ spanName }: { spanName: string }) => {
         // healthcare-specific logic
         return spanName.includes('patient-admission') || spanName.includes('emergency');
       });
@@ -158,7 +158,7 @@ describe('SmartSampler config logic (unit)', () => {
       expect(customCallback).toHaveBeenCalledWith({
         spanName: 'test-operation',
         attributes: attributes,
-        businessContext: expect.any(Object),
+        businessContext: expect.any(Object) as unknown as object,
       });
     });
 
@@ -245,7 +245,7 @@ describe('SmartSampler config logic (unit)', () => {
     });
 
     it('should handle callback errors gracefully', () => {
-      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => { /* noop */ });
 
       const sampler = new SmartSampler({
         baseRate: 0.1,
@@ -1064,7 +1064,7 @@ describe('SmartSampler tier rate configuration (M8)', () => {
   });
 
   it('should reset to defaults if any tier rate is invalid', () => {
-    const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
     const sampler = new SmartSampler({
       tierRates: {

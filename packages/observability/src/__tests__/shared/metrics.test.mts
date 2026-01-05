@@ -245,8 +245,8 @@ describe("Metrics API - Shared Functionality", () => {
             table: "users",
             operation: "SELECT",
             unit: "ms",
-          }),
-        }),
+          }) as unknown as Record<string, unknown>,
+        }) as unknown,
       );
 
       vi.useRealTimers();
@@ -430,7 +430,7 @@ describe("Metrics API - Shared Functionality", () => {
     it("should handle immediate resolve with 0ms delay (Gemini fix)", async () => {
       vi.useFakeTimers();
 
-      const result = await client.metrics.timing("immediate_op", async () => {
+      const result = await client.metrics.timing("immediate_op", () => {
         return "immediate-result";
       });
 
@@ -529,7 +529,7 @@ describe("Metrics API - Shared Functionality", () => {
 
   describe("High-Cardinality Metric Name Validation", () => {
     it("should detect and sanitize metric names with curly brace variables", () => {
-      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => { /* noop */ });
 
       // note: MockObservabilityClient doesn't validate, so we can't test rejection
       // but we can verify the pattern would be detected in real client
@@ -544,7 +544,7 @@ describe("Metrics API - Shared Functionality", () => {
     });
 
     it("should detect and sanitize metric names with dollar-brace template literals", () => {
-      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => { /* noop */ });
 
       const metricName = "request_${requestId}_duration";
       client.metrics.record(metricName, 100);
@@ -556,7 +556,7 @@ describe("Metrics API - Shared Functionality", () => {
     });
 
     it("should detect and sanitize metric names with double-brace variables", () => {
-      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => { /* noop */ });
 
       const metricName = "api_{{tenantId}}_calls";
       client.metrics.gauge(metricName, 42);
@@ -613,49 +613,49 @@ describe("Metrics API - Shared Functionality", () => {
   // Use scopeNameValidation: 'strict' to get throw behavior
   describe("High-Cardinality Scope Validation", () => {
     it("should warn for scope names containing user IDs (default mode)", () => {
-      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => { /* noop */ });
       client.getInstrumentation("user-123");
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/High-cardinality scope name detected.*user IDs/i));
       consoleSpy.mockRestore();
     });
 
     it("should warn for scope names containing request IDs", () => {
-      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => { /* noop */ });
       client.getInstrumentation("request-abc123456");
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/High-cardinality scope name detected.*request IDs/i));
       consoleSpy.mockRestore();
     });
 
     it("should warn for scope names containing UUIDs", () => {
-      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => { /* noop */ });
       client.getInstrumentation("550e8400-e29b-41d4-a716-446655440000");
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/High-cardinality scope name detected.*UUIDs/i));
       consoleSpy.mockRestore();
     });
 
     it("should warn for scope names containing timestamps", () => {
-      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => { /* noop */ });
       client.getInstrumentation("operation-1234567890123");
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/High-cardinality scope name detected.*timestamps/i));
       consoleSpy.mockRestore();
     });
 
     it("should warn for scope names containing session IDs", () => {
-      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => { /* noop */ });
       client.getInstrumentation("session-abc123def456");
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/High-cardinality scope name detected.*session IDs/i));
       consoleSpy.mockRestore();
     });
 
     it("should warn for scope names containing tenant IDs", () => {
-      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => { /* noop */ });
       client.getInstrumentation("tenant-456");
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/High-cardinality scope name detected.*tenant IDs/i));
       consoleSpy.mockRestore();
     });
 
     it("should warn for scope names containing customer IDs", () => {
-      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => { /* noop */ });
       client.getInstrumentation("customer_789");
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/High-cardinality scope name detected.*customer IDs/i));
       consoleSpy.mockRestore();
@@ -678,7 +678,7 @@ describe("Metrics API - Shared Functionality", () => {
     });
 
     it("should warn for unusually long scope names", () => {
-      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => { /* noop */ });
       const longScopeName = "a".repeat(150);
 
       // Should not throw, but should warn
@@ -694,7 +694,7 @@ describe("Metrics API - Shared Functionality", () => {
     });
 
     it("should provide helpful warning messages with examples", () => {
-      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => { /* noop */ });
 
       client.getInstrumentation("user/123");
 
@@ -716,8 +716,8 @@ describe("Metrics API - Shared Functionality", () => {
     });
 
     it("should cache valid scopes and reuse them", () => {
-      const scope1 = client.getInstrumentation("my-service/module-a");
-      const scope2 = client.getInstrumentation("my-service/module-a");
+      const scope1 = client.getInstrumentation("my-service/module-a") as unknown;
+      const scope2 = client.getInstrumentation("my-service/module-a") as unknown;
 
       // Should return the same cached instance
       expect(scope1).toBe(scope2);
@@ -823,7 +823,7 @@ describe("Metrics API - Shared Functionality", () => {
     });
 
     it("should handle scoped instruments with invalid inputs", () => {
-      const scoped = client.getInstrumentation("my-app/test", "1.0.0");
+      const scoped = client.getInstrumentation("my-app/test", "1.0.0") as { metrics: { increment: (n: string, v?: number) => void; gauge: (n: string, v: number) => void; record: (n: string, v: number) => void } };
 
       // mock scoped instruments also don't validate
       expect(() => {

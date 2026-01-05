@@ -15,7 +15,7 @@
  * - Added shutdown vs usage race condition test (Gemini)
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { SmartClient } from "../../index.mjs";
 import {
   clearAllInstances,
@@ -26,7 +26,6 @@ import type { ScopedInstrument } from "../../internal/scoped-instrument.mjs";
 import {
   setupNodeTestClient,
   teardownTestClient,
-  waitForMetricExport,
   type TestContext,
 } from "../test-utils/setup-helpers.mjs";
 
@@ -34,7 +33,7 @@ import {
  * Helper to create truly concurrent async operations using setImmediate.
  * Unlike Promise.resolve(), this ensures calls happen in separate event loop ticks.
  */
-function runConcurrently<T>(tasks: Array<() => T>): Promise<T[]> {
+function runConcurrently<T>(tasks: (() => T)[]): Promise<T[]> {
   return Promise.all(
     tasks.map(
       (task) =>
@@ -48,7 +47,7 @@ function runConcurrently<T>(tasks: Array<() => T>): Promise<T[]> {
 /**
  * Helper using queueMicrotask for microtask-level concurrency
  */
-function runConcurrentlyMicrotask<T>(tasks: Array<() => T>): Promise<T[]> {
+function runConcurrentlyMicrotask<T>(tasks: (() => T)[]): Promise<T[]> {
   return Promise.all(
     tasks.map(
       (task) =>
@@ -119,7 +118,7 @@ describe("Concurrency Safety", () => {
         "user",
       ];
 
-      const tasks: Array<() => { scope: string; instrument: ScopedInstrument }> = [];
+      const tasks: (() => { scope: string; instrument: ScopedInstrument })[] = [];
 
       for (let i = 0; i < 10; i++) {
         for (const scope of scopes) {
@@ -382,7 +381,7 @@ describe("Concurrency Safety", () => {
             await new Promise((resolve) => setTimeout(resolve, 5 + chainId));
 
             const ctx = client.context.business.get();
-            results.push({ chainId, userId: ctx.userId as string | undefined });
+            results.push({ chainId, userId: ctx.userId });
           })
         );
 
@@ -525,7 +524,7 @@ describe("Concurrency Safety", () => {
       // if we got an instrument, it should be usable (even if no-op)
       if (duringShutdownInstrument && !threwError) {
         expect(() => {
-          duringShutdownInstrument!.metrics.increment("test", 1);
+          duringShutdownInstrument.metrics.increment("test", 1);
         }).not.toThrow();
       }
     });
@@ -599,7 +598,7 @@ describe("Concurrency Safety", () => {
                 try {
                   resolve(op());
                 } catch (e) {
-                  reject(e);
+                  reject(e instanceof Error ? e : new Error(String(e)));
                 }
               });
             })

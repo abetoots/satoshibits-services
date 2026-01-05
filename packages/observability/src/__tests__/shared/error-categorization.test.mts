@@ -215,7 +215,7 @@ describe('Error Categorization (Issue #12)', () => {
 
   describe('Error handling in callbacks', () => {
     it('should handle errors in custom categorizer gracefully', () => {
-      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => { /* noop */ });
 
       configureErrorCategorization({
         customCategorizer: () => {
@@ -236,7 +236,7 @@ describe('Error Categorization (Issue #12)', () => {
     });
 
     it('should handle errors in custom rules gracefully', () => {
-      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => { /* noop */ });
 
       configureErrorCategorization({
         customRules: [

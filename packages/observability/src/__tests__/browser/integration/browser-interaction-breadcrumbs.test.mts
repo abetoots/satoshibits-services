@@ -35,7 +35,7 @@ describe("Browser Interaction Breadcrumbs Integration", () => {
   });
 
   describe("SDK Configuration", () => {
-    it("should not enable click breadcrumbs by default", () => {
+    it("should not enable click breadcrumbs by default", async () => {
       const config: BrowserClientConfig = {
         environment: "browser",
         serviceName: "test-app",
@@ -49,7 +49,7 @@ describe("Browser Interaction Breadcrumbs Integration", () => {
       };
 
       sdk = new BrowserSDK(config);
-      sdk.start();
+      await sdk.start();
 
       const button = document.createElement("button");
       button.id = "test-btn";
@@ -64,7 +64,7 @@ describe("Browser Interaction Breadcrumbs Integration", () => {
       );
     });
 
-    it("should enable click breadcrumbs when configured", () => {
+    it("should enable click breadcrumbs when configured", async () => {
       const config: BrowserClientConfig = {
         environment: "browser",
         serviceName: "test-app",
@@ -78,7 +78,7 @@ describe("Browser Interaction Breadcrumbs Integration", () => {
       };
 
       sdk = new BrowserSDK(config);
-      sdk.start();
+      await sdk.start();
 
       const button = document.createElement("button");
       button.id = "test-btn";
@@ -89,13 +89,13 @@ describe("Browser Interaction Breadcrumbs Integration", () => {
       expect(interactionHandler).toHaveBeenCalledWith(
         "ui.click",
         expect.objectContaining({
-          selector: expect.stringContaining("button#test-btn"),
+          selector: expect.stringContaining("button#test-btn") as unknown as string,
           tag: "button",
         }),
       );
     });
 
-    it("should enable form breadcrumbs when configured", () => {
+    it("should enable form breadcrumbs when configured", async () => {
       const config: BrowserClientConfig = {
         environment: "browser",
         serviceName: "test-app",
@@ -109,7 +109,7 @@ describe("Browser Interaction Breadcrumbs Integration", () => {
       };
 
       sdk = new BrowserSDK(config);
-      sdk.start();
+      await sdk.start();
 
       const form = document.createElement("form");
       form.id = "test-form";
@@ -127,7 +127,7 @@ describe("Browser Interaction Breadcrumbs Integration", () => {
       );
     });
 
-    it("should enable rage click detection when configured", () => {
+    it("should enable rage click detection when configured", async () => {
       const config: BrowserClientConfig = {
         environment: "browser",
         serviceName: "test-app",
@@ -142,7 +142,7 @@ describe("Browser Interaction Breadcrumbs Integration", () => {
       };
 
       sdk = new BrowserSDK(config);
-      sdk.start();
+      await sdk.start();
 
       const button = document.createElement("button");
       button.id = "rage-btn";
@@ -164,7 +164,7 @@ describe("Browser Interaction Breadcrumbs Integration", () => {
   });
 
   describe("Configuration Options", () => {
-    it("should respect blockedSelectors config", () => {
+    it("should respect blockedSelectors config", async () => {
       const config: BrowserClientConfig = {
         environment: "browser",
         serviceName: "test-app",
@@ -179,7 +179,7 @@ describe("Browser Interaction Breadcrumbs Integration", () => {
       };
 
       sdk = new BrowserSDK(config);
-      sdk.start();
+      await sdk.start();
 
       const button = document.createElement("button");
       button.className = "secret-action";
@@ -193,7 +193,7 @@ describe("Browser Interaction Breadcrumbs Integration", () => {
       );
     });
 
-    it("should respect clickBreadcrumbSampleRate config", () => {
+    it("should respect clickBreadcrumbSampleRate config", async () => {
       const config: BrowserClientConfig = {
         environment: "browser",
         serviceName: "test-app",
@@ -208,7 +208,7 @@ describe("Browser Interaction Breadcrumbs Integration", () => {
       };
 
       sdk = new BrowserSDK(config);
-      sdk.start();
+      await sdk.start();
 
       const button = document.createElement("button");
       button.id = "test-btn";
@@ -222,7 +222,7 @@ describe("Browser Interaction Breadcrumbs Integration", () => {
       );
     });
 
-    it("should respect clickThrottleMs config", () => {
+    it("should respect clickThrottleMs config", async () => {
       const config: BrowserClientConfig = {
         environment: "browser",
         serviceName: "test-app",
@@ -237,7 +237,7 @@ describe("Browser Interaction Breadcrumbs Integration", () => {
       };
 
       sdk = new BrowserSDK(config);
-      sdk.start();
+      await sdk.start();
 
       const button = document.createElement("button");
       button.id = "test-btn";
@@ -254,7 +254,7 @@ describe("Browser Interaction Breadcrumbs Integration", () => {
       expect(clickCalls).toHaveLength(1);
     });
 
-    it("should respect rageClickWindowMs config", () => {
+    it("should respect rageClickWindowMs config", async () => {
       vi.useFakeTimers();
 
       const config: BrowserClientConfig = {
@@ -272,7 +272,7 @@ describe("Browser Interaction Breadcrumbs Integration", () => {
       };
 
       sdk = new BrowserSDK(config);
-      sdk.start();
+      await sdk.start();
 
       const button = document.createElement("button");
       button.id = "test-btn";
@@ -295,7 +295,7 @@ describe("Browser Interaction Breadcrumbs Integration", () => {
   });
 
   describe("Multiple Instrumentations", () => {
-    it("should enable multiple breadcrumb types simultaneously", () => {
+    it("should enable multiple breadcrumb types simultaneously", async () => {
       const config: BrowserClientConfig = {
         environment: "browser",
         serviceName: "test-app",
@@ -311,7 +311,7 @@ describe("Browser Interaction Breadcrumbs Integration", () => {
       };
 
       sdk = new BrowserSDK(config);
-      sdk.start();
+      await sdk.start();
 
       // test click
       const button = document.createElement("button");
@@ -352,7 +352,7 @@ describe("Browser Interaction Breadcrumbs Integration", () => {
       };
 
       sdk = new BrowserSDK(config);
-      sdk.start();
+      await sdk.start();
 
       await sdk.shutdown();
       sdk = undefined;

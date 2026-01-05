@@ -5,7 +5,7 @@
  * RED: These tests expose the bug - forceFlush/shutdown resolve before export completes.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { ReadableSpan, SpanExporter } from "@opentelemetry/sdk-trace-base";
 import { ExportResultCode } from "@opentelemetry/core";
@@ -46,19 +46,21 @@ describe("BrowserBatchSpanProcessor - Flush Awaiting Bug", () => {
     it("should wait for in-flight export to complete before resolving", async () => {
       let exportCallbackCalled = false;
 
+      const exportFn = vi.fn(
+        (
+          _spans: ReadableSpan[],
+          resultCallback: (result: { code: number }) => void,
+        ) => {
+          // simulate async network call
+          setTimeout(() => {
+            exportCallbackCalled = true;
+            resultCallback({ code: ExportResultCode.SUCCESS });
+          }, 10);
+        },
+      );
+
       const mockExporter: SpanExporter = {
-        export: vi.fn(
-          (
-            _spans: ReadableSpan[],
-            resultCallback: (result: { code: number }) => void,
-          ) => {
-            // simulate async network call
-            setTimeout(() => {
-              exportCallbackCalled = true;
-              resultCallback({ code: ExportResultCode.SUCCESS });
-            }, 10);
-          },
-        ),
+        export: exportFn,
         shutdown: vi.fn().mockResolvedValue(undefined),
       };
 
@@ -69,7 +71,7 @@ describe("BrowserBatchSpanProcessor - Flush Awaiting Bug", () => {
 
       // add span - triggers export
       processor.onEnd(createMockSpan("test-span"));
-      expect(mockExporter.export).toHaveBeenCalledTimes(1);
+      expect(exportFn).toHaveBeenCalledTimes(1);
 
       // forceFlush should wait for the pending export
       await processor.forceFlush();
@@ -83,6 +85,8 @@ describe("BrowserBatchSpanProcessor - Flush Awaiting Bug", () => {
     it("should complete all pending exports before resolving", async () => {
       let exportCallbackCalled = false;
 
+      const shutdownFn = vi.fn().mockResolvedValue(undefined);
+
       const mockExporter: SpanExporter = {
         export: vi.fn(
           (
@@ -95,7 +99,7 @@ describe("BrowserBatchSpanProcessor - Flush Awaiting Bug", () => {
             }, 10);
           },
         ),
-        shutdown: vi.fn().mockResolvedValue(undefined),
+        shutdown: shutdownFn,
       };
 
       const processor = new BrowserBatchSpanProcessor(mockExporter, {
@@ -110,7 +114,7 @@ describe("BrowserBatchSpanProcessor - Flush Awaiting Bug", () => {
 
       // BUG: shutdown resolves before export callback fires
       expect(exportCallbackCalled).toBe(true);
-      expect(mockExporter.shutdown).toHaveBeenCalled();
+      expect(shutdownFn).toHaveBeenCalled();
     });
 
     it("should not lose data on rapid shutdown", async () => {

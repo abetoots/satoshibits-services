@@ -96,9 +96,9 @@ describe("Tracing API - Shared Functionality", () => {
 
       const result = await client.traces.withSpan(
         "auto_span_operation",
-        async () => {
+        () => {
           executedInSpan = true;
-          return "success";
+          return Promise.resolve("success");
         },
       );
 
@@ -115,7 +115,7 @@ describe("Tracing API - Shared Functionality", () => {
       const testError = new Error("Span operation failed");
 
       await expect(
-        client.traces.withSpan("failing_span", async () => {
+        client.traces.withSpan("failing_span", () => {
           throw testError;
         }),
       ).rejects.toThrow("Span operation failed");
@@ -137,8 +137,8 @@ describe("Tracing API - Shared Functionality", () => {
     it("Should support withSpan with attributes", async () => {
       const result = await client.traces.withSpan(
         "attributed_operation",
-        async () => {
-          return { processed: 42 };
+        () => {
+          return Promise.resolve({ processed: 42 });
         },
         {
           attributes: {
@@ -160,8 +160,8 @@ describe("Tracing API - Shared Functionality", () => {
 
   describe("Top-level Trace Method", () => {
     it("Should provide convenient trace method", async () => {
-      const result = await client.trace("convenience_operation", async () => {
-        return "traced_result";
+      const result = await client.trace("convenience_operation", () => {
+        return Promise.resolve("traced_result");
       });
 
       expect(result).toBe("traced_result");
@@ -174,7 +174,7 @@ describe("Tracing API - Shared Functionality", () => {
     it("Should handle trace method with options", async () => {
       const result = await client.trace(
         "optioned_trace",
-        async () => "success",
+        () => Promise.resolve("success"),
         { attributes: { level: "high" } },
       );
 
@@ -220,8 +220,9 @@ describe("Tracing API - Shared Functionality", () => {
       await client.traces.withSpan("outer_operation", async () => {
         results.push("outer_start");
 
-        await client.traces.withSpan("inner_operation", async () => {
+        await client.traces.withSpan("inner_operation", () => {
           results.push("inner_executed");
+          return Promise.resolve();
         });
 
         results.push("outer_end");
@@ -287,12 +288,12 @@ describe("Tracing API - Shared Functionality", () => {
 
   describe("Integration with Other APIs", () => {
     it("Should work with metrics timing", async () => {
-      await client.traces.withSpan("traced_metrics", async () => {
-        // Record metrics within span
+      await client.traces.withSpan("traced_metrics", () => {
+        // record metrics within span
         client.metrics.increment("operations_count");
         client.metrics.gauge("current_load", 0.75);
 
-        await client.metrics.timing("nested_operation", async () => {
+        return client.metrics.timing("nested_operation", async () => {
           await new Promise((resolve) => setTimeout(resolve, 5));
         });
       });
@@ -309,8 +310,9 @@ describe("Tracing API - Shared Functionality", () => {
     it("Should work with error recording", async () => {
       const testError = new Error("Integration test error");
 
-      await client.traces.withSpan("error_integration", async () => {
+      await client.traces.withSpan("error_integration", () => {
         client.errors.record(testError, { source: "manual" });
+        return Promise.resolve();
       });
 
       expect(client.traces.hasSpan("error_integration")).toBe(true);
@@ -322,12 +324,13 @@ describe("Tracing API - Shared Functionality", () => {
     });
 
     it("Should work with context and breadcrumbs", async () => {
-      await client.traces.withSpan("context_integration", async () => {
+      await client.traces.withSpan("context_integration", () => {
         client.context.addBreadcrumb("Started processing", { step: 1 });
         client.context.setUser("user123", { role: "admin" });
         client.context.addTag("environment", "test");
 
         client.context.addBreadcrumb("Completed processing", { step: 2 });
+        return Promise.resolve();
       });
 
       expect(client.traces.hasSpan("context_integration")).toBe(true);

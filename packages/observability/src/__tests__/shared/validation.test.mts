@@ -30,7 +30,7 @@ describe('Input Validation (Real Client Integration)', () => {
 
   describe('Metric Name Validation', () => {
     it('should handle null metric names gracefully with descriptive warning', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       // observability libraries must not throw - fail gracefully
       expect(() => {
@@ -40,7 +40,7 @@ describe('Input Validation (Real Client Integration)', () => {
 
       // should warn with descriptive message about invalid input (L4 fix)
       expect(consoleSpy).toHaveBeenCalled();
-      const warningMessage = consoleSpy.mock.calls[0]?.[0];
+      const warningMessage = consoleSpy.mock.calls[0]?.[0] as string | undefined;
       expect(typeof warningMessage).toBe('string');
       // warning should mention the issue (metric name or invalid)
       expect(warningMessage).toMatch(/metric|name|invalid|null/i);
@@ -49,7 +49,7 @@ describe('Input Validation (Real Client Integration)', () => {
     });
 
     it('should handle undefined metric names gracefully with descriptive warning', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       expect(() => {
         // @ts-expect-error - Testing undefined metric name validation
@@ -58,7 +58,7 @@ describe('Input Validation (Real Client Integration)', () => {
 
       // verify warning content (L4 fix)
       expect(consoleSpy).toHaveBeenCalled();
-      const warningMessage = consoleSpy.mock.calls[0]?.[0];
+      const warningMessage = consoleSpy.mock.calls[0]?.[0] as string | undefined;
       expect(typeof warningMessage).toBe('string');
       expect(warningMessage).toMatch(/metric|name|invalid|undefined/i);
 
@@ -66,7 +66,7 @@ describe('Input Validation (Real Client Integration)', () => {
     });
 
     it('should handle empty string metric names gracefully with descriptive warning', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       expect(() => {
         client.metrics.increment('');
@@ -74,7 +74,7 @@ describe('Input Validation (Real Client Integration)', () => {
 
       // verify warning content (L4 fix)
       expect(consoleSpy).toHaveBeenCalled();
-      const warningMessage = consoleSpy.mock.calls[0]?.[0];
+      const warningMessage = consoleSpy.mock.calls[0]?.[0] as string | undefined;
       expect(typeof warningMessage).toBe('string');
       expect(warningMessage).toMatch(/metric|name|invalid|empty/i);
 
@@ -84,7 +84,7 @@ describe('Input Validation (Real Client Integration)', () => {
 
   describe('Metric Value Validation', () => {
     it('should handle NaN values gracefully with descriptive warning', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       expect(() => {
         client.metrics.gauge('test_metric', NaN);
@@ -92,7 +92,7 @@ describe('Input Validation (Real Client Integration)', () => {
 
       // verify warning content (L4 fix)
       expect(consoleSpy).toHaveBeenCalled();
-      const warningMessage = consoleSpy.mock.calls[0]?.[0];
+      const warningMessage = consoleSpy.mock.calls[0]?.[0] as string | undefined;
       expect(typeof warningMessage).toBe('string');
       expect(warningMessage).toMatch(/value|NaN|invalid|number/i);
 
@@ -100,7 +100,7 @@ describe('Input Validation (Real Client Integration)', () => {
     });
 
     it('should handle Infinity values gracefully with descriptive warning', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       expect(() => {
         client.metrics.record('test_metric', Infinity);
@@ -108,7 +108,7 @@ describe('Input Validation (Real Client Integration)', () => {
 
       // verify warning content (L4 fix)
       expect(consoleSpy).toHaveBeenCalled();
-      const warningMessage = consoleSpy.mock.calls[0]?.[0];
+      const warningMessage = consoleSpy.mock.calls[0]?.[0] as string | undefined;
       expect(typeof warningMessage).toBe('string');
       expect(warningMessage).toMatch(/value|Infinity|invalid|number/i);
 
@@ -116,7 +116,7 @@ describe('Input Validation (Real Client Integration)', () => {
     });
 
     it('should handle negative Infinity values gracefully with descriptive warning', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       expect(() => {
         client.metrics.record('test_metric', -Infinity);
@@ -124,7 +124,7 @@ describe('Input Validation (Real Client Integration)', () => {
 
       // verify warning content (L4 fix)
       expect(consoleSpy).toHaveBeenCalled();
-      const warningMessage = consoleSpy.mock.calls[0]?.[0];
+      const warningMessage = consoleSpy.mock.calls[0]?.[0] as string | undefined;
       expect(typeof warningMessage).toBe('string');
       expect(warningMessage).toMatch(/value|Infinity|invalid|number/i);
 
@@ -132,7 +132,7 @@ describe('Input Validation (Real Client Integration)', () => {
     });
 
     it('should accept valid numeric values', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       expect(() => {
         client.metrics.gauge('test_metric', 42);
@@ -149,7 +149,7 @@ describe('Input Validation (Real Client Integration)', () => {
 
   describe('High-Cardinality Detection', () => {
     it('should detect curly brace variable patterns', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       const dangerousNames = [
         'user_{userId}_requests',
@@ -168,7 +168,7 @@ describe('Input Validation (Real Client Integration)', () => {
     });
 
     it('should detect dollar sign variable patterns', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       const dangerousNames = [
         'request_${requestId}_duration',
@@ -185,7 +185,7 @@ describe('Input Validation (Real Client Integration)', () => {
     });
 
     it('should not warn for safe metric names', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       const safeNames = [
         'http.requests.total',
@@ -258,7 +258,7 @@ describe('Input Validation (Real Client Integration)', () => {
 
   describe('Graceful Degradation', () => {
     it('should continue working after invalid inputs', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       // send some invalid inputs
       // @ts-expect-error - Testing null metric name
@@ -373,7 +373,7 @@ describe('Input Validation (Real Client Integration)', () => {
 
     describe('with scopeNameValidation: "warn" (default - logs warning)', () => {
       it('should warn but not throw for high-cardinality scope names', () => {
-        const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
         // default client uses 'warn' mode - should not throw
         expect(() => {
@@ -405,7 +405,7 @@ describe('Input Validation (Real Client Integration)', () => {
     });
 
     it('should warn for unusually long scope names', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
       const longScopeName = 'a'.repeat(150);
 
       // should not throw, but should warn
@@ -431,7 +431,7 @@ describe('Input Validation (Real Client Integration)', () => {
 
   describe('Edge Cases', () => {
     it('should handle very long metric names', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       const longName = 'x'.repeat(500);
 
@@ -443,7 +443,7 @@ describe('Input Validation (Real Client Integration)', () => {
     });
 
     it('should handle special characters in metric names', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       const specialNames = [
         'metric@test',
@@ -486,7 +486,7 @@ describe('Input Validation (Real Client Integration)', () => {
 
   describe('Unicode and Whitespace Metric Names (L7 Implementation)', () => {
     it('should handle whitespace-only metric names gracefully (no warning per current impl)', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       // whitespace-only names should not throw (fail-safe)
       // NOTE: Current implementation uses `!name` check (metric-validation.mts:130)
@@ -507,7 +507,7 @@ describe('Input Validation (Real Client Integration)', () => {
     });
 
     it('should handle leading/trailing whitespace in metric names', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       // leading/trailing whitespace should not throw
       expect(() => {
@@ -520,7 +520,7 @@ describe('Input Validation (Real Client Integration)', () => {
     });
 
     it('should handle unicode characters in metric names without warning', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       // valid unicode names should not throw and should not warn
       expect(() => {
@@ -537,7 +537,7 @@ describe('Input Validation (Real Client Integration)', () => {
     });
 
     it('should handle emoji in metric names without warning', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       // emoji names should not throw and should not warn
       expect(() => {
@@ -553,7 +553,7 @@ describe('Input Validation (Real Client Integration)', () => {
     });
 
     it('should handle mixed unicode and ASCII in metric names without warning', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       expect(() => {
         client.metrics.increment('http_requests_успех');
@@ -568,7 +568,7 @@ describe('Input Validation (Real Client Integration)', () => {
     });
 
     it('should handle control characters in metric names gracefully', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       // control characters should not throw (fail-safe)
       expect(() => {
@@ -581,7 +581,7 @@ describe('Input Validation (Real Client Integration)', () => {
     });
 
     it('should handle zero-width characters in metric names', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       // zero-width characters should not throw (fail-safe)
       expect(() => {
@@ -594,7 +594,7 @@ describe('Input Validation (Real Client Integration)', () => {
     });
 
     it('should handle unpaired surrogate characters gracefully (Gemini fix)', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       // unpaired surrogates are invalid unicode but should not throw (fail-safe)
       expect(() => {
@@ -607,7 +607,7 @@ describe('Input Validation (Real Client Integration)', () => {
     });
 
     it('should handle very long unicode metric names', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       // long unicode string should not throw
       const longUnicode = '指'.repeat(200);
@@ -621,7 +621,7 @@ describe('Input Validation (Real Client Integration)', () => {
     });
 
     it('should handle RTL characters in metric names without warning', () => {
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
 
       // right-to-left characters should not throw
       expect(() => {

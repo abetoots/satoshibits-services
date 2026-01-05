@@ -15,10 +15,10 @@ describe('errors.wrap options (Node, no-network)', () => {
     const serviceInstrument = client.getServiceInstrumentation();
 
     let attempts = 0;
-    const fn = async () => {
+    const fn = () => {
       attempts++;
       if (attempts < 2) throw new Error('fail-1');
-      return 'ok';
+      return Promise.resolve('ok');
     };
 
     const wrapped = serviceInstrument.errors.wrap(fn, { retry: 1 });
@@ -59,7 +59,7 @@ describe('errors.wrap options (Node, no-network)', () => {
       originalCapture(error, context);
     };
 
-    const failingFn = (password: string, apiKey: string) => {
+    const failingFn = (_password: string, _apiKey: string) => {
       throw new Error('Test error');
     };
 
@@ -89,7 +89,7 @@ describe('errors.wrap options (Node, no-network)', () => {
       originalCapture(error, context);
     };
 
-    const failingFn = (x: number, y: number) => {
+    const failingFn = (_x: number, _y: number) => {
       throw new Error('Test error');
     };
 
@@ -122,8 +122,8 @@ describe('errors.wrap options (Node, no-network)', () => {
       originalCapture(error, context);
     };
 
-    const failingAsync = async (password: string) => {
-      throw new Error('Async error');
+    const failingAsync = (_password: string) => {
+      return Promise.reject(new Error('Async error'));
     };
 
     const wrapped = serviceInstrument.errors.wrap(failingAsync as (...args: unknown[]) => unknown, { name: 'asyncOp', retry: 1 }) as typeof failingAsync;

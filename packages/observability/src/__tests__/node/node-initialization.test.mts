@@ -31,7 +31,7 @@ import { SmartClient } from "../../index.mjs";
 
 describe("Node.js Initialization", () => {
   let client: UnifiedObservabilityClient;
-  let serviceInstrument: ScopedInstrument;
+  let _serviceInstrument: ScopedInstrument; // prefixed: assigned in setup but not used in tests
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeAll(() => {
@@ -51,7 +51,7 @@ describe("Node.js Initialization", () => {
       endpoint: undefined,
     });
 
-    serviceInstrument = client.getServiceInstrumentation();
+    _serviceInstrument = client.getServiceInstrumentation();
   });
 
   afterEach(async () => {
@@ -270,7 +270,7 @@ describe("Node.js Initialization", () => {
   describe("Startup/Shutdown Failure Paths (L9 Implementation)", () => {
     describe("Invalid Configuration Handling", () => {
       it("should handle empty serviceName gracefully and log warning", async () => {
-        const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => { /* noop */ });
         try {
           // empty serviceName should be handled gracefully
           const testClient = await SmartClient.initialize({
@@ -293,7 +293,7 @@ describe("Node.js Initialization", () => {
       });
 
       it("should handle serviceName with only whitespace", async () => {
-        const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => { /* noop */ });
         try {
           const testClient = await SmartClient.initialize({
             serviceName: "   ",
@@ -310,7 +310,7 @@ describe("Node.js Initialization", () => {
 
       it("should handle undefined serviceName gracefully (Codex/Gemini fix)", async () => {
         // test for undefined/omitted serviceName - common in untyped JS environments
-        const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => { /* noop */ });
         try {
           const testClient = await SmartClient.initialize({
             serviceName: undefined as unknown as string,
@@ -351,7 +351,7 @@ describe("Node.js Initialization", () => {
 
     describe("Exporter Error Handling", () => {
       it("should handle shutdown when exporter fails to export", async () => {
-        const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+        const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => { /* noop */ });
         try {
           // initialize with invalid endpoint that will fail on export
           const testClient = await SmartClient.initialize({
@@ -397,7 +397,7 @@ describe("Node.js Initialization", () => {
         );
 
         const result = await Promise.race([
-          shutdownPromise.then(() => "completed"),
+          Promise.resolve(shutdownPromise).then(() => "completed"),
           timeoutPromise,
         ]);
 
@@ -747,7 +747,7 @@ describe("Node.js Initialization", () => {
       });
 
       // create a span to trigger resource export
-      await testClient.traces.withSpan("test-span", async () => "done");
+      await testClient.traces.withSpan("test-span", () => Promise.resolve("done"));
 
       // force flush by shutting down before assertions
       await SmartClient.shutdown();
@@ -755,8 +755,9 @@ describe("Node.js Initialization", () => {
       const spans = spanExporter.getFinishedSpans();
       // note: span export may fail due to OTel global provider caching
       // see telemetry-pipeline.test.mts TODO for details on this known limitation
-      if (spans.length > 0) {
-        const resource = spans[0].resource;
+      const firstSpan = spans[0];
+      if (firstSpan) {
+        const resource = firstSpan.resource;
         expect(resource.attributes[ATTR_SERVICE_NAME]).toBe("config-service-name-test");
       }
       // verify client was configured correctly
@@ -774,14 +775,15 @@ describe("Node.js Initialization", () => {
         testSpanProcessor: new SimpleSpanProcessor(spanExporter),
       });
 
-      await testClient.traces.withSpan("override-test", async () => "done");
+      await testClient.traces.withSpan("override-test", () => Promise.resolve("done"));
 
       await SmartClient.shutdown();
 
       const spans = spanExporter.getFinishedSpans();
       // note: span export may fail due to OTel global provider caching
-      if (spans.length > 0) {
-        const resource = spans[0].resource;
+      const firstSpan = spans[0];
+      if (firstSpan) {
+        const resource = firstSpan.resource;
         const serviceName = resource.attributes[ATTR_SERVICE_NAME];
         expect(serviceName).toBe("config-overrides-env");
         expect(serviceName).not.toBe("env-service-name");
@@ -816,15 +818,16 @@ describe("Node.js Initialization", () => {
         testSpanProcessor: new SimpleSpanProcessor(spanExporter),
       });
 
-      await testClient.traces.withSpan("env-test", async () => "done");
+      await testClient.traces.withSpan("env-test", () => Promise.resolve("done"));
 
       await SmartClient.shutdown();
 
       const spans = spanExporter.getFinishedSpans();
       // note: span export may fail due to OTel global provider caching after prior test shutdowns
       // see telemetry-pipeline.test.mts TODO for details on this known limitation
-      if (spans.length > 0) {
-        const resource = spans[0].resource;
+      const firstSpan = spans[0];
+      if (firstSpan) {
+        const resource = firstSpan.resource;
         const deploymentEnv = resource.attributes["deployment.environment"];
         expect(deploymentEnv).toBe("production");
       }
@@ -856,14 +859,15 @@ describe("Node.js Initialization", () => {
       });
 
       const serviceInstrument = testClient.getServiceInstrumentation();
-      await serviceInstrument.traces.withSpan("scoped-span", async () => "done");
+      await serviceInstrument.traces.withSpan("scoped-span", () => Promise.resolve("done"));
 
       await SmartClient.shutdown();
 
       const spans = spanExporter.getFinishedSpans();
       // note: span export may fail due to OTel global provider caching after prior test shutdowns
-      if (spans.length > 0) {
-        const resource = spans[0].resource;
+      const firstSpan = spans[0];
+      if (firstSpan) {
+        const resource = firstSpan.resource;
         expect(resource.attributes[ATTR_SERVICE_NAME]).toBe("scoped-instrument-test");
       }
       // verify scoped instrument was created with correct service name
@@ -881,7 +885,7 @@ describe("Node.js Initialization", () => {
         testSpanProcessor: new SimpleSpanProcessor(spanExporter),
       });
 
-      await testClient.traces.withSpan("sampler-test", async () => "done");
+      await testClient.traces.withSpan("sampler-test", () => Promise.resolve("done"));
 
       await SmartClient.shutdown();
 
@@ -902,7 +906,7 @@ describe("Node.js Initialization", () => {
         testSpanProcessor: new SimpleSpanProcessor(spanExporter),
       });
 
-      await testClient.traces.withSpan("sampler-test", async () => "done");
+      await testClient.traces.withSpan("sampler-test", () => Promise.resolve("done"));
 
       await SmartClient.shutdown();
 

@@ -164,9 +164,7 @@ describe("RED: Timeout Timer Cleanup in errors.wrap()", () => {
     });
 
     it("should respect timeout with retry option", async () => {
-      let attempts = 0;
       const slowWithRetry = async () => {
-        attempts++;
         await new Promise((r) => setTimeout(r, 100));
         return "result";
       };
@@ -192,7 +190,7 @@ describe("RED: Timeout Timer Cleanup in errors.wrap()", () => {
 
   describe("edge cases", () => {
     it("should handle immediate resolution", async () => {
-      const immediate = async () => "instant";
+      const immediate = () => Promise.resolve("instant");
 
       const wrapped = instrument.errors.wrap(immediate, { timeout: 100 });
 

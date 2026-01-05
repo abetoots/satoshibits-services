@@ -38,7 +38,8 @@ const waitFor = (
 };
 
 describe("Browser Auto-Instrumentation - Automatic Capture", () => {
-  let client: Awaited<ReturnType<typeof SmartClient.initialize>>;
+  // client used for side effects of initialization
+  let _client: Awaited<ReturnType<typeof SmartClient.initialize>>;
 
   // Capture automatic instrumentation events
   let capturedErrors: { error: Error; context?: unknown }[] = [];
@@ -74,7 +75,7 @@ describe("Browser Auto-Instrumentation - Automatic Capture", () => {
     capturedMetrics = [];
 
     // Initialize SDK with auto-instrumentation enabled
-    client = await SmartClient.initialize({
+    _client = await SmartClient.initialize({
       serviceName: "auto-instrumentation-test",
       environment: "browser",
       // Enable all auto-instrumentation features

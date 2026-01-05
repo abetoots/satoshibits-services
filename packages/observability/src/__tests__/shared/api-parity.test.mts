@@ -63,11 +63,11 @@ describe("API Parity - Scoped Instrumentation", () => {
   describe("Scoped API Surface", () => {
     it("should provide scoped instrumentation factory methods", () => {
       // Verify scoped instrumentation factory methods exist
-      expect(client.getServiceInstrumentation).toBeDefined();
-      expect(typeof client.getServiceInstrumentation).toBe("function");
+      expect(client.getServiceInstrumentation.bind(client)).toBeDefined();
+      expect(typeof client.getServiceInstrumentation.bind(client)).toBe("function");
 
-      expect(client.getInstrumentation).toBeDefined();
-      expect(typeof client.getInstrumentation).toBe("function");
+      expect(client.getInstrumentation.bind(client)).toBeDefined();
+      expect(typeof client.getInstrumentation.bind(client)).toBe("function");
 
       // Test service instrumentation
       const serviceInstr = client.getServiceInstrumentation();
@@ -89,9 +89,9 @@ describe("API Parity - Scoped Instrumentation", () => {
       // Test traces on scoped instrument
       const span = serviceInstrument.traces.startSpan("test-span");
       expect(span).toBeDefined();
-      expect(span.end).toBeDefined();
-      expect(span.setAttribute).toBeDefined();
-      expect(span.setAttributes).toBeDefined();
+      expect(typeof span.end.bind(span)).toBe("function");
+      expect(typeof span.setAttribute.bind(span)).toBe("function");
+      expect(typeof span.setAttributes.bind(span)).toBe("function");
 
       span.end();
     });

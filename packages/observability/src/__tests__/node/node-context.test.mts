@@ -135,7 +135,7 @@ describe("Node.js Context Management", () => {
               expect(ctx.userId).toBe("user-1"); // Inherited from parent
               expect(ctx.sessionId).toBe("session-2");
 
-              await client.context.business.run({ level: 3 }, async () => {
+              await client.context.business.run({ level: 3 }, () => {
                 const innerCtx = client.context.business.get();
                 expect(innerCtx.level).toBe(3);
                 expect(innerCtx.userId).toBe("user-1"); // Still inherited
@@ -293,45 +293,50 @@ describe("Node.js Context Management", () => {
 
   describe("Cluster Context Sharing", () => {
     it("should share context with cluster workers", () => {
+      // create mock functions separately to avoid unbound method issues
+      const workerSendFn = vi.fn();
+      const workerOnFn = vi.fn();
+
       // Mock cluster module
       const mockCluster = {
         isMaster: true,
         isPrimary: true,
         fork: vi.fn().mockReturnValue({
-          send: vi.fn(),
-          on: vi.fn(),
+          send: workerSendFn,
+          on: workerOnFn,
         }),
       };
 
       Object.assign(cluster, mockCluster);
 
-      client.context.business.run({ clusterId: "cluster-789" }, () => {
+      void client.context.business.run({ clusterId: "cluster-789" }, () => {
         const context = client.context.business.get();
 
         if (cluster.isPrimary) {
-          const worker = cluster.fork();
+          cluster.fork(); // triggers the mock
 
           // Send context to worker
-          worker.send({ type: "context", data: context });
+          workerSendFn({ type: "context", data: context });
 
-          expect(worker.send).toHaveBeenCalledWith({
+          expect(workerSendFn).toHaveBeenCalledWith({
             type: "context",
             data: expect.objectContaining({
               clusterId: "cluster-789",
-            }),
+            }) as unknown as Record<string, unknown>,
           });
         }
       });
     });
 
     it("should handle inter-process communication with context", () => {
+      const sendFn = vi.fn();
       const mockWorker = {
         id: 1,
-        send: vi.fn(),
+        send: sendFn,
         on: vi.fn(),
       };
 
-      client.context.business.run({ processContext: "ipc-value" }, () => {
+      void client.context.business.run({ processContext: "ipc-value" }, () => {
         const context = client.context.business.get();
 
         // Send message with context
@@ -341,11 +346,11 @@ describe("Node.js Context Management", () => {
           data: { task: "process-data" },
         });
 
-        expect(mockWorker.send).toHaveBeenCalledWith(
+        expect(sendFn).toHaveBeenCalledWith(
           expect.objectContaining({
             context: expect.objectContaining({
               processContext: "ipc-value",
-            }),
+            }) as unknown as Record<string, unknown>,
           }),
         );
       });

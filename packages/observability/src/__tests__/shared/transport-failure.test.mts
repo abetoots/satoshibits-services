@@ -9,12 +9,11 @@
  * Uses testSpanProcessor to inject failing span processors.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SpanProcessor, ReadableSpan, Span } from "@opentelemetry/sdk-trace-base";
 import { SpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { ExportResult, ExportResultCode } from "@opentelemetry/core";
 import { SmartClient } from "../../index.mjs";
-import type { UnifiedObservabilityClient } from "../../unified-smart-client.mjs";
 import { Context } from "@opentelemetry/api";
 
 /**
@@ -27,7 +26,7 @@ function createFailingSpanExporter(config: {
   let exportAttempts = 0;
 
   return {
-    export(spans: ReadableSpan[], resultCallback: (result: ExportResult) => void): void {
+    export(_spans: ReadableSpan[], resultCallback: (result: ExportResult) => void): void {
       exportAttempts++;
       // simulate network/transport failure
       resultCallback({
@@ -55,7 +54,7 @@ function createIntermittentFailingExporter(config: {
   let failureCount = 0;
 
   return {
-    export(spans: ReadableSpan[], resultCallback: (result: ExportResult) => void): void {
+    export(_spans: ReadableSpan[], resultCallback: (result: ExportResult) => void): void {
       exportAttempts++;
       if (exportAttempts > config.failAfterN) {
         failureCount++;
@@ -290,7 +289,7 @@ describe("Transport Failure Handling Tests (M6 Fix)", () => {
 
       // application errors should propagate, not be swallowed
       await expect(
-        instrument.traces.withSpan("failing-operation", async () => {
+        instrument.traces.withSpan("failing-operation", () => {
           throw new Error("Application error");
         }),
       ).rejects.toThrow("Application error");

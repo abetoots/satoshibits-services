@@ -10,6 +10,39 @@ import type { ResourceMetrics } from "@opentelemetry/sdk-metrics";
 
 import { FetchMetricExporter } from "../../../sdk-wrapper-browser.mjs";
 
+// type for expected OTLP metric payload structure
+interface OtlpMetricDataPoint {
+  explicitBounds?: number[];
+  bucketCounts?: number[];
+  min?: number;
+  max?: number;
+  sum?: number;
+  count?: number;
+  asInt?: number;
+}
+
+interface OtlpMetricData {
+  dataPoints: OtlpMetricDataPoint[];
+  isMonotonic?: boolean;
+}
+
+interface OtlpMetric {
+  histogram?: OtlpMetricData;
+  sum?: OtlpMetricData;
+}
+
+interface OtlpScopeMetrics {
+  metrics: OtlpMetric[];
+}
+
+interface OtlpResourceMetrics {
+  scopeMetrics: OtlpScopeMetrics[];
+}
+
+interface OtlpPayload {
+  resourceMetrics: OtlpResourceMetrics[];
+}
+
 // mock fetch globally
 const mockFetch = vi.fn();
 globalThis.fetch = mockFetch;
@@ -20,9 +53,9 @@ describe("FetchMetricExporter - Doc 4 H1 Histogram Bucket Export", () => {
 
   beforeEach(() => {
     capturedPayload = null;
-    mockFetch.mockImplementation(async (_url: string, options?: RequestInit) => {
+    mockFetch.mockImplementation((_url: string, options?: RequestInit) => {
       capturedPayload = options?.body as string;
-      return new Response(null, { status: 200 });
+      return Promise.resolve(new Response(null, { status: 200 }));
     });
 
     exporter = new FetchMetricExporter({
@@ -105,24 +138,24 @@ describe("FetchMetricExporter - Doc 4 H1 Histogram Bucket Export", () => {
       });
 
       expect(capturedPayload).not.toBeNull();
-      const payload = JSON.parse(capturedPayload!);
+      const payload = JSON.parse(capturedPayload!) as OtlpPayload;
 
       // navigate to the histogram data point
       const histogramData =
-        payload.resourceMetrics[0].scopeMetrics[0].metrics[0].histogram;
+        payload.resourceMetrics[0]?.scopeMetrics[0]?.metrics[0]?.histogram;
       expect(histogramData).toBeDefined();
 
-      const dataPoint = histogramData.dataPoints[0];
+      const dataPoint = histogramData?.dataPoints[0];
 
       // Doc 4 H1 Fix: verify bucket data is included
-      expect(dataPoint.explicitBounds).toEqual([0, 25, 50, 75, 100]);
-      expect(dataPoint.bucketCounts).toEqual([0, 2, 5, 2, 1, 0]);
+      expect(dataPoint?.explicitBounds).toEqual([0, 25, 50, 75, 100]);
+      expect(dataPoint?.bucketCounts).toEqual([0, 2, 5, 2, 1, 0]);
 
       // verify other histogram fields are still present
-      expect(dataPoint.min).toBe(10);
-      expect(dataPoint.max).toBe(100);
-      expect(dataPoint.sum).toBe(550);
-      expect(dataPoint.count).toBe(10);
+      expect(dataPoint?.min).toBe(10);
+      expect(dataPoint?.max).toBe(100);
+      expect(dataPoint?.sum).toBe(550);
+      expect(dataPoint?.count).toBe(10);
     });
 
     it("should handle histogram without bucket data gracefully", async () => {
@@ -143,21 +176,21 @@ describe("FetchMetricExporter - Doc 4 H1 Histogram Bucket Export", () => {
       });
 
       expect(capturedPayload).not.toBeNull();
-      const payload = JSON.parse(capturedPayload!);
+      const payload = JSON.parse(capturedPayload!) as OtlpPayload;
 
       const histogramData =
-        payload.resourceMetrics[0].scopeMetrics[0].metrics[0].histogram;
-      const dataPoint = histogramData.dataPoints[0];
+        payload.resourceMetrics[0]?.scopeMetrics[0]?.metrics[0]?.histogram;
+      const dataPoint = histogramData?.dataPoints[0];
 
       // should not have bucket data if not provided
-      expect(dataPoint.explicitBounds).toBeUndefined();
-      expect(dataPoint.bucketCounts).toBeUndefined();
+      expect(dataPoint?.explicitBounds).toBeUndefined();
+      expect(dataPoint?.bucketCounts).toBeUndefined();
 
       // but other fields should still be present
-      expect(dataPoint.min).toBe(5);
-      expect(dataPoint.max).toBe(50);
-      expect(dataPoint.sum).toBe(100);
-      expect(dataPoint.count).toBe(5);
+      expect(dataPoint?.min).toBe(5);
+      expect(dataPoint?.max).toBe(50);
+      expect(dataPoint?.sum).toBe(100);
+      expect(dataPoint?.count).toBe(5);
     });
 
     it("should handle empty bucket arrays", async () => {
@@ -180,14 +213,14 @@ describe("FetchMetricExporter - Doc 4 H1 Histogram Bucket Export", () => {
       });
 
       expect(capturedPayload).not.toBeNull();
-      const payload = JSON.parse(capturedPayload!);
+      const payload = JSON.parse(capturedPayload!) as OtlpPayload;
 
       const dataPoint =
-        payload.resourceMetrics[0].scopeMetrics[0].metrics[0].histogram
-          .dataPoints[0];
+        payload.resourceMetrics[0]?.scopeMetrics[0]?.metrics[0]?.histogram
+          ?.dataPoints[0];
 
-      expect(dataPoint.explicitBounds).toEqual([]);
-      expect(dataPoint.bucketCounts).toEqual([0]);
+      expect(dataPoint?.explicitBounds).toEqual([]);
+      expect(dataPoint?.bucketCounts).toEqual([0]);
     });
   });
 
@@ -230,13 +263,13 @@ describe("FetchMetricExporter - Doc 4 H1 Histogram Bucket Export", () => {
       });
 
       expect(capturedPayload).not.toBeNull();
-      const payload = JSON.parse(capturedPayload!);
+      const payload = JSON.parse(capturedPayload!) as OtlpPayload;
 
       const sumData =
-        payload.resourceMetrics[0].scopeMetrics[0].metrics[0].sum;
+        payload.resourceMetrics[0]?.scopeMetrics[0]?.metrics[0]?.sum;
       expect(sumData).toBeDefined();
-      expect(sumData.isMonotonic).toBe(true);
-      expect(sumData.dataPoints[0].asInt).toBe(42);
+      expect(sumData?.isMonotonic).toBe(true);
+      expect(sumData?.dataPoints[0]?.asInt).toBe(42);
     });
   });
 });
@@ -248,10 +281,10 @@ describe("FetchMetricExporter - Doc 4 H2 CORS Fix", () => {
 
   beforeEach(() => {
     mockFetch.mockReset();
-    mockFetch.mockImplementation(async () => new Response(null, { status: 200 }));
+    mockFetch.mockImplementation(() => Promise.resolve(new Response(null, { status: 200 })));
 
-    // save original sendBeacon
-    originalSendBeacon = navigator.sendBeacon;
+    // save original sendBeacon (bind to preserve context for restoration)
+    originalSendBeacon = navigator.sendBeacon?.bind(navigator);
     mockSendBeacon = vi.fn().mockReturnValue(true);
     Object.defineProperty(navigator, "sendBeacon", {
       value: mockSendBeacon,

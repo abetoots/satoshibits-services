@@ -267,7 +267,7 @@ describe("DOM Privacy Utilities", () => {
       current.appendChild(button);
 
       const selector = buildSafeSelector(button, { maxDepth: 3 });
-      const segments = selector?.split(" > ") || [];
+      const segments = selector?.split(" > ") ?? [];
 
       expect(segments.length).toBeLessThanOrEqual(3);
     });

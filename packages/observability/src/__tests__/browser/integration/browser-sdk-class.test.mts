@@ -10,8 +10,7 @@ import { BrowserSDK } from "../../../sdk-wrapper-browser.mjs";
 import { BrowserErrorInstrumentation } from "../../../browser/instrumentations/index.mjs";
 import type { BrowserClientConfig } from "../../../unified-smart-client.mjs";
 import type {
-  MockLocation,
-  GlobalWithBrowserGlobals
+  MockLocation
 } from "../../test-utils/test-types.mjs";
 
 
@@ -78,8 +77,8 @@ describe("BrowserSDK Class-Based Pattern", () => {
     if (sdk) {
       try {
         await sdk.shutdown();
-      } catch (error) {
-        // Ignore cleanup errors
+      } catch {
+        // ignore cleanup errors
       }
     }
 
@@ -154,7 +153,7 @@ describe("BrowserSDK Class-Based Pattern", () => {
       }).not.toThrow();
     });
 
-    it("Should access DOM globals only during start()", () => {
+    it("Should access DOM globals only during start()", async () => {
       sdk = new BrowserSDK(mockConfig);
 
       // Track document.referrer access
@@ -168,7 +167,7 @@ describe("BrowserSDK Class-Based Pattern", () => {
       expect(mockReferrerAccess).not.toHaveBeenCalled();
 
       // DOM should be accessed during start()
-      sdk.start();
+      await sdk.start();
       expect(mockReferrerAccess).toHaveBeenCalled();
     });
   });

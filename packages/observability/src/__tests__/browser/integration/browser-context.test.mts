@@ -9,7 +9,7 @@
  * - Feature flag tracking
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { SmartClient, UnifiedObservabilityClient } from "../../../index.mjs";
 import { ScopedInstrument } from "../../../unified-smart-client.mjs";
@@ -153,7 +153,7 @@ describe("Browser Context Features", () => {
         const urlParams = new URLSearchParams(window.location.search);
         const utmSource = urlParams.get("utm_source");
 
-        client.context.business.addTag("utm_source", utmSource || "direct");
+        client.context.business.addTag("utm_source", utmSource ?? "direct");
         serviceInstrument.metrics.increment("marketing.attribution");
       }).not.toThrow();
     });
@@ -281,11 +281,11 @@ describe("Browser Context Features", () => {
 
       await expect(
         client.trace("checkout-flow", async () => {
-          await client.trace("validate-cart", async () => {
+          await client.trace("validate-cart", () => {
             serviceInstrument.metrics.increment("cart.validation");
           });
 
-          await client.trace("process-payment", async () => {
+          await client.trace("process-payment", () => {
             serviceInstrument.metrics.increment("payment.attempt");
           });
         }),

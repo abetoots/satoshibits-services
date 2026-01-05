@@ -9,7 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { trace, SpanStatusCode } from "@opentelemetry/api";
-import { logs, SeverityNumber } from "@opentelemetry/api-logs";
+import { logs } from "@opentelemetry/api-logs";
 import type { Span } from "@opentelemetry/api";
 import type { Logger } from "@opentelemetry/api-logs";
 import { SmartClient } from "../../index.mjs";
@@ -21,7 +21,7 @@ import type { UnifiedObservabilityClient } from "../../unified-smart-client.mjs"
 describe("Fail-Safe Fallbacks", () => {
   let client: UnifiedObservabilityClient;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     // ensure clean state before each test
     vi.clearAllMocks();
   });
@@ -308,14 +308,14 @@ describe("Fail-Safe Fallbacks", () => {
         expect(mockSpan.recordException).toHaveBeenCalledWith(error);
         expect(mockSpan.setStatus).toHaveBeenCalledWith({
           code: SpanStatusCode.ERROR,
-          message: expect.stringContaining("[REDACTED]"),
+          message: expect.stringContaining("[REDACTED]") as unknown as string,
         });
 
         // verify password is not in status message
-        const statusCall = mockSpan.setStatus.mock.calls[0];
+        const statusCall = mockSpan.setStatus.mock.calls[0] as [{ code: number; message: string }] | undefined;
         expect(statusCall).toBeDefined();
-        const status = statusCall?.[0] as { code: number; message: string };
-        expect(status.message).not.toContain("MyPassword123");
+        const status = statusCall?.[0];
+        expect(status?.message).not.toContain("MyPassword123");
 
         // check attributes contain sanitized data
         const setAttributesCall = mockSpan.setAttributes.mock.calls[0];
@@ -427,26 +427,26 @@ describe("Error Sanitization with Real Client API (L6 Implementation)", () => {
   it("should capture errors with sensitive data without coupling to getActiveSpan()", async () => {
     // this test uses the PUBLIC client API without mocking trace.getActiveSpan()
     // contrast with the brittle tests above at lines 284-396 which mock internals
-    const result = await client.traces.withSpan("error-capture-span", async () => {
+    const result = await client.traces.withSpan("error-capture-span", () => {
       const error = new Error("Login failed for user with password: Secret123!");
       client.errors.capture(error, {
         userId: "12345",
         password: "MySecretPassword",
       });
-      return "captured";
+      return Promise.resolve("captured");
     });
 
     expect(result).toBe("captured");
   });
 
   it("should handle error reporting within traces without internal mocking", async () => {
-    const result = await client.traces.withSpan("payment-error-span", async () => {
+    const result = await client.traces.withSpan("payment-error-span", () => {
       const error = new Error("Payment failed with cc: 4111-1111-1111-1111");
       client.errors.capture(error, {
         creditCard: "4111-1111-1111-1111",
         ssn: "123-45-6789",
       });
-      return "completed";
+      return Promise.resolve("completed");
     });
 
     expect(result).toBe("completed");
@@ -454,10 +454,10 @@ describe("Error Sanitization with Real Client API (L6 Implementation)", () => {
 
   it("should handle error boundary without coupling to OTel internals", async () => {
     const result = await client.errors.boundary(
-      async () => {
+      () => {
         throw new Error("API call failed with token: bearer_sk_live_123456");
       },
-      async (error) => {
+      (error) => {
         expect(error).toBeInstanceOf(Error);
         return "handled";
       },
@@ -467,7 +467,7 @@ describe("Error Sanitization with Real Client API (L6 Implementation)", () => {
   });
 
   it("should allow rapid error capture without internal state corruption", async () => {
-    const result = await client.traces.withSpan("rapid-error-burst", async () => {
+    const result = await client.traces.withSpan("rapid-error-burst", () => {
       const sensitiveErrors = [
         new Error("Failed with password: abc123"),
         new Error("API key exposed: sk_live_secret"),
@@ -482,7 +482,7 @@ describe("Error Sanitization with Real Client API (L6 Implementation)", () => {
         }).not.toThrow();
       });
 
-      return "all-captured";
+      return Promise.resolve("all-captured");
     });
 
     expect(result).toBe("all-captured");
@@ -599,7 +599,7 @@ describe("Sanitization in Telemetry Payloads (L10 Implementation)", () => {
   describe("Custom Context Sanitization in Error Capture", () => {
     it("should sanitize custom context passed to error capture", async () => {
       // codex/gemini: strengthen by also verifying sanitization of context
-      await client.traces.withSpan("error-capture-span", async () => {
+      await client.traces.withSpan("error-capture-span", () => {
         const error = new Error("Operation failed");
         const customContext = {
           userId: "user-123",
@@ -617,11 +617,12 @@ describe("Sanitization in Telemetry Payloads (L10 Implementation)", () => {
         expect(sanitizedContext.apiKey).toContain("[REDACTED]");
         // non-sensitive data preserved
         expect(sanitizedContext.userId).toBe("user-123");
+        return Promise.resolve();
       });
     });
 
     it("should handle nested objects in custom context", async () => {
-      await client.traces.withSpan("nested-context-span", async () => {
+      await client.traces.withSpan("nested-context-span", () => {
         const error = new Error("Nested error");
         // note: sanitizeLabels is designed for flat label maps (OTel attributes)
         // nested objects are handled by the error capture flow differently
@@ -641,6 +642,7 @@ describe("Sanitization in Telemetry Payloads (L10 Implementation)", () => {
         // non-sensitive data preserved
         expect(sanitizedContext.userId).toBe("12345");
         expect(sanitizedContext.source).toBe("test-source");
+        return Promise.resolve();
       });
     });
   });
@@ -725,7 +727,7 @@ describe("Sanitization in Telemetry Payloads (L10 Implementation)", () => {
     });
 
     it("should handle rapid sanitization without corruption", async () => {
-      await client.traces.withSpan("rapid-sanitization-span", async () => {
+      await client.traces.withSpan("rapid-sanitization-span", () => {
         const sensitiveErrors = [
           new Error("Password: pass1"),
           new Error("API key: key2"),
@@ -738,16 +740,17 @@ describe("Sanitization in Telemetry Payloads (L10 Implementation)", () => {
         for (const error of sensitiveErrors) {
           expect(() => client.errors.capture(error)).not.toThrow();
         }
+        return Promise.resolve();
       });
     });
 
     it("should sanitize in error boundary handlers", async () => {
       // use a pattern the sanitizer recognizes (password: format)
       const result = await client.errors.boundary(
-        async () => {
+        () => {
           throw new Error("API failed with password: SuperSecret123");
         },
-        async (error) => {
+        (error) => {
           // raw error still has original message
           expect(error.message).toContain("SuperSecret123");
           // but context extracted for telemetry would be sanitized

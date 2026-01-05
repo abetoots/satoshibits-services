@@ -29,13 +29,13 @@ import { clearAllInstances } from "../../client-instance.mjs";
  * Tracks all recorded values and computes min/max/sum/count.
  */
 function createHistogramTrackingMeter() {
-  const histogramRecords: Map<
+  const histogramRecords = new Map<
     string,
     {
       values: number[];
       attributes: Record<string, unknown>[];
     }
-  > = new Map();
+  >();
 
   const createHistogram = vi.fn((name: string) => ({
     record: vi.fn((value: number, attributes?: Record<string, unknown>) => {
@@ -106,13 +106,13 @@ describe("Histogram Bucket Boundary Tests (M3 Fix)", () => {
           isRecording: () => true,
           spanContext: () => ({ traceId: "test", spanId: "test", traceFlags: 1 }),
         }),
-        startActiveSpan: vi.fn((name, optionsOrFn, contextOrFn, fn) => {
+        startActiveSpan: vi.fn((_name: string, optionsOrFn: unknown, contextOrFn?: unknown, fn?: unknown) => {
           const callback =
             typeof optionsOrFn === "function"
-              ? optionsOrFn
+              ? (optionsOrFn as (span: unknown) => unknown)
               : typeof contextOrFn === "function"
-                ? contextOrFn
-                : fn;
+                ? (contextOrFn as (span: unknown) => unknown)
+                : (fn as ((span: unknown) => unknown) | undefined);
           return callback?.({
             end: vi.fn(),
             setAttribute: vi.fn(),

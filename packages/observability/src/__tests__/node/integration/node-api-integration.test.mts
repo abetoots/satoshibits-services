@@ -12,7 +12,6 @@ import { SmartClient, sanitize, sanitizeError } from '../../../index.mjs';
 import { extractErrorContext } from '../../../smart-errors.mjs';
 import type { UnifiedObservabilityClient } from '../../../unified-smart-client.mjs';
 import type { ServiceInstrumentType, TestErrorWithProps } from '../../test-utils/test-types.mjs';
-import { isSanitizedObject } from '../../test-utils/test-types.mjs';
 
 describe('Node.js API Integration - Testing Our Code With Real SDK', () => {
   let client: UnifiedObservabilityClient;
@@ -47,8 +46,8 @@ describe('Node.js API Integration - Testing Our Code With Real SDK', () => {
       
       // Verify our client provides expected API
       expect(testClient).toBeDefined();
-      expect(testClient.getServiceInstrumentation).toBeDefined();
-      expect(testClient.getInstrumentation).toBeDefined();
+      expect(testClient.getServiceInstrumentation.bind(testClient)).toBeDefined();
+      expect(testClient.getInstrumentation.bind(testClient)).toBeDefined();
       expect(testClient.context).toBeDefined();
       expect(testClient.raw).toBeDefined();
       
@@ -133,19 +132,19 @@ describe('Node.js API Integration - Testing Our Code With Real SDK', () => {
   describe('Our Tracing Wrapper Integration', () => {
     it('Should provide tracing API that integrates with real SDK', async () => {
       // Test our withSpan wrapper
-      const result = await serviceInstrument.traces.withSpan('test-span', async () => {
+      const result = await serviceInstrument.traces.withSpan('test-span', () => {
         // Verify we can get the active span (from real SDK)
         const span = serviceInstrument.traces.getActiveSpan();
         expect(span).toBeDefined();
-        
-        return 'span-result';
+
+        return Promise.resolve('span-result');
       });
-      
+
       expect(result).toBe('span-result');
     });
 
     it('Should handle span attributes and sanitization', async () => {
-      await serviceInstrument.traces.withSpan('test-attributes', async () => {
+      await serviceInstrument.traces.withSpan('test-attributes', () => {
         // This tests that our attribute handling works with the real SDK
         const span = serviceInstrument.traces.getActiveSpan();
         if (span) {
@@ -159,14 +158,15 @@ describe('Node.js API Integration - Testing Our Code With Real SDK', () => {
           // The fact that this doesn't throw means our integration works
           (span as { setAttributes: (attrs: unknown) => void }).setAttributes(sanitizedAttrs);
         }
+        return Promise.resolve();
       });
     });
 
     it('Should support convenience trace method', async () => {
-      const result = await client.trace('convenience-test', async () => {
-        return 'traced-result';
+      const result = await client.trace('convenience-test', () => {
+        return Promise.resolve('traced-result');
       });
-      
+
       expect(result).toBe('traced-result');
     });
   });
@@ -184,7 +184,7 @@ describe('Node.js API Integration - Testing Our Code With Real SDK', () => {
           // Test nested context
           await client.context.business.withAdditional(
             { step: 'nested' },
-            async () => {
+            () => {
               const nestedContext = client.context.business.get();
               expect(nestedContext.userId).toBe('test-123'); // Inherited
               expect(nestedContext.step).toBe('nested'); // Added
@@ -229,15 +229,15 @@ describe('Node.js API Integration - Testing Our Code With Real SDK', () => {
 
     it('Should provide error boundary functionality', async () => {
       const result = await serviceInstrument.errors.boundary(
-        async () => {
+        () => {
           throw new Error('Boundary test error');
         },
-        async (error) => {
+        (error) => {
           expect(error.message).toBe('Boundary test error');
           return 'fallback-result';
         }
       );
-      
+
       expect(result).toBe('fallback-result');
     });
 

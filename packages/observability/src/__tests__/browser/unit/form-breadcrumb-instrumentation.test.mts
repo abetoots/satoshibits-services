@@ -80,7 +80,7 @@ describe("BrowserFormBreadcrumbInstrumentation", () => {
         expect.objectContaining({
           category: "action",
           level: "info",
-          message: expect.stringContaining("login-form"),
+          message: expect.stringContaining("login-form") as unknown as string,
         }),
       );
       expect(interactionHandler).toHaveBeenCalledWith(
@@ -125,7 +125,7 @@ describe("BrowserFormBreadcrumbInstrumentation", () => {
 
       expect(addBreadcrumb).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: expect.stringContaining("[unnamed]"),
+          message: expect.stringContaining("[unnamed]") as unknown as string,
         }),
       );
     });
@@ -166,7 +166,7 @@ describe("BrowserFormBreadcrumbInstrumentation", () => {
       expect(interactionHandler).toHaveBeenCalledWith(
         "ui.form_submit",
         expect.objectContaining({
-          action: expect.not.stringContaining("token=secret"),
+          action: expect.not.stringContaining("token=secret") as unknown as string,
         }),
       );
     });
@@ -212,7 +212,7 @@ describe("BrowserFormBreadcrumbInstrumentation", () => {
             email: 1,
             password: 1,
             checkbox: 1,
-          }),
+          }) as unknown as Record<string, number>,
         }),
       );
     });
@@ -238,7 +238,7 @@ describe("BrowserFormBreadcrumbInstrumentation", () => {
         expect.objectContaining({
           fieldTypes: expect.objectContaining({
             textarea: 1,
-          }),
+          }) as unknown as Record<string, number>,
         }),
       );
     });
@@ -264,7 +264,7 @@ describe("BrowserFormBreadcrumbInstrumentation", () => {
         expect.objectContaining({
           fieldTypes: expect.objectContaining({
             select: 1,
-          }),
+          }) as unknown as Record<string, number>,
         }),
       );
     });
@@ -292,7 +292,7 @@ describe("BrowserFormBreadcrumbInstrumentation", () => {
           hasFileInput: true,
           fieldTypes: expect.objectContaining({
             file: 1,
-          }),
+          }) as unknown as Record<string, number>,
         }),
       );
     });

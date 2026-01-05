@@ -163,7 +163,7 @@ describe("BrowserSDK SSR Safety (Node.js Environment)", () => {
         captureWebVitals: false,
       });
 
-      sdk.start();
+      void sdk.start();
 
       const errorListener = addEventListenerSpy.mock.calls.find(
         (call) => call[0] === "error",
@@ -185,7 +185,7 @@ describe("BrowserSDK SSR Safety (Node.js Environment)", () => {
         captureWebVitals: false,
       });
 
-      sdk.start();
+      void sdk.start();
 
       expect(
         addEventListenerSpy.mock.calls.some(

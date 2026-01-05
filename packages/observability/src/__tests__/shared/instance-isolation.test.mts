@@ -10,7 +10,7 @@
  * 4. Instance registry tracks all clients correctly
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { SmartClient } from "../../index.mjs";
 import {
   getAllInstances,
@@ -94,7 +94,7 @@ describe("Instance Isolation (Multi-Instance Support)", () => {
     it("should have separate scoped client caches", () => {
       // create scoped clients on each instance
       const scope1a = client1.getInstrumentation("module-a");
-      const scope1b = client1.getInstrumentation("module-b");
+      const _scope1b = client1.getInstrumentation("module-b");
       const scope2a = client2.getInstrumentation("module-a");
 
       // same scope name on same client should return cached instance
@@ -171,7 +171,7 @@ describe("Instance Isolation (Multi-Instance Support)", () => {
     });
 
     it("should warn when destroying an already destroyed instance", async () => {
-      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => { /* noop */ });
 
       const client = await SmartClient.create({
         serviceName: "double-destroy",
@@ -318,7 +318,7 @@ describe("Instance Isolation (Multi-Instance Support)", () => {
     });
 
     it("should warn only once for concurrent destroys due to flag being set first", async () => {
-      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => { /* noop */ });
 
       const client = await SmartClient.create({
         serviceName: "concurrent-warn-test",
@@ -335,7 +335,7 @@ describe("Instance Isolation (Multi-Instance Support)", () => {
       // the second call should have seen the flag and warned
       // (exact number depends on timing but at least one should warn)
       const warnCalls = consoleSpy.mock.calls.filter(
-        (call) => call[0]?.includes?.("already destroyed")
+        (call) => typeof call[0] === "string" && call[0].includes("already destroyed")
       );
       expect(warnCalls.length).toBeGreaterThanOrEqual(1);
 
@@ -343,9 +343,6 @@ describe("Instance Isolation (Multi-Instance Support)", () => {
     });
   });
 });
-
-// need to import vi for the spy
-import { vi } from "vitest";
 
 describe("Cache Configuration Validation (Multi-model Review Fixes)", () => {
   beforeEach(() => {
@@ -485,7 +482,7 @@ describe("Cache Configuration Validation (Multi-model Review Fixes)", () => {
       // set up business context
       await client.context.business.run(
         { userId: "user-123", tenantId: "tenant-456" },
-        async () => {
+        () => {
           // verify context is active
           const ctx = client.context.business.get();
           expect(ctx.userId).toBe("user-123");

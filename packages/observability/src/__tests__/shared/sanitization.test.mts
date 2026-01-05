@@ -22,6 +22,7 @@ import {
   sanitizeObject,
   SanitizerManager,
   BUILT_IN_SENSITIVE_FIELD_PATTERNS,
+  type SanitizedValue,
 } from "../../enrichment/sanitizer.mjs";
 import { SmartClient } from "../../index.mjs";
 import {
@@ -224,7 +225,7 @@ describe("Data Sanitization - Shared Functionality", () => {
           { input: "auth_1234567890abcdef1234567890abcdef", name: "auth_" },
           { input: "bearer_1234567890abcdef1234567890abcdef", name: "bearer_" },
         ];
-        for (const { input, name } of cases) {
+        for (const { input, name: _name } of cases) {
           const result = strictSanitizer.sanitize(`Token: ${input}`);
           expect(result).toBe("Token: [REDACTED]");
         }
@@ -1275,12 +1276,13 @@ describe("Data Sanitization - Shared Functionality", () => {
 
       if (isSanitizedObject(result)) {
         // verify sensitive fields were redacted
-        expect(result["password_0"]).toBe("[REDACTED]");
-        expect(result["password_10"]).toBe("[REDACTED]");
-        expect(result["apiKey_15"]).toBe("[REDACTED]");
+        const typedResult = result as Record<string, string>;
+        expect(typedResult.password_0).toBe("[REDACTED]");
+        expect(typedResult.password_10).toBe("[REDACTED]");
+        expect(typedResult.apiKey_15).toBe("[REDACTED]");
         // verify normal fields preserved
-        expect(result["field_1"]).toBe("value_1");
-        expect(result["field_2"]).toBe("value_2");
+        expect(typedResult.field_1).toBe("value_1");
+        expect(typedResult.field_2).toBe("value_2");
       }
     });
 
@@ -1327,7 +1329,7 @@ describe("Data Sanitization - Shared Functionality", () => {
         password: "secret123",
         normal: "visible",
       };
-      circularObject["self"] = circularObject;
+      circularObject.self = circularObject;
 
       // should complete without infinite loop or stack overflow
       const result = sanitizer.sanitize(circularObject);
@@ -1361,10 +1363,11 @@ describe("Data Sanitization - Shared Functionality", () => {
 
       // verify all results are properly sanitized
       results.forEach((result) => {
-        expect(isSanitizedObject(result)).toBe(true);
-        if (isSanitizedObject(result)) {
-          expect(result.password).toBe("[REDACTED]");
-          expect(result.apiKey).toBe("[REDACTED]");
+        const sanitizedResult = result as SanitizedValue;
+        expect(isSanitizedObject(sanitizedResult)).toBe(true);
+        if (isSanitizedObject(sanitizedResult)) {
+          expect(sanitizedResult.password).toBe("[REDACTED]");
+          expect(sanitizedResult.apiKey).toBe("[REDACTED]");
         }
       });
     });

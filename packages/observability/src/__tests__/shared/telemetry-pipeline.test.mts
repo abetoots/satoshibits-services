@@ -35,13 +35,13 @@ import { clearAllInstances } from "../../client-instance.mjs";
  * Uses closure-scoped spanData per span to correctly handle nested/concurrent spans.
  */
 function createMockTracer() {
-  const recordedSpans: Array<{
+  const recordedSpans: {
     name: string;
     attributes: Record<string, unknown>;
     status: { code?: number; message?: string };
     ended: boolean;
     exception?: Error;
-  }> = [];
+  }[] = [];
 
   // helper to create a span with closure-scoped state
   const createSpanData = (name: string, options?: { attributes?: Record<string, unknown> }) => {
@@ -120,18 +120,18 @@ function createMockTracer() {
  * simulate SDK metric collection and verify gauge values.
  */
 function createMockMeter() {
-  const recordedMetrics: Array<{
+  const recordedMetrics: {
     type: "counter" | "gauge" | "histogram" | "updowncounter";
     name: string;
     value: number;
     attributes?: Record<string, unknown>;
-  }> = [];
+  }[] = [];
 
   // track all created observable gauges for triggering
-  const createdGauges: Array<{
+  const createdGauges: {
     name: string;
     _triggerCallback: () => void;
-  }> = [];
+  }[] = [];
 
   return {
     createCounter: vi.fn((name: string) => ({
@@ -153,7 +153,7 @@ function createMockMeter() {
       let lastCallback: ((observableResult: { observe: (value: number, attributes?: Record<string, unknown>) => void }) => void) | null = null;
 
       const gaugeMock = {
-        addCallback: vi.fn((callback) => {
+        addCallback: vi.fn((callback: typeof lastCallback) => {
           lastCallback = callback;
         }),
         removeCallback: vi.fn(),
@@ -288,7 +288,7 @@ describe("Telemetry Pipeline Verification (Mock-Based)", () => {
       const serviceInstrument = client.getServiceInstrumentation();
 
       await expect(
-        serviceInstrument.traces.withSpan("failing-span", async () => {
+        serviceInstrument.traces.withSpan("failing-span", () => {
           throw new Error("Intentional failure");
         }),
       ).rejects.toThrow("Intentional failure");

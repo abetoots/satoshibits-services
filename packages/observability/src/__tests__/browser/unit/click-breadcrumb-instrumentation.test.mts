@@ -78,13 +78,13 @@ describe("BrowserClickBreadcrumbInstrumentation", () => {
         expect.objectContaining({
           category: "action",
           level: "info",
-          message: expect.stringContaining("button#test-button"),
+          message: expect.stringContaining("button#test-button") as unknown as string,
         }),
       );
       expect(interactionHandler).toHaveBeenCalledWith(
         "ui.click",
         expect.objectContaining({
-          selector: expect.stringContaining("button#test-button"),
+          selector: expect.stringContaining("button#test-button") as unknown as string,
           tag: "button",
           text: "Click me",
         }),
@@ -108,7 +108,7 @@ describe("BrowserClickBreadcrumbInstrumentation", () => {
       expect(addBreadcrumb).toHaveBeenCalledWith(
         expect.objectContaining({
           category: "action",
-          message: expect.stringContaining("a#test-link"),
+          message: expect.stringContaining("a#test-link") as unknown as string,
         }),
       );
     });
@@ -287,8 +287,8 @@ describe("BrowserClickBreadcrumbInstrumentation", () => {
       // so random <= sampleRate means sampled, random > sampleRate means skipped
       const randomValues = [0.1, 0.6, 0.2, 0.7, 0.3, 0.8, 0.4, 0.9, 0.05, 0.95];
       let callIndex = 0;
-      vi.spyOn(Math, "random").mockImplementation(() => {
-        const val = randomValues[callIndex % randomValues.length];
+      vi.spyOn(Math, "random").mockImplementation((): number => {
+        const val = randomValues[callIndex % randomValues.length] ?? 0.5;
         callIndex++;
         return val;
       });
@@ -358,7 +358,7 @@ describe("BrowserClickBreadcrumbInstrumentation", () => {
         button.click();
       }
 
-      const capturedCount = addBreadcrumb.mock.calls.length;
+      const capturedCount = vi.mocked(addBreadcrumb).mock.calls.length;
       const actualRate = capturedCount / totalClicks;
 
       // verify rate is within 3σ (12%-38% range for 25% sample rate)
@@ -410,7 +410,7 @@ describe("BrowserClickBreadcrumbInstrumentation", () => {
       expect(addBreadcrumb).toHaveBeenCalledTimes(2);
     });
 
-    it("should allow clicks after throttle window expires", async () => {
+    it("should allow clicks after throttle window expires", () => {
       vi.useFakeTimers();
 
       instrumentation = new BrowserClickBreadcrumbInstrumentation({

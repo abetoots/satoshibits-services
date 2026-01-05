@@ -82,7 +82,7 @@ describe("BrowserRageClickInstrumentation", () => {
         expect.objectContaining({
           category: "action",
           level: "warning",
-          message: expect.stringContaining("Rage click detected"),
+          message: expect.stringContaining("Rage click detected") as unknown as string,
         }),
       );
     });
@@ -104,10 +104,10 @@ describe("BrowserRageClickInstrumentation", () => {
       expect(interactionHandler).toHaveBeenCalledWith(
         "ui.rage_click",
         expect.objectContaining({
-          selector: expect.stringContaining("button#test-btn"),
+          selector: expect.stringContaining("button#test-btn") as unknown as string,
           clickCount: 3,
           threshold: 3,
-          windowMs: expect.any(Number),
+          windowMs: expect.any(Number) as unknown as number,
         }),
       );
     });
@@ -316,7 +316,7 @@ describe("BrowserRageClickInstrumentation", () => {
       expect(addBreadcrumb).toHaveBeenCalledTimes(1);
       expect(addBreadcrumb).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: expect.stringContaining("btn-1"),
+          message: expect.stringContaining("btn-1") as unknown as string,
         }),
       );
     });

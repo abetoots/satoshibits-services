@@ -148,7 +148,7 @@ describe('Node.js Metrics E2E Integration', () => {
       );
 
       // the recorded duration should be approximately 50ms (fake time advanced)
-      const recordedDuration = recordSpy.mock.calls[0]?.[1] as number;
+      const recordedDuration = recordSpy.mock.calls[0]![1];
       expect(recordedDuration).toBeGreaterThanOrEqual(50);
       // note: spy cleanup handled by afterEach vi.restoreAllMocks()
     });
@@ -157,11 +157,11 @@ describe('Node.js Metrics E2E Integration', () => {
       // test that errors propagate correctly, not timing accuracy
       const error = await client.errors.boundary(
         async () => {
-          return await serviceInstrument.metrics.timing('error.timing.test', async () => {
+          return await serviceInstrument.metrics.timing('error.timing.test', () => {
             throw new Error('Timing test error');
           });
         },
-        async (err) => err
+        (err) => err
       );
 
       expect(error).toBeInstanceOf(Error);
@@ -236,7 +236,7 @@ describe('Node.js Metrics E2E Integration', () => {
           // Test with additional context
           await client.context.business.withAdditional(
             { step: 'metric-recording' },
-            async () => {
+            () => {
               serviceInstrument.metrics.record('business.context.histogram', 250.5, {
                 contextual: true
               });
@@ -267,7 +267,7 @@ describe('Node.js Metrics E2E Integration', () => {
         });
         
         // Use timing within span
-        const result = await serviceInstrument.metrics.timing('span.operation', async () => {
+        const result = await serviceInstrument.metrics.timing('span.operation', () => {
           serviceInstrument.metrics.gauge('span.resource.usage', 85.5);
           return 'span-metrics-complete';
         });

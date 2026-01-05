@@ -36,7 +36,7 @@ describe("RED: Metrics API Argument Overloading", () => {
     it("should accept (name, attributes) without explicit value - uses default 1", () => {
       // this is the core case that currently fails
       // user passes attributes as second argument, expecting default value of 1
-      const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const spy = vi.spyOn(console, "warn").mockImplementation(() => { /* noop */ });
 
       // currently: object { env: "prod" } is assigned to value parameter,
       // validation fails because it's not a number, metric is silently dropped
@@ -86,7 +86,7 @@ describe("RED: Metrics API Argument Overloading", () => {
 
     it("should reject invalid string value with validation error", () => {
       // invalid type should still fail validation (not silently drop)
-      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => { /* noop */ });
 
       // @ts-expect-error - testing invalid type
       instrument.metrics.increment("bad_value", "not-a-number");

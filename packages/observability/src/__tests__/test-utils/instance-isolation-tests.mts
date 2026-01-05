@@ -22,8 +22,9 @@
  * Platform-specific test files should import and run these tests:
  */
 
-import { describe, it, expect } from "vitest";
-import { SmartClient } from "../../index.mjs";
+import { describe, expect, it } from "vitest";
+
+import type { BaseClientConfig } from "../../config/client-config.mjs";
 import type { TestContext } from "./setup-helpers.mjs";
 
 /**
@@ -34,7 +35,7 @@ export interface IsolationTestConfig {
   environment: "node" | "browser";
 
   /** Function to create a new test client */
-  createClient: (config: any) => Promise<TestContext>;
+  createClient: (config: Partial<BaseClientConfig>) => Promise<TestContext>;
 
   /** Function to teardown a test client */
   teardownClient: (context: TestContext) => Promise<void>;
@@ -75,7 +76,7 @@ export interface IsolationTestConfig {
  * ```
  */
 export function runInstanceIsolationTests(config: IsolationTestConfig) {
-  const prefix = config.metricPrefix || config.environment;
+  const prefix = config.metricPrefix ?? config.environment;
 
   describe("Instance Isolation (Shared Conformance)", () => {
     it("should create separate instrument caches for different client instances", async () => {

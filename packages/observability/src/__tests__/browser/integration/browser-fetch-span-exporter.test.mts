@@ -661,7 +661,7 @@ describe("RED: OTLP Compliance for FetchSpanExporter", () => {
               },
             );
           } catch (e) {
-            reject(e);
+            reject(e instanceof Error ? e : new Error(String(e)));
           }
         }),
       ).resolves.toBeUndefined();
@@ -691,14 +691,14 @@ describe("RED: OTLP Compliance for FetchSpanExporter", () => {
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        expect.any(String),
+        expect.any(String) as unknown as string,
         expect.objectContaining({
           headers: expect.objectContaining({
             "X-API-Key": "secret-key",
             "X-Tenant-ID": "tenant-123",
             "Content-Type": "application/json",
-          }),
-        }),
+          }) as unknown as Record<string, string>,
+        }) as unknown as RequestInit,
       );
     });
   });

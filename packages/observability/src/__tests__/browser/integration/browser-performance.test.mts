@@ -68,7 +68,7 @@ describe('Browser Performance Features', () => {
 
     // Mock PerformanceObserver if needed
     if (!globalThis.PerformanceObserver) {
-      (globalThis as typeof globalThis & { PerformanceObserver?: typeof PerformanceObserver }).PerformanceObserver = vi.fn().mockImplementation((callback) => ({
+      (globalThis as typeof globalThis & { PerformanceObserver?: typeof PerformanceObserver }).PerformanceObserver = vi.fn().mockImplementation((_callback) => ({
         observe: vi.fn(),
         disconnect: vi.fn(),
         takeRecords: vi.fn(() => [])
@@ -119,8 +119,8 @@ describe('Browser Performance Features', () => {
         }
       ];
 
-      if (performance.getEntriesByType) {
-        vi.mocked(performance.getEntriesByType).mockReturnValue(scriptEntries as unknown as PerformanceEntryList);
+      if (typeof performance.getEntriesByType === 'function') {
+        vi.spyOn(performance, 'getEntriesByType').mockReturnValue(scriptEntries as unknown as PerformanceEntryList);
       }
 
       expect(() => {
@@ -150,7 +150,7 @@ describe('Browser Performance Features', () => {
         }
       ];
 
-      vi.mocked(performance.getEntriesByType).mockReturnValue(imageEntries as unknown as PerformanceEntryList);
+      vi.spyOn(performance, 'getEntriesByType').mockReturnValue(imageEntries as unknown as PerformanceEntryList);
 
       expect(() => {
         const entries = performance.getEntriesByType('resource');
@@ -179,7 +179,7 @@ describe('Browser Performance Features', () => {
         }
       ];
 
-      vi.mocked(performance.getEntriesByType).mockReturnValue(fontEntries as unknown as PerformanceEntryList);
+      vi.spyOn(performance, 'getEntriesByType').mockReturnValue(fontEntries as unknown as PerformanceEntryList);
 
       expect(() => {
         const entries = performance.getEntriesByType('resource');
@@ -239,10 +239,10 @@ describe('Browser Performance Features', () => {
         const typeNames = ['navigate', 'reload', 'back_forward', 'prerender'];
         
         serviceInstrument.metrics.increment('navigation.type', 1, {
-          type: typeNames[navType] || 'unknown'
+          type: typeNames[navType] ?? 'unknown'
         });
 
-        client.context.business.addTag('navigation.type', typeNames[navType] || 'unknown');
+        client.context.business.addTag('navigation.type', typeNames[navType] ?? 'unknown');
       }).not.toThrow();
     });
   });
@@ -377,10 +377,10 @@ describe('Browser Performance Features', () => {
       };
 
       expect(() => {
-        // Mock actual measurements
+        // mock actual measurements
         const actualPageLoad = 2500;
-        const actualTTI = 3500;
-        const actualTBT = 450;
+        const _actualTTI = 3500; // unused - TTI not tracked in this test
+        const _actualTBT = 450; // unused - TBT not tracked in this test
         const actualMemory = 75;
 
         // Track budget violations
