@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0
+
+### Minor Changes
+
+- 1b387e1: production-ready SDK with critical fixes
+
 All notable changes to `@satoshibits/observability` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
@@ -10,10 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### 🔒 Security
 
 #### Fixed Critical PII Leakage in Error Reporting
+
 - **CRITICAL**: Fixed unsanitized error data being exported to telemetry backends
 - **Impact**: Error messages, stack traces, and custom context could leak PII, credentials, and sensitive data
 - **Fix**: Created dedicated `ERROR_SANITIZER` with strict GDPR settings and custom patterns
-  - Stripe API keys (sk_live_, sk_test_, pk_live_, pk_test_)
+  - Stripe API keys (sk*live*, sk*test*, pk*live*, pk*test*)
   - Generic API keys and secrets
   - Passwords in connection strings (mongodb://, postgresql://, mysql://, redis://, amqp://)
   - Passwords in URL parameters
@@ -25,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### 🐛 Fixed
 
 #### Missing /testing Export Path
+
 - **Issue**: README documented `@satoshibits/observability/testing` import but export didn't exist
 - **Impact**: Users couldn't import `MockObservabilityClient` for testing
 - **Fix**: Created dedicated `src/testing.mts` entry point with proper package.json export
@@ -33,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Reference**: See `AUDIT-REPORT.md` Bug #2
 
 #### WeakSet Logic Bug in DataSanitizer
+
 - **Issue**: Instance-level WeakSet caused shared objects to be incorrectly flagged as circular references
 - **Impact**: Sanitizing multiple objects with shared sub-objects produced incorrect `[CIRCULAR]` markers
 - **Fix**: Made WeakSet call-scoped instead of instance-level
@@ -69,12 +78,14 @@ This is the first production-ready release of `@satoshibits/observability`. The 
 ### ✨ Added
 
 #### Metric Naming Best Practices Documentation
+
 - **Comprehensive guide** in README covering metric naming conventions, attribute usage, and cardinality management
 - **Decision trees** for choosing between metric names, attributes, and trace data
 - **Real-world examples** with cardinality calculations
 - **Scope naming conventions** with validation patterns
 
 #### Enhanced Scope Name Validation
+
 - **Automatic validation** of instrumentation scope names to prevent high-cardinality patterns
 - **Error detection** for common mistakes (UUIDs, timestamps, user IDs in scope names)
 - **Clear error messages** guiding developers to use attributes for dynamic data
@@ -89,6 +100,7 @@ This is the first production-ready release of `@satoshibits/observability`. The 
 #### API Simplifications (Non-Breaking)
 
 **Sampling Configuration**
+
 - **Simplified `SmartSamplerConfig`** - Removed unused public API options for cleaner configuration
 - Internalized `tierRates` and `operationRates` (advanced features not used by external consumers)
 - Internalized `AdaptiveSampler` class (implementation detail, not public API)
@@ -96,6 +108,7 @@ This is the first production-ready release of `@satoshibits/observability`. The 
 - **Migration**: Remove `type` discriminator if present; library now uses single `SmartSampler` implementation
 
 **Error Handling Configuration**
+
 - **Removed extension hooks** from `ErrorCategorizationConfig` and `RetryClassificationConfig`
 - Removed `customCategorizer` and `customRules` options (YAGNI - no known usage)
 - Removed `customIsRetryable` option (YAGNI - no known usage)
@@ -103,6 +116,7 @@ This is the first production-ready release of `@satoshibits/observability`. The 
 - **No breaking changes** for standard configurations
 
 **Context Management**
+
 - **Removed deprecated `initializeContext()` function** (was no-op, unused)
 - Use `client.context.business` API instead for all context operations
 - **No breaking changes** - Function was already deprecated and unused
@@ -110,6 +124,7 @@ This is the first production-ready release of `@satoshibits/observability`. The 
 #### Code Architecture Improvements
 
 **Modular Structure**
+
 - **Decomposed 1,949-line "God Object"** into focused, cohesive modules
 - **48% reduction** in main file size (1,949 → 1,007 lines)
 - Created `config/` directory for configuration interfaces (157 lines)
@@ -120,6 +135,7 @@ This is the first production-ready release of `@satoshibits/observability`. The 
 - **Improved maintainability** - Each module has single responsibility
 
 **Type Safety Improvements**
+
 - Fixed type casting errors in error fallback code
 - Improved type inference for re-exported types
 - Better type safety for internal modules
@@ -141,6 +157,7 @@ This is the first production-ready release of `@satoshibits/observability`. The 
 ### 🏗️ Internal
 
 #### Module Organization
+
 ```
 packages/observability/src/
 ├── config/
@@ -152,12 +169,14 @@ packages/observability/src/
 ```
 
 #### Testing
+
 - **50+ tests passing** across Node.js and shared test suites
 - **Zero type errors** in TypeScript compilation
 - **Public API surface verified** - All exports accessible
 - **Backward compatibility confirmed** - No breaking changes
 
 #### Code Quality
+
 - **Removed unused code** - Internalized features with no external usage
 - **Eliminated dead code** - Removed deprecated no-op functions
 - **Improved separation of concerns** - Each module has focused responsibility
@@ -186,6 +205,7 @@ packages/observability/src/
 Most users require **no changes**. The following scenarios may need attention:
 
 **If using advanced sampling configuration:**
+
 ```typescript
 // Before (if you used type discriminator)
 {
@@ -204,35 +224,47 @@ Most users require **no changes**. The following scenarios may need attention:
 ```
 
 **If importing AdaptiveSampler directly:**
+
 ```typescript
 // Before
-import { AdaptiveSampler } from '@satoshibits/observability';
-
 // After (use SmartSampler)
-import { SmartSampler } from '@satoshibits/observability';
+import { AdaptiveSampler, SmartSampler } from "@satoshibits/observability";
 ```
 
 **If using deprecated initializeContext:**
+
 ```typescript
 // Before
-import { initializeContext } from '@satoshibits/observability';
-initializeContext({ /* config */ });  // ❌ Removed (was no-op)
+import { initializeContext } from "@satoshibits/observability";
+
+initializeContext({
+  /* config */
+}); // ❌ Removed (was no-op)
 
 // After (use client API)
-const client = await SmartClient.initialize({ /* config */ });
-client.context.business.run({ /* context */ }, () => {
-  // Your code with context
+const client = await SmartClient.initialize({
+  /* config */
 });
+client.context.business.run(
+  {
+    /* context */
+  },
+  () => {
+    // Your code with context
+  },
+);
 ```
 
 ### 🙏 Acknowledgments
 
 This release represents a comprehensive code quality improvement effort including:
+
 - **API Simplification** (YAGNI principle applied)
 - **God Object Decomposition** (Single Responsibility Principle)
 - **Documentation Enhancement** (Metric naming best practices)
 
 Special thanks to:
+
 - The OpenTelemetry project for semantic conventions
 - All contributors who provided feedback on API design
 
