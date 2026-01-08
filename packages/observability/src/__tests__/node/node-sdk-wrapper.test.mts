@@ -203,10 +203,11 @@ describe("SDK Wrapper - Real Module Tests", () => {
 
       const testError = new Error("Test uncaught exception");
 
-      // catch the re-thrown error to prevent it from escaping to Vitest
+      // use persistent handler to catch BOTH the original emit AND the re-thrown error
+      // (SDK handler re-throws via setImmediate, creating a second uncaughtException)
       let caughtError: Error | undefined;
       const catcher = (err: Error) => { caughtError = err; };
-      process.once("uncaughtException", catcher);
+      process.on("uncaughtException", catcher);
 
       // emit uncaughtException to trigger real handler
       process.emit("uncaughtException", testError);
@@ -244,10 +245,15 @@ describe("SDK Wrapper - Real Module Tests", () => {
       const getTracerSpy = vi.spyOn(trace, "getTracer");
       const testError = new Error("Test error for span");
 
-      // catch the re-thrown error to prevent it from escaping to Vitest
+      // use persistent handler to catch BOTH the original emit AND the re-thrown error
+      // (SDK handler re-throws via setImmediate, creating a second uncaughtException)
+      let caughtCount = 0;
       let caughtError: Error | undefined;
-      const catcher = (err: Error) => { caughtError = err; };
-      process.once("uncaughtException", catcher);
+      const catcher = (err: Error) => {
+        caughtCount++;
+        caughtError = err;
+      };
+      process.on("uncaughtException", catcher);
 
       // emit exception - handler should create a span
       process.emit("uncaughtException", testError);
@@ -258,8 +264,10 @@ describe("SDK Wrapper - Real Module Tests", () => {
       // wait for async shutdown to complete + re-throw
       await new Promise((resolve) => setTimeout(resolve, 150));
 
-      // verify error was re-thrown
+      // verify error was re-thrown (caught by our persistent handler)
       expect(caughtError).toBe(testError);
+      // should catch at least 2 events: original emit + re-throw
+      expect(caughtCount).toBeGreaterThanOrEqual(2);
 
       // cleanup
       process.off("uncaughtException", catcher);
@@ -294,13 +302,13 @@ describe("SDK Wrapper - Real Module Tests", () => {
         originalConsoleError.apply(console, args);
       });
 
-      // add a temporary handler to catch the re-thrown error and prevent it from
-      // escaping to Vitest's global handler (we'll verify it's the same error)
+      // use persistent handler to catch BOTH the original emit AND the re-thrown error
+      // (SDK handler re-throws via setImmediate, creating a second uncaughtException)
       let caughtRethrown: Error | undefined;
       const catcher = (err: Error) => {
         caughtRethrown = err;
       };
-      process.once("uncaughtException", catcher);
+      process.on("uncaughtException", catcher);
 
       // emit uncaughtException to trigger the SDK handler
       process.emit("uncaughtException", testError);
@@ -308,14 +316,14 @@ describe("SDK Wrapper - Real Module Tests", () => {
       // give async handler time to run (shutdown + setImmediate re-throw)
       await new Promise((resolve) => setTimeout(resolve, 200));
 
-      // verify the error was re-thrown via setImmediate (caught by our temp handler)
+      // verify the error was re-thrown via setImmediate (caught by our persistent handler)
       expect(caughtRethrown).toBe(testError);
 
       // the error should only be logged ONCE by SDK (not infinite loop)
-      // our temp handler doesn't log, so this verifies no recursive calls
+      // our persistent handler doesn't log, so this verifies no recursive calls
       expect(uncaughtLogCount).toBe(1);
 
-      // cleanup: remove our catcher if it wasn't triggered yet
+      // cleanup
       process.off("uncaughtException", catcher);
     });
   });

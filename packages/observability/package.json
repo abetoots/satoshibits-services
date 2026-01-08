@@ -29,11 +29,11 @@
     "prepublishOnly": "npm run build",
     "pre-commit": "pnpm exec lint-staged -c ./.lintstagedrc.mjs --concurrent false",
     "test": "USE_VITEST_BROWSER=1 vitest --run",
-    "test:shared": "vitest --run \"src/__tests__/shared/**/*.test.mts\" \"src/__tests__/readme-examples.test.mts\"",
-    "test:node:unit": "vitest --run \"src/__tests__/node/node-*.test.mts\" \"src/__tests__/node/unit/**/*.test.mts\"",
-    "test:node:integration": "vitest --run \"src/__tests__/node/integration/**/*.test.mts\" \"src/__tests__/integration/**/*.test.mts\"",
-    "test:browser": "USE_VITEST_BROWSER=1 vitest --run \"src/__tests__/browser/\"",
-    "test:browser:headed": "USE_VITEST_BROWSER=1 VITEST_BROWSER_NAME=chromium vitest --run --browser.headless=false \"src/__tests__/browser/"
+    "test:shared": "vitest --run --project=shared",
+    "test:node:unit": "vitest --run --project=node:unit",
+    "test:node:integration": "vitest --run --project=node:integration",
+    "test:browser": "USE_VITEST_BROWSER=1 vitest --run --project=browser",
+    "test:browser:headed": "USE_VITEST_BROWSER=1 VITEST_BROWSER_NAME=chromium vitest --run --browser.headless=false --project=browser"
   },
   "files": [
     "./dist/**/*",

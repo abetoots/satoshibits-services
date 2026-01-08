@@ -86,21 +86,23 @@ describe("BrowserSDK SSR Safety (Node.js Environment)", () => {
     // note: SDK constructor is SSR-safe (doesn't access globals)
     // but start() requires browser globals to function
 
-    it("should throw when window is missing during start()", () => {
+    it("should throw when window is missing during start()", async () => {
       vi.stubGlobal("window", undefined);
 
       sdk = new BrowserSDK(mockConfig);
-      expect(() => sdk.start()).toThrow(/DOM globals|window/i);
+      // start() is async, use rejects.toThrow for async error assertions
+      await expect(sdk.start()).rejects.toThrow(/DOM globals|window/i);
     });
 
-    it("should throw when navigator is missing during start()", () => {
+    it("should throw when navigator is missing during start()", async () => {
       vi.stubGlobal("navigator", undefined);
 
       sdk = new BrowserSDK(mockConfig);
-      expect(() => sdk.start()).toThrow(/DOM globals|navigator/i);
+      // start() is async, use rejects.toThrow for async error assertions
+      await expect(sdk.start()).rejects.toThrow(/DOM globals|navigator/i);
     });
 
-    it("should throw descriptive error when all globals missing", () => {
+    it("should throw descriptive error when all globals missing", async () => {
       sdk = new BrowserSDK(mockConfig);
 
       // remove essential globals
@@ -108,8 +110,8 @@ describe("BrowserSDK SSR Safety (Node.js Environment)", () => {
       vi.stubGlobal("navigator", undefined);
       vi.stubGlobal("document", undefined);
 
-      // should throw a clear error message
-      expect(() => sdk.start()).toThrow("BrowserSDK cannot start without DOM globals");
+      // start() is async, use rejects.toThrow for async error assertions
+      await expect(sdk.start()).rejects.toThrow("BrowserSDK cannot start without DOM globals");
     });
   });
 
@@ -177,9 +179,11 @@ describe("BrowserSDK SSR Safety (Node.js Environment)", () => {
     });
 
     it("should clean up browser error handlers on shutdown", async () => {
+      // captureErrors is opt-in by default (API Boundary Fix Issue #6)
       sdk = new BrowserSDK({
         ...mockConfig,
         autoInstrument: false,
+        captureErrors: true,
         captureConsoleErrors: false,
         captureNavigation: false,
         captureWebVitals: false,

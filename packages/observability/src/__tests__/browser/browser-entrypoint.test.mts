@@ -22,9 +22,11 @@ describe("Browser entrypoint", () => {
 
   it("registers and cleans up browser error listeners", async () => {
     // H3 fix: environment is now automatically injected by the entry point
+    // captureErrors is opt-in by default (API Boundary Fix Issue #6)
     await initialize({
       serviceName: "browser-entrypoint-test",
       autoInstrument: false,
+      captureErrors: true,
     });
 
     // verify that error listeners were registered

@@ -31,8 +31,10 @@ export default defineConfig({
       },
     },
     projects: [
+      // Shared tests (run in Node.js)
       {
         test: {
+          name: "shared",
           environment: "node",
           include: [
             "src/__tests__/shared/**/*.test.mts",
@@ -44,8 +46,12 @@ export default defineConfig({
       // Node unit tests
       {
         test: {
+          name: "node:unit",
           environment: "node",
-          include: ["src/__tests__/node/**/*.test.mts"],
+          include: [
+            "src/__tests__/node/unit/**/*.test.mts",
+            "src/__tests__/node/node-*.test.mts",
+          ],
           exclude: ["src/__tests__/node/integration/**"],
           env: { OBS_TEST_NO_EXPORT: "1" },
         },
@@ -53,18 +59,18 @@ export default defineConfig({
       // Node integration tests (real SDK, no network exporters)
       {
         test: {
+          name: "node:integration",
           environment: "node",
-          include: [
-            "src/__tests__/node/integration/**/*.test.mts",
-            "src/__tests__/integration/**/*.test.mts",
-          ],
+          include: ["src/__tests__/node/integration/**/*.test.mts"],
           env: { OBS_TEST_NO_EXPORT: "1" },
         },
       },
 
+      // Browser tests
       useBrowserRunner
         ? {
             test: {
+              name: "browser",
               browser: {
                 provider: "playwright",
                 enabled: true,
@@ -81,6 +87,7 @@ export default defineConfig({
           }
         : {
             test: {
+              name: "browser",
               environment: "jsdom",
               include: [
                 "src/__tests__/browser/**/*.test.mts",

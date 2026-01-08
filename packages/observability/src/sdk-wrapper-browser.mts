@@ -9,8 +9,8 @@ import { registerInstrumentations } from "@opentelemetry/instrumentation";
 import { FetchInstrumentation } from "@opentelemetry/instrumentation-fetch";
 import { XMLHttpRequestInstrumentation } from "@opentelemetry/instrumentation-xml-http-request";
 import {
-  LoggerProvider,
   BatchLogRecordProcessor,
+  LoggerProvider,
 } from "@opentelemetry/sdk-logs";
 import {
   MeterProvider,
@@ -23,16 +23,18 @@ import {
 import { WebTracerProvider } from "@opentelemetry/sdk-trace-web";
 
 import type { BaseSDK, BaseSDKState } from "./sdk-factory.mjs";
-import type { InstrumentationFactory } from "./config/client-config.mjs";
 import type { BrowserClientConfig } from "./unified-smart-client.mjs";
 import type { Context } from "@opentelemetry/api";
 import type { Instrumentation } from "@opentelemetry/instrumentation";
-import type { ReadableLogRecord, LogRecordExporter } from "@opentelemetry/sdk-logs";
 import type {
-  PushMetricExporter,
-  ResourceMetrics,
+  LogRecordExporter,
+  ReadableLogRecord,
+} from "@opentelemetry/sdk-logs";
+import type {
   AggregationTemporality,
   AggregationTemporalitySelector,
+  PushMetricExporter,
+  ResourceMetrics,
 } from "@opentelemetry/sdk-metrics";
 import type {
   ReadableSpan,
@@ -42,14 +44,15 @@ import type {
 } from "@opentelemetry/sdk-trace-base";
 
 import {
+  BrowserClickBreadcrumbInstrumentation,
   BrowserConsoleInstrumentation,
   BrowserErrorInstrumentation,
-  BrowserNavigationInstrumentation,
-  BrowserWebVitalsInstrumentation,
-  BrowserClickBreadcrumbInstrumentation,
   BrowserFormBreadcrumbInstrumentation,
+  BrowserNavigationInstrumentation,
   BrowserRageClickInstrumentation,
+  BrowserWebVitalsInstrumentation,
 } from "./browser/instrumentations/index.mjs";
+import { sendOtlpData } from "./browser/utils/otlp-exporter-helpers.mjs";
 import { initializeSanitizer } from "./enrichment/sanitizer.mjs";
 import { createResource } from "./internal/resource-factory.mjs";
 import { SmartSampler } from "./sampling.mjs";
@@ -128,15 +131,18 @@ export class BrowserSDK {
       // Prepare instrumentations - check for complete override first
       if (this.config.customInstrumentationFactory) {
         // H1 fix: User has full control - bypass all built-in instrumentations
-        this.instrumentations = this.config.customInstrumentationFactory(this.config);
+        this.instrumentations = this.config.customInstrumentationFactory(
+          this.config,
+        );
       } else {
         // Standard path: auto + custom + user-provided
         // Note: autoInstrument defaults to true (enabled) unless explicitly set to false
         // This matches the Node SDK behavior (Codex review finding)
         // M4 fix: Now async to support dynamic import for bundle optimization
-        const autoInstrumentations = this.config.autoInstrument !== false
-          ? await this.createAutoInstrumentations()
-          : [];
+        const autoInstrumentations =
+          this.config.autoInstrument !== false
+            ? await this.createAutoInstrumentations()
+            : [];
 
         const customInstrumentations = this.createCustomInstrumentations();
 
@@ -180,7 +186,8 @@ export class BrowserSDK {
       // M3 fix: Warn when endpoint is not explicitly configured
       // JAMstack/CDN-hosted apps often have backend on different origin
       const hasExplicitEndpoint = this.config.endpoint !== undefined;
-      const rawEndpoint = this.config.endpoint ??
+      const rawEndpoint =
+        this.config.endpoint ??
         (typeof window !== "undefined" ? window.location.origin : "");
       const baseEndpoint = rawEndpoint.replace(/\/v1\/traces\/?$/, "");
 
@@ -189,8 +196,8 @@ export class BrowserSDK {
       if (!hasExplicitEndpoint && !this.config.useConsoleExporter) {
         console.debug(
           "[Observability SDK] No endpoint configured. Defaulting to current origin: " +
-          `${baseEndpoint}. If your telemetry backend is on a different domain ` +
-          "(common for JAMstack/CDN deployments), set 'endpoint' explicitly.",
+            `${baseEndpoint}. If your telemetry backend is on a different domain ` +
+            "(common for JAMstack/CDN deployments), set 'endpoint' explicitly.",
         );
       }
 
@@ -376,19 +383,19 @@ export class BrowserSDK {
       // calculate export batch size first (needed for queue size constraint)
       const rawExportBatchSize = batchOpts?.maxExportBatchSize;
       const maxExportBatchSize = Number.isFinite(rawExportBatchSize)
-        ? Math.max(1, rawExportBatchSize as number)
+        ? Math.max(1, rawExportBatchSize!)
         : 50;
 
       // queue size must be >= export batch size (Gemini review)
       const rawQueueSize = batchOpts?.maxQueueSize;
       const configuredQueueSize = Number.isFinite(rawQueueSize)
-        ? Math.max(1, rawQueueSize as number)
+        ? Math.max(1, rawQueueSize!)
         : 100;
       const maxQueueSize = Math.max(configuredQueueSize, maxExportBatchSize);
 
       const rawDelayMs = batchOpts?.scheduledDelayMillis;
       const scheduledDelayMillis = Number.isFinite(rawDelayMs)
-        ? Math.max(0, rawDelayMs as number)
+        ? Math.max(0, rawDelayMs!)
         : 500;
 
       spanProcessors.push(
@@ -411,8 +418,10 @@ export class BrowserSDK {
 
     try {
       // check if Zone is available (either bundled or from Angular)
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      if (typeof Zone !== "undefined" && (Zone as { current?: unknown })?.current) {
+      if (
+        typeof Zone !== "undefined" &&
+        (Zone as { current?: unknown })?.current
+      ) {
         this.tracerProvider.register({
           contextManager: new ZoneContextManager(),
         });
@@ -441,7 +450,8 @@ export class BrowserSDK {
    * This allows bundlers to tree-shake the heavy meta-package when 'minimal' mode is used.
    */
   private async createAutoInstrumentations(): Promise<Instrumentation[]> {
-    const corsUrls = this.config.propagateTraceHeaderCorsUrls ??
+    const corsUrls =
+      this.config.propagateTraceHeaderCorsUrls ??
       (typeof window !== "undefined" ? [window.location.origin] : []);
 
     // M4 fix: Support minimal mode for smaller bundle size
@@ -455,15 +465,14 @@ export class BrowserSDK {
     // Dynamic import ensures bundlers can tree-shake when minimal mode is used
     // Doc 4 L5 Fix: wrap in try/catch to gracefully handle import failures (CSP, missing package)
     try {
-      const { getWebAutoInstrumentations } = await import("@opentelemetry/auto-instrumentations-web");
+      const { getWebAutoInstrumentations } = await import(
+        "@opentelemetry/auto-instrumentations-web"
+      );
       return getWebAutoInstrumentations({
         "@opentelemetry/instrumentation-document-load": {
           applyCustomAttributesOnSpan: {
             documentLoad: (span) => {
-              span.setAttribute(
-                "browser.referrer",
-                document.referrer || "",
-              );
+              span.setAttribute("browser.referrer", document.referrer || "");
               span.setAttribute("browser.title", document.title);
             },
           },
@@ -480,7 +489,7 @@ export class BrowserSDK {
       // Codex review: log full error object for debugging (not just message)
       console.warn(
         "[BrowserSDK] Failed to load auto-instrumentations-web, falling back to minimal mode:",
-        error
+        error,
       );
       return this.createMinimalInstrumentations(corsUrls);
     }
@@ -490,7 +499,9 @@ export class BrowserSDK {
    * Create minimal instrumentation set (fetch + XHR only)
    * Doc 4 L5 Fix (Codex review): extracted to avoid duplication between minimal mode and fallback
    */
-  private createMinimalInstrumentations(corsUrls: (string | RegExp)[]): Instrumentation[] {
+  private createMinimalInstrumentations(
+    corsUrls: (string | RegExp)[],
+  ): Instrumentation[] {
     return [
       new FetchInstrumentation({
         propagateTraceHeaderCorsUrls: corsUrls,
@@ -542,7 +553,10 @@ export class BrowserSDK {
     }
 
     // add web vitals instrumentation (uses Performance API)
-    if (this.config.captureWebVitals === true && typeof window !== "undefined") {
+    if (
+      this.config.captureWebVitals === true &&
+      typeof window !== "undefined"
+    ) {
       instrumentations.push(
         new BrowserWebVitalsInstrumentation({
           enableSampling: true,
@@ -554,9 +568,16 @@ export class BrowserSDK {
     // captureInteractions is a convenience alias - individual flags can override it
 
     // compute effective enablement: individual flag takes precedence, falls back to alias
-    const enableClicks = this.config.captureClickBreadcrumbs ?? this.config.captureInteractions ?? false;
-    const enableForms = this.config.captureFormBreadcrumbs ?? this.config.captureInteractions ?? false;
-    const enableRageClicks = this.config.detectRageClicks ?? this.config.captureInteractions ?? false;
+    const enableClicks =
+      this.config.captureClickBreadcrumbs ??
+      this.config.captureInteractions ??
+      false;
+    const enableForms =
+      this.config.captureFormBreadcrumbs ??
+      this.config.captureInteractions ??
+      false;
+    const enableRageClicks =
+      this.config.detectRageClicks ?? this.config.captureInteractions ?? false;
 
     // add click breadcrumb instrumentation
     if (enableClicks === true) {
@@ -602,7 +623,10 @@ export class BrowserSDK {
    * Filters out null/undefined results for safety (Gemini review finding)
    */
   private resolveUserInstrumentations(): Instrumentation[] {
-    if (!this.config.instrumentations || this.config.instrumentations.length === 0) {
+    if (
+      !this.config.instrumentations ||
+      this.config.instrumentations.length === 0
+    ) {
       return [];
     }
 
@@ -611,7 +635,7 @@ export class BrowserSDK {
     for (const item of this.config.instrumentations) {
       if (typeof item === "function") {
         // it's a factory function - invoke it with config
-        const result = (item as InstrumentationFactory<BrowserClientConfig>)(this.config);
+        const result = item(this.config);
         if (result) {
           if (Array.isArray(result)) {
             // filter out any null/undefined items from the array
@@ -745,7 +769,7 @@ export class FetchSpanExporter implements SpanExporter {
     // so only use it when no custom auth headers are configured
     const data = JSON.stringify(exportData);
     const hasCustomAuthHeaders = Object.keys(this.headers).some(
-      (key) => key.toLowerCase() !== "content-type"
+      (key) => key.toLowerCase() !== "content-type",
     );
 
     // Doc 4 H2 Fix: detect cross-origin to avoid sendBeacon CORS preflight issue
@@ -753,7 +777,10 @@ export class FetchSpanExporter implements SpanExporter {
 
     // Doc 4 H2 Fix: For cross-origin, prefer fetch with keepalive (handles CORS preflight)
     // sendBeacon with application/json triggers preflight which it cannot handle
-    if (typeof fetch !== "undefined" && (hasCustomAuthHeaders || isCrossOrigin)) {
+    if (
+      typeof fetch !== "undefined" &&
+      (hasCustomAuthHeaders || isCrossOrigin)
+    ) {
       // fetch API handles CORS preflight properly
       fetch(this.endpoint, {
         method: "POST",
@@ -859,9 +886,7 @@ export class FetchSpanExporter implements SpanExporter {
   /**
    * Convert attributes to OTLP format (array of key-value objects)
    */
-  private _convertAttributes(
-    attrs: Record<string, unknown>,
-  ): {
+  private _convertAttributes(attrs: Record<string, unknown>): {
     key: string;
     value: { stringValue?: string; intValue?: number; boolValue?: boolean };
   }[] {
@@ -947,7 +972,25 @@ export class FetchMetricExporter implements PushMetricExporter {
               description: metric.descriptor.description,
               unit: metric.descriptor.unit,
               // Doc 4 H1 Fix: type cast now includes bucket data for histograms
-              ...this._convertMetricData(metric as unknown as { descriptor: { type: string }; dataPoints: Array<{ startTime: [number, number]; endTime: [number, number]; attributes: Record<string, unknown>; value: number | { min?: number; max?: number; sum?: number; count?: number; buckets?: { boundaries: number[]; counts: number[] } } }> }),
+              ...this._convertMetricData(
+                metric as unknown as {
+                  descriptor: { type: string };
+                  dataPoints: {
+                    startTime: [number, number];
+                    endTime: [number, number];
+                    attributes: Record<string, unknown>;
+                    value:
+                      | number
+                      | {
+                          min?: number;
+                          max?: number;
+                          sum?: number;
+                          count?: number;
+                          buckets?: { boundaries: number[]; counts: number[] };
+                        };
+                  }[];
+                },
+              ),
             })),
           })),
         },
@@ -961,7 +1004,7 @@ export class FetchMetricExporter implements PushMetricExporter {
   // Doc 4 H1 Fix: histogram value type now includes bucket data for proper OTLP export
   private _convertMetricData(metric: {
     descriptor: { type: string };
-    dataPoints: Array<{
+    dataPoints: {
       startTime: [number, number];
       endTime: [number, number];
       attributes: Record<string, unknown>;
@@ -975,7 +1018,7 @@ export class FetchMetricExporter implements PushMetricExporter {
             // Doc 4 H1 Fix: bucket data from OpenTelemetry SDK histogram aggregation
             buckets?: { boundaries: number[]; counts: number[] };
           };
-    }>;
+    }[];
   }): Record<string, unknown> {
     const type = metric.descriptor.type;
     const dataPoints = metric.dataPoints.map((dp) => {
@@ -1031,7 +1074,9 @@ export class FetchMetricExporter implements PushMetricExporter {
     return { gauge: { dataPoints } }; // fallback
   }
 
-  private _hrTimeToNanos(hrTime: [number, number] | number | undefined): string {
+  private _hrTimeToNanos(
+    hrTime: [number, number] | number | undefined,
+  ): string {
     if (hrTime === undefined) return "0";
     if (typeof hrTime === "number") {
       return (BigInt(Math.floor(hrTime)) * BigInt(1e6)).toString();
@@ -1043,9 +1088,10 @@ export class FetchMetricExporter implements PushMetricExporter {
     return "0";
   }
 
-  private _convertAttributes(
-    attrs: Record<string, unknown>,
-  ): { key: string; value: { stringValue?: string; intValue?: number; boolValue?: boolean } }[] {
+  private _convertAttributes(attrs: Record<string, unknown>): {
+    key: string;
+    value: { stringValue?: string; intValue?: number; boolValue?: boolean };
+  }[] {
     return Object.entries(attrs).map(([key, value]) => ({
       key,
       value:
@@ -1065,79 +1111,18 @@ export class FetchMetricExporter implements PushMetricExporter {
     data: string,
     resultCallback: (result: ExportResult) => void,
   ): void {
-    // IMPORTANT: sendBeacon cannot send custom headers (like Authorization)
-    // so only use it when no custom auth headers are configured
-    const hasCustomAuthHeaders = Object.keys(this.headers).some(
-      (key) => key.toLowerCase() !== "content-type"
-    );
-
-    // Doc 4 H2 Fix: detect cross-origin to avoid sendBeacon CORS preflight issue
-    const isCrossOrigin = this._isCrossOrigin(this.endpoint);
-
-    // Doc 4 H2 Fix: For cross-origin, prefer fetch with keepalive (handles CORS preflight)
-    if (typeof fetch !== "undefined" && (hasCustomAuthHeaders || isCrossOrigin)) {
-      fetch(this.endpoint, {
-        method: "POST",
-        headers: this.headers,
-        body: data,
-        keepalive: true,
-      })
-        .then((response) => {
-          resultCallback({
-            code: response.ok ? ExportResultCode.SUCCESS : ExportResultCode.FAILED,
-          });
-        })
-        .catch(() => {
-          resultCallback({ code: ExportResultCode.FAILED });
-        });
-    } else if (
-      typeof navigator !== "undefined" &&
-      navigator.sendBeacon &&
-      data.length < 65536
-    ) {
-      // Doc 4 H2 Fix: Same-origin sendBeacon can use application/json
-      // (CORS preflight only applies to cross-origin requests)
-      const blob = new Blob([data], { type: "application/json" });
-      const success = navigator.sendBeacon(this.endpoint, blob);
-      resultCallback({ code: success ? ExportResultCode.SUCCESS : ExportResultCode.FAILED });
-    } else if (typeof fetch !== "undefined") {
-      fetch(this.endpoint, {
-        method: "POST",
-        headers: this.headers,
-        body: data,
-        keepalive: true,
-      })
-        .then((response) => {
-          resultCallback({
-            code: response.ok ? ExportResultCode.SUCCESS : ExportResultCode.FAILED,
-          });
-        })
-        .catch(() => {
-          resultCallback({ code: ExportResultCode.FAILED });
-        });
-    } else {
-      console.debug("Metric telemetry data:", data);
-      resultCallback({ code: ExportResultCode.SUCCESS });
-    }
-  }
-
-  /**
-   * Doc 4 H2 Fix: Check if endpoint is cross-origin
-   */
-  private _isCrossOrigin(endpoint: string): boolean {
-    try {
-      // protocol-relative URLs (//host.com/path) are cross-origin
-      if (endpoint.startsWith("//")) {
-        return true;
-      }
-      if (endpoint.startsWith("/")) {
-        return false;
-      }
-      const url = new URL(endpoint, window.location.origin);
-      return url.origin !== window.location.origin;
-    } catch {
-      return false;
-    }
+    // use shared sendOtlpData helper for transport abstraction
+    // handles: CORS detection, custom header detection, Blob.size byte check, sendBeacon/fetch
+    // sendOtlpData returns T | Promise<T>; void operator explicitly ignores the Promise case
+    // since resultCallback is invoked within onSuccess/onError callbacks
+    void sendOtlpData({
+      url: this.endpoint,
+      body: data,
+      headers: this.headers,
+      useBeacon: true,
+      onSuccess: () => resultCallback({ code: ExportResultCode.SUCCESS }),
+      onError: () => resultCallback({ code: ExportResultCode.FAILED }),
+    });
   }
 
   async forceFlush(): Promise<void> {
@@ -1183,7 +1168,12 @@ export class FetchLogExporter implements LogRecordExporter {
     resultCallback: (result: ExportResult) => void,
   ): void {
     if (this._shutdown || logs.length === 0) {
-      resultCallback({ code: logs.length === 0 ? ExportResultCode.SUCCESS : ExportResultCode.FAILED });
+      resultCallback({
+        code:
+          logs.length === 0
+            ? ExportResultCode.SUCCESS
+            : ExportResultCode.FAILED,
+      });
       return;
     }
 
@@ -1216,7 +1206,7 @@ export class FetchLogExporter implements LogRecordExporter {
         observedTimeUnixNano: this._hrTimeToNanos(log.hrTimeObserved),
         severityNumber: log.severityNumber,
         severityText: log.severityText,
-        body: log.body ? { stringValue: String(log.body) } : undefined,
+        body: this._convertLogBody(log.body),
         attributes: this._convertAttributes(log.attributes ?? {}),
         traceId: log.spanContext?.traceId,
         spanId: log.spanContext?.spanId,
@@ -1227,7 +1217,9 @@ export class FetchLogExporter implements LogRecordExporter {
       resourceLogs: [
         {
           resource: {
-            attributes: this._convertAttributes(logs[0]?.resource?.attributes ?? {}),
+            attributes: this._convertAttributes(
+              logs[0]?.resource?.attributes ?? {},
+            ),
           },
           scopeLogs: Array.from(scopeMap.values()),
         },
@@ -1238,7 +1230,9 @@ export class FetchLogExporter implements LogRecordExporter {
     this._sendData(data, resultCallback);
   }
 
-  private _hrTimeToNanos(hrTime: [number, number] | number | undefined): string {
+  private _hrTimeToNanos(
+    hrTime: [number, number] | number | undefined,
+  ): string {
     if (hrTime === undefined) return "0";
     if (typeof hrTime === "number") {
       return (BigInt(Math.floor(hrTime)) * BigInt(1e6)).toString();
@@ -1250,9 +1244,42 @@ export class FetchLogExporter implements LogRecordExporter {
     return "0";
   }
 
-  private _convertAttributes(
-    attrs: Record<string, unknown>,
-  ): { key: string; value: { stringValue?: string; intValue?: number; boolValue?: boolean } }[] {
+  /**
+   * Convert log body to OTLP AnyValue format.
+   * Handles primitive types and serializes objects/arrays to JSON strings
+   * to avoid [object Object] stringification.
+   */
+  private _convertLogBody(
+    body: unknown,
+  ): { stringValue?: string; intValue?: number; boolValue?: boolean; doubleValue?: number } | undefined {
+    if (body === null || body === undefined) {
+      return undefined;
+    }
+    if (typeof body === "string") {
+      return { stringValue: body };
+    }
+    if (typeof body === "number") {
+      return Number.isInteger(body)
+        ? { intValue: body }
+        : { doubleValue: body };
+    }
+    if (typeof body === "boolean") {
+      return { boolValue: body };
+    }
+    // objects, arrays, and other types: serialize to JSON string
+    // this preserves structure rather than producing [object Object]
+    try {
+      return { stringValue: JSON.stringify(body) };
+    } catch {
+      // circular reference or other serialization error
+      return { stringValue: "[unserializable]" };
+    }
+  }
+
+  private _convertAttributes(attrs: Record<string, unknown>): {
+    key: string;
+    value: { stringValue?: string; intValue?: number; boolValue?: boolean };
+  }[] {
     return Object.entries(attrs).map(([key, value]) => ({
       key,
       value:
@@ -1275,14 +1302,17 @@ export class FetchLogExporter implements LogRecordExporter {
     // IMPORTANT: sendBeacon cannot send custom headers (like Authorization)
     // so only use it when no custom auth headers are configured
     const hasCustomAuthHeaders = Object.keys(this.headers).some(
-      (key) => key.toLowerCase() !== "content-type"
+      (key) => key.toLowerCase() !== "content-type",
     );
 
     // Doc 4 H2 Fix: detect cross-origin to avoid sendBeacon CORS preflight issue
     const isCrossOrigin = this._isCrossOrigin(this.endpoint);
 
     // Doc 4 H2 Fix: For cross-origin, prefer fetch with keepalive (handles CORS preflight)
-    if (typeof fetch !== "undefined" && (hasCustomAuthHeaders || isCrossOrigin)) {
+    if (
+      typeof fetch !== "undefined" &&
+      (hasCustomAuthHeaders || isCrossOrigin)
+    ) {
       fetch(this.endpoint, {
         method: "POST",
         headers: this.headers,
@@ -1291,7 +1321,9 @@ export class FetchLogExporter implements LogRecordExporter {
       })
         .then((response) => {
           resultCallback({
-            code: response.ok ? ExportResultCode.SUCCESS : ExportResultCode.FAILED,
+            code: response.ok
+              ? ExportResultCode.SUCCESS
+              : ExportResultCode.FAILED,
           });
         })
         .catch(() => {
@@ -1306,7 +1338,9 @@ export class FetchLogExporter implements LogRecordExporter {
       // (CORS preflight only applies to cross-origin requests)
       const blob = new Blob([data], { type: "application/json" });
       const success = navigator.sendBeacon(this.endpoint, blob);
-      resultCallback({ code: success ? ExportResultCode.SUCCESS : ExportResultCode.FAILED });
+      resultCallback({
+        code: success ? ExportResultCode.SUCCESS : ExportResultCode.FAILED,
+      });
     } else if (typeof fetch !== "undefined") {
       fetch(this.endpoint, {
         method: "POST",
@@ -1316,7 +1350,9 @@ export class FetchLogExporter implements LogRecordExporter {
       })
         .then((response) => {
           resultCallback({
-            code: response.ok ? ExportResultCode.SUCCESS : ExportResultCode.FAILED,
+            code: response.ok
+              ? ExportResultCode.SUCCESS
+              : ExportResultCode.FAILED,
           });
         })
         .catch(() => {
@@ -1493,14 +1529,14 @@ export class BrowserBatchSpanProcessor implements SpanProcessor {
         new Promise<never>((_, reject) => {
           timeoutHandle = setTimeout(
             () => reject(new Error("Export timeout")),
-            this._flushTimeoutMillis
+            this._flushTimeoutMillis,
           );
         }),
       ]);
     } catch {
       console.warn(
         "[BrowserBatchSpanProcessor] Flush/shutdown timed out after " +
-          `${this._flushTimeoutMillis}ms, some spans may not be exported`
+          `${this._flushTimeoutMillis}ms, some spans may not be exported`,
       );
       // Codex fix: purge hung promises so subsequent flushes don't wait again
       this._pendingExports = [];
@@ -1524,13 +1560,16 @@ let initPromise: Promise<BaseSDKState> | null = null;
  * M4 fix: Now async to support dynamic import of auto-instrumentations-web
  * Doc 4 H5 Fix: Uses Promise-based guard to prevent race conditions
  */
-async function initializeSdk(config: BrowserClientConfig): Promise<BaseSDKState> {
+async function initializeSdk(
+  config: BrowserClientConfig,
+): Promise<BaseSDKState> {
   // Doc 4 H5 Fix: If already initialized, return cached state
   if (globalBrowserSDK !== null) {
     console.warn("Browser SDK already initialized");
     return {
       environment: "browser",
       isInitialized: true,
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
       shutdown: globalShutdownFn ?? (async () => {}),
       sanitizer: globalSanitizer,
     };
@@ -1570,6 +1609,7 @@ async function initializeSdk(config: BrowserClientConfig): Promise<BaseSDKState>
       return {
         environment: "browser",
         isInitialized: false,
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
         shutdown: async () => {},
         sanitizer: null,
       };
@@ -1610,6 +1650,9 @@ export async function shutdownBrowserSdk(): Promise<void> {
  * M4 fix: Now returns Promise<BaseSDKState> to support dynamic import
  * of auto-instrumentations-web for bundle size optimization.
  */
-export const BrowserSDKWrapper: BaseSDK<BrowserClientConfig, Promise<BaseSDKState>> = {
+export const BrowserSDKWrapper: BaseSDK<
+  BrowserClientConfig,
+  Promise<BaseSDKState>
+> = {
   initializeSdk,
 };

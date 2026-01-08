@@ -124,13 +124,19 @@ describe("RED: Timeout Timer Cleanup in errors.wrap()", () => {
 
       const wrapped = instrument.errors.wrap(asyncReject, { timeout: 100 });
 
-      const resultPromise = wrapped();
+      // catch rejection immediately to prevent unhandled rejection during timer advancement
+      let caughtError: unknown = null;
+      const resultPromise = wrapped().catch((e: unknown) => {
+        caughtError = e;
+      });
 
       // advance to trigger the rejection
       await vi.advanceTimersByTimeAsync(10);
+      await resultPromise;
 
-      // should reject with our error
-      await expect(resultPromise).rejects.toThrow("async error");
+      // should have rejected with our error
+      expect(caughtError).toBeInstanceOf(Error);
+      expect((caughtError as Error).message).toBe("async error");
 
       // advance past timeout
       const unhandledRejectionSpy = vi.fn();
@@ -154,13 +160,19 @@ describe("RED: Timeout Timer Cleanup in errors.wrap()", () => {
 
       const wrapped = instrument.errors.wrap(slowFn, { timeout: 50 });
 
-      const resultPromise = wrapped();
+      // catch rejection immediately to prevent unhandled rejection during timer advancement
+      let caughtError: unknown = null;
+      const resultPromise = wrapped().catch((e: unknown) => {
+        caughtError = e;
+      });
 
       // advance past timeout but before function completes
       await vi.advanceTimersByTimeAsync(60);
+      await resultPromise;
 
-      // should reject with timeout
-      await expect(resultPromise).rejects.toThrow("Operation timed out");
+      // should have rejected with timeout
+      expect(caughtError).toBeInstanceOf(Error);
+      expect((caughtError as Error).message).toBe("Operation timed out");
     });
 
     it("should respect timeout with retry option", async () => {
@@ -174,7 +186,11 @@ describe("RED: Timeout Timer Cleanup in errors.wrap()", () => {
         retry: 2,
       });
 
-      const resultPromise = wrapped();
+      // catch rejection immediately to prevent unhandled rejection during timer advancement
+      let caughtError: unknown = null;
+      const resultPromise = wrapped().catch((e: unknown) => {
+        caughtError = e;
+      });
 
       // with retry=2, there are 3 total attempts (initial + 2 retries)
       // each attempt times out at 50ms, so we need to advance past all of them
@@ -182,9 +198,11 @@ describe("RED: Timeout Timer Cleanup in errors.wrap()", () => {
       for (let i = 0; i < 3; i++) {
         await vi.advanceTimersByTimeAsync(60);
       }
+      await resultPromise;
 
-      // should reject with timeout after all retries exhausted
-      await expect(resultPromise).rejects.toThrow("Operation timed out");
+      // should have rejected with timeout after all retries exhausted
+      expect(caughtError).toBeInstanceOf(Error);
+      expect((caughtError as Error).message).toBe("Operation timed out");
     }, 10000); // longer test timeout for complex async interactions
   });
 

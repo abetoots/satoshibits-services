@@ -9,9 +9,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserSDK } from "../../../sdk-wrapper-browser.mjs";
 import { BrowserErrorInstrumentation } from "../../../browser/instrumentations/index.mjs";
 import type { BrowserClientConfig } from "../../../unified-smart-client.mjs";
-import type {
-  MockLocation
-} from "../../test-utils/test-types.mjs";
 
 
 describe("BrowserSDK Class-Based Pattern", () => {
@@ -19,49 +16,9 @@ describe("BrowserSDK Class-Based Pattern", () => {
   let mockConfig: BrowserClientConfig;
 
   beforeEach(() => {
-    // Use Vitest's environment-provided globals directly
-    // Mock specific properties/methods as needed, but be defensive if tests
-    // temporarily removed globals in previous cases.
-    if (typeof window !== 'undefined') {
-      try {
-        Object.defineProperty(window, 'location', {
-          value: {
-            href: "http://localhost:3000/test",
-            host: "localhost:3000",
-            pathname: "/test",
-            origin: "http://localhost:3000",
-          },
-          writable: true,
-          configurable: true,
-        });
-      } catch {
-        // Fallback if location is not configurable in this environment
-        (window as unknown as { location: MockLocation }).location = {
-          href: "http://localhost:3000/test",
-          host: "localhost:3000",
-          pathname: "/test",
-          origin: "http://localhost:3000",
-        };
-      }
-    }
-
-    // Spy on window methods
-    vi.spyOn(window, 'addEventListener');
-    vi.spyOn(window, 'setTimeout').mockImplementation((fn: TimerHandler) => { (fn as () => void)(); return 0 as unknown as ReturnType<typeof setTimeout>; });
-    vi.spyOn(window, 'clearTimeout');
-
-    // Mock navigator properties if needed
-    if (typeof navigator.sendBeacon === 'function') {
-      vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true);
-    }
-
-    // Mock document properties
-    Object.defineProperty(document, 'referrer', {
-      value: "https://example.com",
-      writable: true,
-      configurable: true,
-    });
-    document.title = "Test Page";
+    // In real browser mode (Playwright), don't try to mock protected browser globals
+    // like window.location - they're read-only and can cause hangs/crashes.
+    // The SDK should work with whatever location the test page has.
 
     mockConfig = {
       serviceName: "test-browser-app",
@@ -89,13 +46,16 @@ describe("BrowserSDK Class-Based Pattern", () => {
 
   describe("Constructor Pattern (No Side Effects)", () => {
     it("Should create SDK instance without side effects", () => {
+      // Spy on addEventListener for this specific test
+      const addEventListenerSpy = vi.spyOn(window, 'addEventListener');
+
       // Constructor should not cause global registration or DOM access
       sdk = new BrowserSDK(mockConfig);
 
       expect(sdk).toBeDefined();
       expect(sdk).toBeInstanceOf(BrowserSDK);
       // No global side effects should occur during construction
-      expect(window.addEventListener).not.toHaveBeenCalled();
+      expect(addEventListenerSpy).not.toHaveBeenCalled();
     });
 
     it("Should store configuration in constructor", () => {
@@ -117,28 +77,28 @@ describe("BrowserSDK Class-Based Pattern", () => {
   });
 
   describe("Start Method Pattern", () => {
-    it("Should initialize SDK following NodeSDK order", () => {
+    it("Should initialize SDK following NodeSDK order", async () => {
       sdk = new BrowserSDK(mockConfig);
 
       // start() should perform initialization and return state
-      expect(() => {
-        const result = sdk.start();
-        expect(result).toHaveProperty("shutdown");
-        expect(result).toHaveProperty("sanitizer");
-      }).not.toThrow();
+      // start() is async and returns Promise<{shutdown, sanitizer}>
+      const result = await sdk.start();
+      expect(result).toHaveProperty("shutdown");
+      expect(result).toHaveProperty("sanitizer");
     });
 
-    it("Should be idempotent - multiple start() calls should throw", () => {
+    it("Should be idempotent - multiple start() calls should throw", async () => {
       sdk = new BrowserSDK(mockConfig);
 
-      const result = sdk.start();
+      // start() is async and returns Promise<{shutdown, sanitizer}>
+      const result = await sdk.start();
       expect(result).toHaveProperty("shutdown");
 
       // Second start() should throw
-      expect(() => sdk.start()).toThrow("BrowserSDK already started");
+      await expect(sdk.start()).rejects.toThrow("BrowserSDK already started");
     });
 
-    it("Should initialize with minimal config", () => {
+    it("Should initialize with minimal config", async () => {
       const minimalConfig: BrowserClientConfig = {
         serviceName: "minimal-test",
         environment: "browser" as const,
@@ -146,11 +106,10 @@ describe("BrowserSDK Class-Based Pattern", () => {
 
       sdk = new BrowserSDK(minimalConfig);
 
-      expect(() => {
-        const result = sdk.start();
-        expect(result).toHaveProperty("shutdown");
-        expect(result).toHaveProperty("sanitizer");
-      }).not.toThrow();
+      // start() is async and returns Promise<{shutdown, sanitizer}>
+      const result = await sdk.start();
+      expect(result).toHaveProperty("shutdown");
+      expect(result).toHaveProperty("sanitizer");
     });
 
     it("Should access DOM globals only during start()", async () => {
@@ -225,7 +184,8 @@ describe("BrowserSDK Class-Based Pattern", () => {
     it("Should disable instrumentations when shutting down", async () => {
       const disableSpy = vi.spyOn(BrowserErrorInstrumentation.prototype, "disable");
 
-      sdk = new BrowserSDK(mockConfig);
+      // enable captureErrors to ensure BrowserErrorInstrumentation is created
+      sdk = new BrowserSDK({ ...mockConfig, captureErrors: true });
       await sdk.start();
 
       await sdk.shutdown();
@@ -236,46 +196,43 @@ describe("BrowserSDK Class-Based Pattern", () => {
   });
 
   describe("Configuration Variations", () => {
-    it("Should handle console exporter configuration", () => {
+    it("Should handle console exporter configuration", async () => {
       const config = {
         ...mockConfig,
         useConsoleExporter: true,
       };
 
       sdk = new BrowserSDK(config);
-      expect(() => {
-        const result = sdk.start();
-        expect(result).toHaveProperty("shutdown");
-      }).not.toThrow();
+      // start() is async and returns Promise<{shutdown, sanitizer}>
+      const result = await sdk.start();
+      expect(result).toHaveProperty("shutdown");
     });
 
-    it("Should handle custom endpoint configuration", () => {
+    it("Should handle custom endpoint configuration", async () => {
       const config = {
         ...mockConfig,
         endpoint: "https://custom-telemetry.com/traces",
       };
 
       sdk = new BrowserSDK(config);
-      expect(() => {
-        const result = sdk.start();
-        expect(result).toHaveProperty("shutdown");
-      }).not.toThrow();
+      // start() is async and returns Promise<{shutdown, sanitizer}>
+      const result = await sdk.start();
+      expect(result).toHaveProperty("shutdown");
     });
 
-    it("Should handle disabled auto-instrumentation", () => {
+    it("Should handle disabled auto-instrumentation", async () => {
       const config = {
         ...mockConfig,
         autoInstrument: false,
       };
 
       sdk = new BrowserSDK(config);
-      expect(() => {
-        const result = sdk.start();
-        expect(result).toHaveProperty("shutdown");
-      }).not.toThrow();
+      // start() is async and returns Promise<{shutdown, sanitizer}>
+      const result = await sdk.start();
+      expect(result).toHaveProperty("shutdown");
     });
 
-    it("Should handle disabled custom instrumentations", () => {
+    it("Should handle disabled custom instrumentations", async () => {
       const config = {
         ...mockConfig,
         captureErrors: false,
@@ -285,10 +242,9 @@ describe("BrowserSDK Class-Based Pattern", () => {
       };
 
       sdk = new BrowserSDK(config);
-      expect(() => {
-        const result = sdk.start();
-        expect(result).toHaveProperty("shutdown");
-      }).not.toThrow();
+      // start() is async and returns Promise<{shutdown, sanitizer}>
+      const result = await sdk.start();
+      expect(result).toHaveProperty("shutdown");
     });
   });
 

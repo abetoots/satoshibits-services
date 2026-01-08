@@ -54,9 +54,11 @@ describe("Node entrypoint", () => {
   it("registers and cleans up global process handlers", async () => {
     // initialize is async - must await before checking handlers
     // H3 fix: environment is now automatically injected by the entry point
+    // enableProcessHandlers is opt-in by default (API Boundary Fix Issue #6)
     const state = await initialize({
       serviceName: "node-entrypoint-test",
       disableInstrumentation: true,
+      enableProcessHandlers: true,
       testSpanProcessor: new SimpleSpanProcessor(spanExporter),
       testMetricReader: metricReader,
     });
