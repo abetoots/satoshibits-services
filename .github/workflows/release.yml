@@ -53,6 +53,9 @@ jobs:
       - name: 📥 Download deps
         run: pnpm install --prefer-offline
 
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps
+
       - name: Create Release Pull Request or Publish to npm
         id: changesets
         uses: changesets/action@v1
