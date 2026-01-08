@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0
+
+### Minor Changes
+
+- 002f560: refactor(observability): refactors OTLP exporter helpers and improves test infra
+
 ## 1.1.0
 
 ### Minor Changes
