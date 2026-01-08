@@ -10,14 +10,16 @@
  * 4. Instance registry tracks all clients correctly
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { SmartClient } from "../../index.mjs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { UnifiedObservabilityClient } from "../../unified-smart-client.mjs";
+
 import {
+  clearAllInstances,
   getAllInstances,
   getInstanceCount,
-  clearAllInstances,
 } from "../../client-instance.mjs";
-import type { UnifiedObservabilityClient } from "../../unified-smart-client.mjs";
+import { SmartClient } from "../../index.mjs";
 
 describe("Instance Isolation (Multi-Instance Support)", () => {
   beforeEach(() => {
@@ -135,7 +137,7 @@ describe("Instance Isolation (Multi-Instance Support)", () => {
       expect(getInstanceCount()).toBe(2);
 
       // destroy client1 (now deterministically awaited)
-      await client1.destroy();
+      client1.destroy();
 
       // client1 should be destroyed, client2 should still work
       expect(client1.isDestroyed).toBe(true);
@@ -159,7 +161,7 @@ describe("Instance Isolation (Multi-Instance Support)", () => {
       });
 
       // destroy client1 (awaited for deterministic cleanup)
-      await client1.destroy();
+      client1.destroy();
 
       // client2 should continue to function normally
       expect(() => {
@@ -171,7 +173,9 @@ describe("Instance Isolation (Multi-Instance Support)", () => {
     });
 
     it("should warn when destroying an already destroyed instance", async () => {
-      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => { /* noop */ });
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+        /* noop */
+      });
 
       const client = await SmartClient.create({
         serviceName: "double-destroy",
@@ -179,11 +183,11 @@ describe("Instance Isolation (Multi-Instance Support)", () => {
         disableInstrumentation: true,
       });
 
-      await client.destroy();
-      await client.destroy(); // second call should warn
+      client.destroy();
+      client.destroy(); // second call should warn
 
       expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining("already destroyed")
+        expect.stringContaining("already destroyed"),
       );
 
       consoleSpy.mockRestore();
@@ -198,7 +202,7 @@ describe("Instance Isolation (Multi-Instance Support)", () => {
 
       expect(client.isDestroyed).toBe(false);
 
-      await client.destroy();
+      client.destroy();
 
       expect(client.isDestroyed).toBe(true);
     });
@@ -226,7 +230,7 @@ describe("Instance Isolation (Multi-Instance Support)", () => {
       mfe2.metrics.increment("product_viewed");
 
       // simulate checkout-mfe unmounting (awaited for deterministic cleanup)
-      await mfe1.destroy();
+      mfe1.destroy();
 
       // product-catalog-mfe should continue working
       expect(getInstanceCount()).toBe(1);
@@ -256,8 +260,8 @@ describe("Instance Isolation (Multi-Instance Support)", () => {
       testClient2.metrics.increment("test_metric", 1, { test: "suite-2" });
 
       // cleanup after tests (awaited for deterministic cleanup)
-      await testClient1.destroy();
-      await testClient2.destroy();
+      testClient1.destroy();
+      testClient2.destroy();
 
       expect(getInstanceCount()).toBe(0);
     });
@@ -276,7 +280,7 @@ describe("Instance Isolation (Multi-Instance Support)", () => {
       expect(getInstanceCount()).toBe(1);
 
       // destroy the singleton
-      await client1.destroy();
+      client1.destroy();
 
       expect(client1.isDestroyed).toBe(true);
       expect(getInstanceCount()).toBe(0);
@@ -318,7 +322,9 @@ describe("Instance Isolation (Multi-Instance Support)", () => {
     });
 
     it("should warn only once for concurrent destroys due to flag being set first", async () => {
-      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => { /* noop */ });
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+        /* noop */
+      });
 
       const client = await SmartClient.create({
         serviceName: "concurrent-warn-test",
@@ -327,15 +333,13 @@ describe("Instance Isolation (Multi-Instance Support)", () => {
       });
 
       // call destroy twice concurrently
-      await Promise.all([
-        client.destroy(),
-        client.destroy(),
-      ]);
+      await Promise.all([client.destroy(), client.destroy()]);
 
       // the second call should have seen the flag and warned
       // (exact number depends on timing but at least one should warn)
       const warnCalls = consoleSpy.mock.calls.filter(
-        (call) => typeof call[0] === "string" && call[0].includes("already destroyed")
+        (call) =>
+          typeof call[0] === "string" && call[0].includes("already destroyed"),
       );
       expect(warnCalls.length).toBeGreaterThanOrEqual(1);
 
@@ -465,7 +469,7 @@ describe("Cache Configuration Validation (Multi-model Review Fixes)", () => {
       const cacheBeforeDestroy = client.getInstrumentCache().size;
       expect(cacheBeforeDestroy).toBeGreaterThan(0);
 
-      await client.destroy();
+      client.destroy();
 
       // after destroy, cache should be cleared
       expect(client.getInstrumentCache().size).toBe(0);
@@ -486,10 +490,10 @@ describe("Cache Configuration Validation (Multi-model Review Fixes)", () => {
           // verify context is active
           const ctx = client.context.business.get();
           expect(ctx.userId).toBe("user-123");
-        }
+        },
       );
 
-      await client.destroy();
+      client.destroy();
 
       // after destroy, attempting to get context should not throw
       // but should return empty/undefined context
@@ -508,7 +512,7 @@ describe("Cache Configuration Validation (Multi-model Review Fixes)", () => {
       const cache1Size = client1.getInstrumentCache().size;
       expect(cache1Size).toBeGreaterThan(0);
 
-      await client1.destroy();
+      client1.destroy();
       expect(client1.isDestroyed).toBe(true);
 
       // create new instance with same service name
@@ -526,7 +530,7 @@ describe("Cache Configuration Validation (Multi-model Review Fixes)", () => {
       client2.metrics.increment("new_counter", 5);
       expect(client2.getInstrumentCache().size).toBeGreaterThan(0);
 
-      await client2.destroy();
+      client2.destroy();
     });
 
     it("should handle multiple destroy/recreate cycles without accumulation", async () => {
@@ -549,7 +553,7 @@ describe("Cache Configuration Validation (Multi-model Review Fixes)", () => {
         const cacheSize = client.getInstrumentCache().size;
         expect(cacheSize).toBeGreaterThan(0);
 
-        await client.destroy();
+        client.destroy();
 
         expect(client.isDestroyed).toBe(true);
         expect(client.getInstrumentCache().size).toBe(0);
@@ -567,12 +571,12 @@ describe("Cache Configuration Validation (Multi-model Review Fixes)", () => {
       expect(client.getInstrumentCache().size).toBeGreaterThan(0);
 
       // first destroy
-      await client.destroy();
+      client.destroy();
       expect(client.isDestroyed).toBe(true);
       expect(client.getInstrumentCache().size).toBe(0);
 
-      // second destroy should not throw
-      await expect(client.destroy()).resolves.not.toThrow();
+      // second destroy should not
+      expect(client.destroy()).toBeUndefined();
       expect(client.isDestroyed).toBe(true);
     });
 

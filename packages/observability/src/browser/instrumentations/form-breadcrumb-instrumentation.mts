@@ -21,11 +21,11 @@ import {
 
 import { addBreadcrumb } from "../../enrichment/context.mjs";
 import {
-  isSensitiveElement,
-  sanitizeIdentifier,
-  sanitizeFormAction,
-  matchesBlockedSelector,
   buildSafeSelector,
+  isSensitiveElement,
+  matchesBlockedSelector,
+  sanitizeFormAction,
+  sanitizeIdentifier,
 } from "../utils/dom-privacy.mjs";
 
 export interface BrowserFormBreadcrumbConfig extends InstrumentationConfig {
@@ -78,14 +78,19 @@ export class BrowserFormBreadcrumbInstrumentation extends InstrumentationBase<Br
       // build form identifier
       const formId = form.id ? sanitizeIdentifier(form.id) : undefined;
       const formName = form.name ? sanitizeIdentifier(form.name) : undefined;
-      const formIdentifier = formId || formName || "[unnamed]";
+      const formIdentifier = formId ?? formName ?? "[unnamed]";
 
       // check against blocked patterns - check both selector and identifier
       const formSelector = buildSafeSelector(form);
-      if (formSelector && matchesBlockedSelector(formSelector, this._config.blockedSelectors)) {
+      if (
+        formSelector &&
+        matchesBlockedSelector(formSelector, this._config.blockedSelectors)
+      ) {
         return;
       }
-      if (matchesBlockedSelector(formIdentifier, this._config.blockedSelectors)) {
+      if (
+        matchesBlockedSelector(formIdentifier, this._config.blockedSelectors)
+      ) {
         return;
       }
 
@@ -142,7 +147,7 @@ export class BrowserFormBreadcrumbInstrumentation extends InstrumentationBase<Br
         type = "button";
       }
 
-      counts[type] = (counts[type] || 0) + 1;
+      counts[type] = (counts[type] ?? 0) + 1;
     }
 
     return counts;

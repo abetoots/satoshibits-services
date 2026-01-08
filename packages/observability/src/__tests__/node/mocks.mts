@@ -3,6 +3,19 @@
  */
 
 import { vi } from "vitest";
+import type { Mock } from "vitest";
+
+/** Mock span type for tracer tests */
+interface MockSpan {
+  end: Mock;
+  setAttribute: Mock;
+  setAttributes: Mock;
+  recordException: Mock;
+  setStatus: Mock;
+  addEvent?: Mock;
+  updateName?: Mock;
+  isRecording?: Mock;
+}
 
 // Create mock meter with all required methods
 export const createMockMeter = () => ({
@@ -41,19 +54,25 @@ export const createMockTracer = () => ({
     updateName: vi.fn(),
     isRecording: vi.fn().mockReturnValue(true),
   }),
-  startActiveSpan: vi.fn((name, options, fn) => {
-    const span = {
-      end: vi.fn(),
-      setAttribute: vi.fn(),
-      setAttributes: vi.fn(),
-      recordException: vi.fn(),
-      setStatus: vi.fn(),
-    };
-    if (typeof options === "function") {
-      return options(span);
-    }
-    return fn(span);
-  }),
+  startActiveSpan: vi.fn(
+    (
+      _name: string,
+      options: unknown,
+      fn?: (span: MockSpan) => unknown,
+    ) => {
+      const span: MockSpan = {
+        end: vi.fn(),
+        setAttribute: vi.fn(),
+        setAttributes: vi.fn(),
+        recordException: vi.fn(),
+        setStatus: vi.fn(),
+      };
+      if (typeof options === "function") {
+        return (options as (span: MockSpan) => unknown)(span);
+      }
+      return fn?.(span);
+    },
+  ),
 });
 
 // Create mock logger

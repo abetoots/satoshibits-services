@@ -21,9 +21,49 @@ import type {
   RecordedTag,
 } from "../../types.mjs";
 import type { SmartClientConfig } from "../../unified-smart-client.mjs";
-import type { Attributes } from "@opentelemetry/api";
+import type { Attributes, AttributeValue } from "@opentelemetry/api";
+import { SpanStatusCode } from "@opentelemetry/api";
 
-import { ErrorCategory, categorizeErrorForObservability } from "../../smart-errors.mjs";
+/**
+ * Minimal interface for Result<T, E> pattern from functional-errors
+ * Used for type-safe handling of result objects in mock client
+ */
+interface ResultLike<T, E> {
+  isErr: () => boolean;
+  isOk: () => boolean;
+  error?: E;
+  value?: T;
+}
+
+/**
+ * Type guard to check if a value is a Result-like object
+ */
+function isResultLike(value: unknown): value is ResultLike<unknown, Error> {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    "isErr" in value &&
+    typeof (value as ResultLike<unknown, Error>).isErr === "function"
+  );
+}
+
+/**
+ * Mock scoped instrument interface - matches the shape returned by getInstrumentation
+ */
+interface MockScopedInstrument {
+  metrics: MockObservabilityClient["metrics"];
+  traces: MockObservabilityClient["traces"];
+  logs: MockObservabilityClient["logs"];
+  errors: MockObservabilityClient["errors"];
+  result: MockObservabilityClient["result"];
+  raw: {
+    meter: Record<string, unknown>;
+    tracer: Record<string, unknown>;
+    logger: Record<string, unknown>;
+  };
+}
+
+import { categorizeErrorForObservability } from "../../smart-errors.mjs";
 
 // Re-export for convenience
 export type {
@@ -53,7 +93,7 @@ export class MockObservabilityClient {
     "trace-" + Math.random().toString(36).substring(2, 11);
 
   // scope cache for testing
-  private _scopeCache = new Map<string, any>();
+  private _scopeCache = new Map<string, unknown>();
 
   // mock config
   private readonly config: SmartClientConfig;
@@ -231,12 +271,10 @@ export class MockObservabilityClient {
       return {
         // eslint-disable-next-line @typescript-eslint/no-empty-function
         end: () => {},
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        setStatus: (status: any) => {
-          span.status = status.code === 1 ? "OK" : "ERROR";
+        setStatus: (status: { code: SpanStatusCode; message?: string }) => {
+          span.status = status.code === SpanStatusCode.OK ? "OK" : "ERROR";
         },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        setAttribute: (key: string, value: any) => {
+        setAttribute: (key: string, value: AttributeValue) => {
           span.attributes = { ...span.attributes, [key]: value };
         },
         recordException: (error: Error) => {
@@ -366,20 +404,12 @@ export class MockObservabilityClient {
           this.errors.capture(error, { scope, ...additionalContext });
         },
         reportResult: <_T, _E extends Error>(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          result: any, // Result<T, E> from functional-errors
+          result: unknown, // Result<T, E> from functional-errors
           additionalContext?: Record<string, unknown>,
         ) => {
-          // For mock purposes, assume result.isErr() indicates an error
-
-          if (
-            result &&
-            typeof result === "object" &&
-            "isErr" in result &&
-            result.isErr?.()
-          ) {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/prefer-nullish-coalescing
-            this.errors.capture(result.error || new Error("Result error"), {
+          // use type guard for safe result checking
+          if (isResultLike(result) && result.isErr()) {
+            this.errors.capture(result.error ?? new Error("Result error"), {
               scope,
               ...additionalContext,
             });
@@ -400,7 +430,7 @@ export class MockObservabilityClient {
     capture: (error: Error, context?: Record<string, unknown>) => {
       this._errors.push({
         error,
-        context: context as any, // Runtime compatible with Attributes
+        context: context as Attributes, // runtime compatible with Attributes
         timestamp: Date.now(),
       });
     },
@@ -421,21 +451,22 @@ export class MockObservabilityClient {
       return [lastError.error, lastError.context as Record<string, unknown>];
     },
 
-    wrap: <T extends (...args: any[]) => any>( // eslint-disable-line @typescript-eslint/no-explicit-any
+    wrap: <T extends (...args: unknown[]) => unknown>(
       fn: T,
       name?: string,
     ): T => {
-      return ((...args: Parameters<T>) => {
+      return ((...args: Parameters<T>): ReturnType<T> => {
         try {
-          const result = fn(...args);
+          const result = fn(...args) as ReturnType<T>;
           if (result instanceof Promise) {
-            return result.catch((error) => {
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-              this.errors.capture(error, { function: name });
+            return result.catch((error: unknown) => {
+              this.errors.capture(
+                error instanceof Error ? error : new Error(String(error)),
+                { function: name },
+              );
               throw error;
-            });
+            }) as ReturnType<T>;
           }
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-return
           return result;
         } catch (error) {
           this.errors.capture(error as Error, { function: name });
@@ -458,20 +489,12 @@ export class MockObservabilityClient {
 
     // Required methods from UnifiedObservabilityClient
     recordResult: <_T, _E extends Error>(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      result: any, // Result<T, E> from functional-errors
+      result: unknown, // Result<T, E> from functional-errors
       context?: Record<string, unknown>,
     ) => {
-      // For mock purposes, assume result.isErr() indicates an error
-
-      if (
-        result &&
-        typeof result === "object" &&
-        "isErr" in result &&
-        result.isErr?.()
-      ) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/prefer-nullish-coalescing
-        this.errors.capture(result.error || new Error("Result error"), context);
+      // use type guard for safe result checking
+      if (isResultLike(result) && result.isErr()) {
+        this.errors.capture(result.error ?? new Error("Result error"), context);
       }
     },
 
@@ -483,8 +506,11 @@ export class MockObservabilityClient {
         const result = fn();
 
         if (result instanceof Promise) {
-          return result.catch((error) => {
-            this.errors.capture(error, customContext);
+          return result.catch((error: unknown) => {
+            this.errors.capture(
+              error instanceof Error ? error : new Error(String(error)),
+              customContext,
+            );
             throw error;
           }) as T | Promise<T>;
         }
@@ -672,14 +698,14 @@ export class MockObservabilityClient {
    * - 'strict': Throws error for high-cardinality patterns
    * - 'disabled': Skips validation entirely
    */
-  getInstrumentation(name: string, version?: string): any {
+  getInstrumentation(name: string, version?: string): MockScopedInstrument {
     // create cache key
     const scopeKey = `${name}@${version ?? "latest"}`;
 
     // check cache first
-    let scoped = this._scopeCache.get(scopeKey);
-    if (scoped) {
-      return scoped;
+    const cached = this._scopeCache.get(scopeKey) as MockScopedInstrument | undefined;
+    if (cached) {
+      return cached;
     }
 
     // get validation mode from config (default: 'warn' for API boundary compliance)
@@ -691,7 +717,11 @@ export class MockObservabilityClient {
       const highCardinalityPatterns = [
         { pattern: /user[/_-]\d+/i, description: "user IDs" },
         { pattern: /request[/_-][0-9a-f]{8,}/i, description: "request IDs" },
-        { pattern: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i, description: "UUIDs" },
+        {
+          pattern:
+            /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i,
+          description: "UUIDs",
+        },
         { pattern: /\d{13,}/, description: "timestamps" },
         { pattern: /session[/_-][0-9a-f]{8,}/i, description: "session IDs" },
         { pattern: /tenant[/_-]\d+/i, description: "tenant IDs" },
@@ -722,13 +752,13 @@ export class MockObservabilityClient {
       if (name.length > 100) {
         console.warn(
           `[MockObservabilityClient] Scope name is unusually long (${name.length} chars): "${name}". ` +
-          `Consider using shorter, static scope names.`
+            `Consider using shorter, static scope names.`,
         );
       }
     }
 
     // create and cache the scoped instrument
-    scoped = {
+    const scoped: MockScopedInstrument = {
       metrics: this.metrics,
       traces: this.traces,
       logs: this.logs,

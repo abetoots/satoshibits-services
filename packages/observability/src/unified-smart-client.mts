@@ -40,6 +40,9 @@ import type { SmartContext } from "./enrichment/context.mjs";
 import type { Meter, SpanOptions, Tracer } from "@opentelemetry/api";
 import type { LogAttributes, Logger } from "@opentelemetry/api-logs";
 
+// Doc 4 M3 Fix: static import replaces dynamic import to avoid CSP issues
+// client-instance.mts only has a type-only import from this module, so no circular dependency
+import { unregisterInstance } from "./client-instance.mjs";
 import {
   addBreadcrumb,
   addTag,
@@ -66,9 +69,6 @@ import {
 } from "./smart-errors.mjs";
 // Import environment utilities
 import { detectEnvironment, getProcessEnv } from "./utils/environment.mjs";
-// Doc 4 M3 Fix: static import replaces dynamic import to avoid CSP issues
-// client-instance.mts only has a type-only import from this module, so no circular dependency
-import { unregisterInstance } from "./client-instance.mjs";
 
 // Local lightweight instrument interfaces to avoid unsafe `any`
 interface CounterInstrument {
@@ -158,7 +158,7 @@ export class UnifiedObservabilityClient {
     // before Math.max(), then fall back to safe defaults
     const maxScopedClientsRaw = config.maxScopedClients;
     const maxScopedClients = Number.isFinite(maxScopedClientsRaw)
-      ? Math.max(1, maxScopedClientsRaw as number)
+      ? Math.max(1, maxScopedClientsRaw!)
       : 100;
     this.scopedClients = new LRUCache<string, ScopedInstrument>({
       max: maxScopedClients,
@@ -169,11 +169,11 @@ export class UnifiedObservabilityClient {
     // Multi-model review (Codex): use Number.isFinite() guard before Math.max()
     const ttlMsRaw = config.instrumentCacheTtlMs;
     const ttlMs = Number.isFinite(ttlMsRaw)
-      ? Math.max(0, ttlMsRaw as number)
+      ? Math.max(0, ttlMsRaw!)
       : 1000 * 60 * 60; // default 1 hour
     const maxCachedInstrumentsRaw = config.maxCachedInstruments;
     const maxCachedInstruments = Number.isFinite(maxCachedInstrumentsRaw)
-      ? Math.max(1, maxCachedInstrumentsRaw as number)
+      ? Math.max(1, maxCachedInstrumentsRaw!)
       : 2000;
     this.instrumentCache = new LRUCache<
       string,
@@ -550,7 +550,9 @@ export class UnifiedObservabilityClient {
    * Uses instance sanitizer manager instead of global
    * @internal
    */
-  sanitizeAttributes(attributes?: Record<string, unknown> | LogAttributes): Record<string, unknown> | undefined {
+  sanitizeAttributes(
+    attributes?: Record<string, unknown> | LogAttributes,
+  ): Record<string, unknown> | undefined {
     if (this.config.sanitize === false || !attributes) {
       return attributes;
     }
@@ -561,7 +563,9 @@ export class UnifiedObservabilityClient {
     const sanitized = sanitizer.sanitize(attributes);
 
     // ensure result is a Record or undefined (sanitize might return primitives)
-    return sanitized && typeof sanitized === 'object' && !Array.isArray(sanitized)
+    return sanitized &&
+      typeof sanitized === "object" &&
+      !Array.isArray(sanitized)
       ? sanitized
       : undefined;
   }
@@ -655,7 +659,8 @@ export class UnifiedObservabilityClient {
      * userErrors.report(error, { userId: "123" });
      * ```
      */
-    createErrorReporter: (scope: string) => createErrorReporter({ defaultContext: { scope } }),
+    createErrorReporter: (scope: string) =>
+      createErrorReporter({ defaultContext: { scope } }),
     // [H1] Removed deprecated createLogger() - use createErrorReporter() instead
   };
 
@@ -801,7 +806,9 @@ export class UnifiedObservabilityClient {
 
         // ensure sanitized is an object before spreading
         const safeAttributes =
-          sanitized && typeof sanitized === "object" && !Array.isArray(sanitized)
+          sanitized &&
+          typeof sanitized === "object" &&
+          !Array.isArray(sanitized)
             ? sanitized
             : {};
 
@@ -827,7 +834,9 @@ export class UnifiedObservabilityClient {
 
         // ensure sanitized data is a valid Record or undefined
         const safeData =
-          sanitized && typeof sanitized === "object" && !Array.isArray(sanitized)
+          sanitized &&
+          typeof sanitized === "object" &&
+          !Array.isArray(sanitized)
             ? sanitized
             : undefined;
 
@@ -1116,7 +1125,7 @@ export class UnifiedObservabilityClient {
    * @public
    * @since 2.0.0
    */
-  async destroy(): Promise<void> {
+  destroy(): void {
     if (this._isDestroyed) {
       console.warn("[Observability SDK] Client instance already destroyed");
       return;
@@ -1134,7 +1143,7 @@ export class UnifiedObservabilityClient {
     unregisterInstance(this);
 
     console.debug(
-      `[Observability SDK] Client instance for '${this.config.serviceName}' destroyed`
+      `[Observability SDK] Client instance for '${this.config.serviceName}' destroyed`,
     );
   }
 }

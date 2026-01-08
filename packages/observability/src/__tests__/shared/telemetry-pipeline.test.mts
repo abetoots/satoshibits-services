@@ -22,9 +22,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SmartClient } from "../../index.mjs";
+
 import type { UnifiedObservabilityClient } from "../../unified-smart-client.mjs";
+
 import { clearAllInstances } from "../../client-instance.mjs";
+import { SmartClient } from "../../index.mjs";
 
 // ============================================================================
 // Shared Mock Creators (used by all test suites)
@@ -44,7 +46,10 @@ function createMockTracer() {
   }[] = [];
 
   // helper to create a span with closure-scoped state
-  const createSpanData = (name: string, options?: { attributes?: Record<string, unknown> }) => {
+  const createSpanData = (
+    name: string,
+    options?: { attributes?: Record<string, unknown> },
+  ) => {
     const spanData = {
       name,
       attributes: options?.attributes ?? {},
@@ -58,10 +63,18 @@ function createMockTracer() {
     return {
       spanData,
       spanHandle: {
-        end: vi.fn(() => { spanData.ended = true; }),
-        setAttribute: vi.fn((key: string, value: unknown) => { spanData.attributes[key] = value; }),
-        setStatus: vi.fn((status: { code?: number; message?: string }) => { spanData.status = status; }),
-        recordException: vi.fn((error: Error) => { spanData.exception = error; }),
+        end: vi.fn(() => {
+          spanData.ended = true;
+        }),
+        setAttribute: vi.fn((key: string, value: unknown) => {
+          spanData.attributes[key] = value;
+        }),
+        setStatus: vi.fn((status: { code?: number; message?: string }) => {
+          spanData.status = status;
+        }),
+        recordException: vi.fn((error: Error) => {
+          spanData.exception = error;
+        }),
         isRecording: () => true,
         spanContext: () => ({
           traceId: `trace-${recordedSpans.length}`,
@@ -72,33 +85,37 @@ function createMockTracer() {
     };
   };
 
-  const startSpan = vi.fn((name: string, options?: { attributes?: Record<string, unknown> }) => {
-    return createSpanData(name, options).spanHandle;
-  });
+  const startSpan = vi.fn(
+    (name: string, options?: { attributes?: Record<string, unknown> }) => {
+      return createSpanData(name, options).spanHandle;
+    },
+  );
 
-  const startActiveSpan = vi.fn((
-    name: string,
-    optionsOrFn: unknown,
-    contextOrFn?: unknown,
-    fn?: unknown,
-  ) => {
-    // handle various overload signatures
-    let callback: ((span: unknown) => unknown) | undefined;
-    let spanOptions: { attributes?: Record<string, unknown> } = {};
+  const startActiveSpan = vi.fn(
+    (
+      name: string,
+      optionsOrFn: unknown,
+      contextOrFn?: unknown,
+      fn?: unknown,
+    ) => {
+      // handle various overload signatures
+      let callback: ((span: unknown) => unknown) | undefined;
+      let spanOptions: { attributes?: Record<string, unknown> } = {};
 
-    if (typeof optionsOrFn === "function") {
-      callback = optionsOrFn as (span: unknown) => unknown;
-    } else if (typeof contextOrFn === "function") {
-      spanOptions = optionsOrFn as { attributes?: Record<string, unknown> };
-      callback = contextOrFn as (span: unknown) => unknown;
-    } else if (typeof fn === "function") {
-      spanOptions = optionsOrFn as { attributes?: Record<string, unknown> };
-      callback = fn as (span: unknown) => unknown;
-    }
+      if (typeof optionsOrFn === "function") {
+        callback = optionsOrFn as (span: unknown) => unknown;
+      } else if (typeof contextOrFn === "function") {
+        spanOptions = optionsOrFn as { attributes?: Record<string, unknown> };
+        callback = contextOrFn as (span: unknown) => unknown;
+      } else if (typeof fn === "function") {
+        spanOptions = optionsOrFn as { attributes?: Record<string, unknown> };
+        callback = fn as (span: unknown) => unknown;
+      }
 
-    const { spanHandle } = createSpanData(name, spanOptions);
-    return callback?.(spanHandle);
-  });
+      const { spanHandle } = createSpanData(name, spanOptions);
+      return callback?.(spanHandle);
+    },
+  );
 
   return {
     startSpan,
@@ -141,7 +158,12 @@ function createMockMeter() {
     })),
     createUpDownCounter: vi.fn((name: string) => ({
       add: vi.fn((value: number, attributes?: Record<string, unknown>) => {
-        recordedMetrics.push({ type: "updowncounter", name, value, attributes });
+        recordedMetrics.push({
+          type: "updowncounter",
+          name,
+          value,
+          attributes,
+        });
       }),
     })),
     createHistogram: vi.fn((name: string) => ({
@@ -150,7 +172,14 @@ function createMockMeter() {
       }),
     })),
     createObservableGauge: vi.fn((name: string) => {
-      let lastCallback: ((observableResult: { observe: (value: number, attributes?: Record<string, unknown>) => void }) => void) | null = null;
+      let lastCallback:
+        | ((observableResult: {
+            observe: (
+              value: number,
+              attributes?: Record<string, unknown>,
+            ) => void;
+          }) => void)
+        | null = null;
 
       const gaugeMock = {
         addCallback: vi.fn((callback: typeof lastCallback) => {
@@ -161,15 +190,26 @@ function createMockMeter() {
         _triggerCallback: () => {
           if (lastCallback) {
             lastCallback({
-              observe: (value: number, attributes?: Record<string, unknown>) => {
-                recordedMetrics.push({ type: "gauge", name, value, attributes });
+              observe: (
+                value: number,
+                attributes?: Record<string, unknown>,
+              ) => {
+                recordedMetrics.push({
+                  type: "gauge",
+                  name,
+                  value,
+                  attributes,
+                });
               },
             });
           }
         },
       };
 
-      createdGauges.push({ name, _triggerCallback: gaugeMock._triggerCallback });
+      createdGauges.push({
+        name,
+        _triggerCallback: gaugeMock._triggerCallback,
+      });
       return gaugeMock;
     }),
     // simulate a metric collection interval - triggers all gauge callbacks
@@ -177,7 +217,8 @@ function createMockMeter() {
       createdGauges.forEach((g) => g._triggerCallback());
     },
     getMetrics: () => recordedMetrics,
-    getMetric: (name: string) => recordedMetrics.filter((m) => m.name.includes(name)),
+    getMetric: (name: string) =>
+      recordedMetrics.filter((m) => m.name.includes(name)),
     reset: () => {
       recordedMetrics.length = 0;
       createdGauges.length = 0;
@@ -213,15 +254,19 @@ describe("Telemetry Pipeline Verification (Mock-Based)", () => {
     client = await SmartClient.create({
       serviceName: "telemetry-pipeline-test",
       environment: "node",
-      existingTracerProvider: mockTracerProvider as unknown as Parameters<typeof SmartClient.create>[0]["existingTracerProvider"],
-      existingMeterProvider: mockMeterProvider as unknown as Parameters<typeof SmartClient.create>[0]["existingMeterProvider"],
+      existingTracerProvider: mockTracerProvider as unknown as Parameters<
+        typeof SmartClient.create
+      >[0]["existingTracerProvider"],
+      existingMeterProvider: mockMeterProvider as unknown as Parameters<
+        typeof SmartClient.create
+      >[0]["existingMeterProvider"],
       disableInstrumentation: true,
     });
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     try {
-      await client?.destroy();
+      client?.destroy();
     } catch {
       // ignore
     }
@@ -371,7 +416,10 @@ describe("Telemetry Pipeline Verification (Mock-Based)", () => {
 
   describe("Scoped Instrument Telemetry", () => {
     it("should create scoped tracers with correct scope name", () => {
-      const scopedInstrument = client.getInstrumentation("payment-service", "1.0.0");
+      const scopedInstrument = client.getInstrumentation(
+        "payment-service",
+        "1.0.0",
+      );
 
       scopedInstrument.traces.startSpan("process-payment").end();
 
@@ -383,7 +431,10 @@ describe("Telemetry Pipeline Verification (Mock-Based)", () => {
     });
 
     it("should create scoped meters with correct scope name", () => {
-      const scopedInstrument = client.getInstrumentation("auth-service", "2.0.0");
+      const scopedInstrument = client.getInstrumentation(
+        "auth-service",
+        "2.0.0",
+      );
 
       scopedInstrument.metrics.increment("auth.attempts", 1);
 
@@ -415,22 +466,29 @@ describe("Telemetry Pipeline Edge Cases (Mock-Based)", () => {
         createCounter: vi.fn(() => ({ add: vi.fn() })),
         createUpDownCounter: vi.fn(() => ({ add: vi.fn() })),
         createHistogram: vi.fn(() => ({ record: vi.fn() })),
-        createObservableGauge: vi.fn(() => ({ addCallback: vi.fn(), removeCallback: vi.fn() })),
+        createObservableGauge: vi.fn(() => ({
+          addCallback: vi.fn(),
+          removeCallback: vi.fn(),
+        })),
       }),
     };
 
     client = await SmartClient.create({
       serviceName: "edge-case-test",
       environment: "node",
-      existingTracerProvider: mockTracerProvider as unknown as Parameters<typeof SmartClient.create>[0]["existingTracerProvider"],
-      existingMeterProvider: mockMeterProvider as unknown as Parameters<typeof SmartClient.create>[0]["existingMeterProvider"],
+      existingTracerProvider: mockTracerProvider as unknown as Parameters<
+        typeof SmartClient.create
+      >[0]["existingTracerProvider"],
+      existingMeterProvider: mockMeterProvider as unknown as Parameters<
+        typeof SmartClient.create
+      >[0]["existingMeterProvider"],
       disableInstrumentation: true,
     });
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     try {
-      await client?.destroy();
+      client?.destroy();
     } catch {
       // ignore
     }

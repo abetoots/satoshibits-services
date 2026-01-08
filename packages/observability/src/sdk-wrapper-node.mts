@@ -1,9 +1,9 @@
+import { SpanStatusCode, trace } from "@opentelemetry/api";
 import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import { SpanStatusCode, trace } from "@opentelemetry/api";
 import {
   detectResources,
   envDetector,
@@ -17,13 +17,16 @@ import { PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import { NodeSDK as OTelNodeSDK } from "@opentelemetry/sdk-node";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 
+import type {
+  NodeClientConfig,
+  ProcessHandlerOptions,
+} from "./config/client-config.mjs";
 import type { BaseSDK, BaseSDKState } from "./sdk-factory.mjs";
-import type { NodeClientConfig, ProcessHandlerOptions } from "./config/client-config.mjs";
 import type { SpanProcessor } from "@opentelemetry/sdk-trace-base";
 
 import { initializeSanitizer } from "./enrichment/sanitizer.mjs";
-import { SmartSampler } from "./sampling.mjs";
 import { createResource } from "./internal/resource-factory.mjs";
+import { SmartSampler } from "./sampling.mjs";
 
 /**
  * Node SDK - Server-side OpenTelemetry initialization
@@ -46,10 +49,10 @@ export class NodeSDK {
    * Start the SDK following OpenTelemetry NodeSDK initialization pattern.
    * Returns state for caller to manage global updates.
    */
-  public async start(): Promise<{
+  public start(): {
     shutdown: () => Promise<void>;
     sanitizer: ReturnType<typeof initializeSanitizer>;
-  }> {
+  } {
     if (this.isStarted) {
       console.warn("NodeSDK already started");
       throw new Error("NodeSDK already started");
@@ -72,7 +75,7 @@ export class NodeSDK {
     if (validatedConfig.enablePrometheus) {
       console.warn(
         "enablePrometheus is configured but Prometheus exporter is not yet implemented. " +
-        "Metrics will be exported via OTLP only. See GitHub issue for progress.",
+          "Metrics will be exported via OTLP only. See GitHub issue for progress.",
       );
     }
 
@@ -149,7 +152,9 @@ export class NodeSDK {
             ),
           }),
       // use SmartSampler if sampling config is provided (AdaptiveSampler internalized)
-      sampler: validatedConfig.sampling ? new SmartSampler(validatedConfig.sampling) : undefined,
+      sampler: validatedConfig.sampling
+        ? new SmartSampler(validatedConfig.sampling)
+        : undefined,
       instrumentations:
         validatedConfig.disableInstrumentation === true ||
         validatedConfig.autoInstrument === false
@@ -164,7 +169,7 @@ export class NodeSDK {
     });
 
     // Start the SDK - await to ensure initialization completes before first telemetry
-    await this.sdk.start();
+    this.sdk.start();
     console.debug("OpenTelemetry SDK initialized successfully");
 
     this.sanitizer = initializeSanitizer(validatedConfig.sanitizerOptions);
@@ -205,6 +210,7 @@ let nodeSdkState: BaseSDKState & {
   environment: "node",
   config: null,
   isInitialized: false,
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
   shutdown: () => {},
   sanitizer: null,
 };
@@ -213,15 +219,12 @@ let nodeSdkState: BaseSDKState & {
 let isInitializing = false;
 let globalNodeSDK: NodeSDK | null = null;
 
-// Store config for process handlers to access options
-let currentConfig: NodeClientConfig | null = null;
-
 /**
  * Initialize the OpenTelemetry SDK (legacy function-based API)
  * Now delegates to NodeSDK class for consistent pattern with BrowserSDK (H2 fix).
  * This should only be called once, typically from index.mts
  */
-export async function initializeSdk(config: NodeClientConfig): Promise<BaseSDKState> {
+export function initializeSdk(config: NodeClientConfig): BaseSDKState {
   if (nodeSdkState.isInitialized || isInitializing) {
     console.warn("SDK already initialized or initialization in progress");
     return nodeSdkState;
@@ -229,12 +232,9 @@ export async function initializeSdk(config: NodeClientConfig): Promise<BaseSDKSt
 
   isInitializing = true;
   try {
-    // Store config for process handlers to access options
-    currentConfig = config;
-
     // Use the class-based SDK for consistency with BrowserSDK (H2 fix)
     globalNodeSDK = new NodeSDK(config);
-    const { shutdown, sanitizer } = await globalNodeSDK.start();
+    const { shutdown, sanitizer } = globalNodeSDK.start();
 
     // Update legacy state for backward compatibility
     nodeSdkState.isInitialized = true;
@@ -256,7 +256,6 @@ export async function initializeSdk(config: NodeClientConfig): Promise<BaseSDKSt
     // Mark as not initialized to indicate SDK setup failed
     nodeSdkState.isInitialized = false;
     globalNodeSDK = null;
-    currentConfig = null;
   } finally {
     // Always reset isInitializing flag, whether initialization succeeded or failed
     isInitializing = false;
@@ -285,10 +284,10 @@ export async function shutdownSdk(): Promise<void> {
       environment: "node",
       config: null,
       isInitialized: false,
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
       shutdown: () => {},
       sanitizer: null,
     };
-    currentConfig = null;
   }
 }
 
@@ -324,7 +323,8 @@ function setupProcessHandlers(options?: ProcessHandlerOptions): void {
         try {
           await options.onBeforeShutdown();
         } catch (error) {
-          beforeShutdownError = error instanceof Error ? error : new Error(String(error));
+          beforeShutdownError =
+            error instanceof Error ? error : new Error(String(error));
           console.error("Error in onBeforeShutdown hook:", beforeShutdownError);
         }
       }
@@ -334,12 +334,16 @@ function setupProcessHandlers(options?: ProcessHandlerOptions): void {
         await Promise.race([
           shutdownSdk(),
           new Promise((_, reject) =>
-            setTimeout(() => reject(new Error("Shutdown timed out")), shutdownTimeoutMs),
+            setTimeout(
+              () => reject(new Error("Shutdown timed out")),
+              shutdownTimeoutMs,
+            ),
           ),
         ]);
         console.log("Graceful shutdown complete.");
       } catch (error) {
-        shutdownError = error instanceof Error ? error : new Error(String(error));
+        shutdownError =
+          error instanceof Error ? error : new Error(String(error));
         console.error("Error during graceful shutdown:", shutdownError);
       }
 
@@ -512,7 +516,10 @@ export async function flushTelemetry(timeoutMs = 5000): Promise<void> {
     await Promise.race([
       shutdownSdk(),
       new Promise<void>((_, reject) =>
-        setTimeout(() => reject(new Error("Telemetry flush timed out")), timeoutMs),
+        setTimeout(
+          () => reject(new Error("Telemetry flush timed out")),
+          timeoutMs,
+        ),
       ),
     ]);
   } catch (error) {
@@ -537,7 +544,10 @@ export async function flushTelemetry(timeoutMs = 5000): Promise<void> {
  * }
  * ```
  */
-export function recordErrorTelemetry(error: Error, errorType = "application_error"): void {
+export function recordErrorTelemetry(
+  error: Error,
+  errorType = "application_error",
+): void {
   const activeSpan = trace.getActiveSpan();
   if (activeSpan) {
     activeSpan.recordException(error);
@@ -599,7 +609,8 @@ export function createShutdownHandler(options: {
         }
         await flushTelemetry(options.timeoutMs ?? 5000);
       } catch (error) {
-        shutdownError = error instanceof Error ? error : new Error(String(error));
+        shutdownError =
+          error instanceof Error ? error : new Error(String(error));
       }
       options.onComplete(shutdownError);
     })();
@@ -610,7 +621,7 @@ export function createShutdownHandler(options: {
  * Node SDK wrapper with async initialization
  * Uses specialized BaseSDK type with Promise return
  */
-export const NodeSDKWrapper: BaseSDK<NodeClientConfig, Promise<BaseSDKState>> = {
+export const NodeSDKWrapper: BaseSDK<NodeClientConfig, BaseSDKState> = {
   initializeSdk,
 };
 

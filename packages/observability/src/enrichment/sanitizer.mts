@@ -26,7 +26,7 @@ export type SanitizedValue =
  * Marker for circular references detected during sanitization.
  * Returns a simple string sentinel that is clean and readable in logs.
  */
-const CIRCULAR_MARKER = "[CIRCULAR]" as const;
+const CIRCULAR_MARKER = "[CIRCULAR]";
 
 /**
  * Built-in sensitive field patterns used for field name matching.
@@ -127,7 +127,7 @@ const SENSITIVE_PATTERNS = {
       // OpenAI/Anthropic (sk-proj-xxx, sk-ant-xxx with potential hyphens)
       "sk-(?:proj|ant)[A-Za-z0-9_-]{20,}" +
       ")\\b",
-    "gi" // case-insensitive, global
+    "gi", // case-insensitive, global
   ),
 
   // UUIDs (might be user IDs)
@@ -353,7 +353,7 @@ export class SanitizerPresets {
  * Data sanitizer for removing PII
  */
 export class DataSanitizer {
-  private options: Required<Omit<SanitizerOptions, 'excludeBuiltInPatterns'>>;
+  private options: Required<Omit<SanitizerOptions, "excludeBuiltInPatterns">>;
   private stringCache: LRUCache<string, string>;
   private readonly optionsCacheKey: string;
   private readonly cacheTTL: number = 0; // TTL removed per consensus decision
@@ -380,9 +380,11 @@ export class DataSanitizer {
     const excludePatterns = options.excludeBuiltInPatterns ?? [];
     if (excludePatterns.length > 0) {
       // compare by source string since RegExp objects are not equal by reference
-      const excludeSources = new Set(excludePatterns.map(p => p.source + '|' + p.flags));
+      const excludeSources = new Set(
+        excludePatterns.map((p) => p.source + "|" + p.flags),
+      );
       this.activeFieldPatterns = BUILT_IN_SENSITIVE_FIELD_PATTERNS.filter(
-        p => !excludeSources.has(p.source + '|' + p.flags)
+        (p) => !excludeSources.has(p.source + "|" + p.flags),
       );
     } else {
       this.activeFieldPatterns = BUILT_IN_SENSITIVE_FIELD_PATTERNS;
@@ -404,7 +406,7 @@ export class DataSanitizer {
   sanitize(
     value: unknown,
     depth = 0,
-    visitedObjects?: WeakSet<object>
+    visitedObjects?: WeakSet<object>,
   ): SanitizedValue {
     // Create fresh WeakSet for top-level calls (call-scoped circular detection)
     if (depth === 0 && !visitedObjects) {
@@ -437,12 +439,18 @@ export class DataSanitizer {
         return CIRCULAR_MARKER;
       }
       visitedObjects?.add(value);
-      return value.map((item) => this.sanitize(item, depth + 1, visitedObjects));
+      return value.map((item) =>
+        this.sanitize(item, depth + 1, visitedObjects),
+      );
     }
 
     // Handle objects
     if (typeof value === "object") {
-      return this.sanitizeObject(value as Record<string, unknown>, depth, visitedObjects!);
+      return this.sanitizeObject(
+        value as Record<string, unknown>,
+        depth,
+        visitedObjects!,
+      );
     }
 
     // For other types like functions and symbols, we can't serialize them

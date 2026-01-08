@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-empty-function */
 /**
  * SDK State Module - Simplified state coordination for observability SDK
  *
@@ -20,7 +21,11 @@ export interface SDKStateData {
 /** State event types for dispatch interface compatibility */
 export type SDKStateEvent =
   | { type: "INIT_START"; environment: "node" | "browser" }
-  | { type: "INIT_SUCCESS"; shutdown: () => Promise<void>; sanitizer: ReturnType<typeof initializeSanitizer> | null }
+  | {
+      type: "INIT_SUCCESS";
+      shutdown: () => Promise<void>;
+      sanitizer: ReturnType<typeof initializeSanitizer> | null;
+    }
   | { type: "INIT_FAILURE"; error?: Error }
   | { type: "SHUTDOWN_START" }
   | { type: "SHUTDOWN_COMPLETE" }
@@ -40,7 +45,12 @@ let shutdownPromise: Promise<void> | null = null;
 /** SDK state coordinator - maintains interface parity with previous SDKStateMachine */
 export const sdkStateMachine = {
   getState(): Readonly<SDKStateData> {
-    return { environment, isInitialized, shutdown: shutdownFn, sanitizer: sanitizerRef };
+    return {
+      environment,
+      isInitialized,
+      shutdown: shutdownFn,
+      sanitizer: sanitizerRef,
+    };
   },
 
   isReady(): boolean {

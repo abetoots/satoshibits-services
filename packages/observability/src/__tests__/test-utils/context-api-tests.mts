@@ -24,7 +24,8 @@
  * 2. Import and run these shared tests for API conformance
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
+
 import type { UnifiedObservabilityClient } from "../../unified-smart-client.mjs";
 
 /**
@@ -42,7 +43,6 @@ const hasAsyncContextPropagation = (): boolean => {
     return true;
   }
   // in browser, check if Zone.js is loaded
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
   return typeof Zone !== "undefined" && Zone?.current !== undefined;
 };
 
@@ -68,7 +68,7 @@ const hasAsyncContextPropagation = (): boolean => {
  * ```
  */
 export function runSharedContextAPITests(
-  getClient: () => UnifiedObservabilityClient
+  getClient: () => UnifiedObservabilityClient,
 ) {
   describe("Business Context API (Shared Conformance)", () => {
     it("should run code with business context using context.business.run()", async () => {
@@ -78,15 +78,15 @@ export function runSharedContextAPITests(
           userId: "user-123",
           tenantId: "tenant-456",
         },
-        async () => {
+        () => {
           const ctx = client.context.business.get();
           expect(ctx.userId).toBe("user-123");
           expect(ctx.tenantId).toBe("tenant-456");
-        }
+        },
       );
     });
 
-    it("should set user information using context.business.setUser()", async () => {
+    it("should set user information using context.business.setUser()", () => {
       const client = getClient();
 
       // setUser() should accept user ID and attributes
@@ -112,7 +112,7 @@ export function runSharedContextAPITests(
 
     it("should add breadcrumbs using context.business.addBreadcrumb()", async () => {
       const client = getClient();
-      await client.context.business.run({}, async () => {
+      await client.context.business.run({}, () => {
         client.context.business.addBreadcrumb("User logged in");
         client.context.business.addBreadcrumb("Navigated to dashboard", {
           path: "/dashboard",
@@ -128,7 +128,7 @@ export function runSharedContextAPITests(
 
     it("should add tags using context.business.addTag()", async () => {
       const client = getClient();
-      await client.context.business.run({}, async () => {
+      await client.context.business.run({}, () => {
         client.context.business.addTag("environment", "production");
         client.context.business.addTag("version", "1.2.3");
         client.context.business.addTag("build", 12345);
@@ -152,7 +152,7 @@ export function runSharedContextAPITests(
 
           await client.context.business.withAdditional(
             { sessionId: "session-456" },
-            async () => {
+            () => {
               const innerCtx = client.context.business.get();
               expect(innerCtx.userId).toBe("user-123");
               expect(innerCtx.sessionId).toBe("session-456");
@@ -167,11 +167,13 @@ export function runSharedContextAPITests(
       },
     );
 
-    it("should clear business context using context.business.clear()", async () => {
+    it("should clear business context using context.business.clear()", () => {
       const client = getClient();
 
       // set up some global context
-      client.context.business.setUser("user-123", { email: "test@example.com" });
+      client.context.business.setUser("user-123", {
+        email: "test@example.com",
+      });
       client.context.business.addBreadcrumb("Test breadcrumb");
       client.context.business.addTag("test", "value");
 
@@ -193,6 +195,7 @@ export function runSharedContextAPITests(
   describe("Trace Context API (Shared Conformance)", () => {
     it("should get trace ID from active span using context.trace.getTraceId()", async () => {
       const client = getClient();
+      // eslint-disable-next-line @typescript-eslint/require-await
       await client.traces.withSpan("test-span", async () => {
         const traceId = client.context.trace.getTraceId();
         expect(traceId).toBeDefined();
@@ -203,6 +206,7 @@ export function runSharedContextAPITests(
 
     it("should get span ID from active span using context.trace.getSpanId()", async () => {
       const client = getClient();
+      // eslint-disable-next-line @typescript-eslint/require-await
       await client.traces.withSpan("test-span", async () => {
         const spanId = client.context.trace.getSpanId();
         expect(spanId).toBeDefined();
@@ -213,6 +217,7 @@ export function runSharedContextAPITests(
 
     it("should get span context using context.trace.getSpanContext()", async () => {
       const client = getClient();
+      // eslint-disable-next-line @typescript-eslint/require-await
       await client.traces.withSpan("test-span", async () => {
         const spanContext = client.context.trace.getSpanContext();
         expect(spanContext).toBeDefined();
@@ -227,6 +232,7 @@ export function runSharedContextAPITests(
       // no active span outside of withSpan
       expect(client.context.trace.hasActiveSpan()).toBe(false);
 
+      // eslint-disable-next-line @typescript-eslint/require-await
       await client.traces.withSpan("test-span", async () => {
         // active span inside withSpan
         expect(client.context.trace.hasActiveSpan()).toBe(true);
@@ -255,6 +261,7 @@ export function runSharedContextAPITests(
       await client.context.business.run(
         { userId: "user-123", tenantId: "tenant-456" },
         async () => {
+          // eslint-disable-next-line @typescript-eslint/require-await
           await client.traces.withSpan("test-span", async () => {
             const allContext = client.context.getAll();
 
@@ -266,13 +273,14 @@ export function runSharedContextAPITests(
             expect(allContext.traceId).toBeDefined();
             expect(allContext.spanId).toBeDefined();
           });
-        }
+        },
       );
     });
 
     it("should separate business and trace concerns", async () => {
       const client = getClient();
       await client.context.business.run({ userId: "user-123" }, async () => {
+        // eslint-disable-next-line @typescript-eslint/require-await
         await client.traces.withSpan("test-span", async () => {
           // business context should not have trace fields
           const businessCtx = client.context.business.get();
@@ -313,7 +321,7 @@ export function runSharedContextAPITests(
           const currentCtx = client.context.business.get();
           await client.context.business.run(
             { ...currentCtx, additional: "value2" },
-            async () => {
+            () => {
               // inner scope has both values
               const innerCtx = client.context.business.get();
               expect(innerCtx.base).toBe("value1");
@@ -340,7 +348,7 @@ export function runSharedContextAPITests(
           environment: "production",
           region: "us-east-1",
         },
-        async () => {
+        () => {
           const ctx = client.context.business.get();
           expect(ctx.userId).toBe("user-123");
           expect(ctx.userEmail).toBe("user@example.com");

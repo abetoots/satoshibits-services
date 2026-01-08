@@ -24,7 +24,9 @@ export type NodeInitConfig = NodeClientUserConfig & Partial<Pick<NodeClientConfi
 export async function initialize(config: NodeInitConfig): Promise<BaseSDKState> {
   // H3 fix: Automatically inject environment so users don't have to specify it
   // Backward compatibility: accept but ignore any user-provided environment field
-  return NodeSDKWrapper.initializeSdk({ ...config, environment: "node" });
+  return await Promise.resolve(
+    NodeSDKWrapper.initializeSdk({ ...config, environment: "node" }),
+  );
 }
 
 export { UnifiedObservabilityClient } from "./unified-smart-client.mjs";

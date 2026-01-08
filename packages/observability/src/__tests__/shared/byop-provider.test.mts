@@ -10,10 +10,11 @@
  * 4. Integration with frameworks that pre-configure OTel works correctly
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { SmartClient } from "../../index.mjs";
-import { clearAllInstances } from "../../client-instance.mjs";
 import { trace } from "@opentelemetry/api";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { clearAllInstances } from "../../client-instance.mjs";
+import { SmartClient } from "../../index.mjs";
 
 describe("Bring Your Own Provider (BYOP)", () => {
   beforeEach(() => {
@@ -31,7 +32,9 @@ describe("Bring Your Own Provider (BYOP)", () => {
 
   describe("skipSdkInitialization", () => {
     it("should skip SDK initialization when skipSdkInitialization is true", async () => {
-      const consoleSpy = vi.spyOn(console, "debug").mockImplementation(() => { /* noop */ });
+      const consoleSpy = vi.spyOn(console, "debug").mockImplementation(() => {
+        /* noop */
+      });
 
       const client = await SmartClient.create({
         serviceName: "skip-init-test",
@@ -41,7 +44,7 @@ describe("Bring Your Own Provider (BYOP)", () => {
 
       // should log that SDK initialization was skipped
       expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Skipping SDK initialization")
+        expect.stringContaining("Skipping SDK initialization"),
       );
 
       // client should still be functional using global providers
@@ -96,22 +99,29 @@ describe("Bring Your Own Provider (BYOP)", () => {
             traceFlags: 1,
           }),
         }),
-        startActiveSpan: vi.fn((_name: string, options: unknown, context?: unknown, fn?: unknown) => {
-          const span = {
-            end: vi.fn(),
-            setAttribute: vi.fn(),
-            setStatus: vi.fn(),
-            recordException: vi.fn(),
-            isRecording: () => true,
-          };
-          if (typeof options === "function") {
-            return (options as (s: unknown) => unknown)(span);
-          }
-          if (typeof context === "function") {
-            return (context as (s: unknown) => unknown)(span);
-          }
-          return (fn as ((s: unknown) => unknown) | undefined)?.(span);
-        }),
+        startActiveSpan: vi.fn(
+          (
+            _name: string,
+            options: unknown,
+            context?: unknown,
+            fn?: unknown,
+          ) => {
+            const span = {
+              end: vi.fn(),
+              setAttribute: vi.fn(),
+              setStatus: vi.fn(),
+              recordException: vi.fn(),
+              isRecording: () => true,
+            };
+            if (typeof options === "function") {
+              return (options as (s: unknown) => unknown)(span);
+            }
+            if (typeof context === "function") {
+              return (context as (s: unknown) => unknown)(span);
+            }
+            return (fn as ((s: unknown) => unknown) | undefined)?.(span);
+          },
+        ),
       };
 
       const mockTracerProvider = {
@@ -121,7 +131,9 @@ describe("Bring Your Own Provider (BYOP)", () => {
       const client = await SmartClient.create({
         serviceName: "existing-tracer-test",
         environment: "node",
-        existingTracerProvider: mockTracerProvider as unknown as Parameters<typeof SmartClient.create>[0]["existingTracerProvider"],
+        existingTracerProvider: mockTracerProvider as unknown as Parameters<
+          typeof SmartClient.create
+        >[0]["existingTracerProvider"],
         disableInstrumentation: true,
       });
 
@@ -134,7 +146,7 @@ describe("Bring Your Own Provider (BYOP)", () => {
       // verify our mock was called
       expect(mockTracerProvider.getTracer).toHaveBeenCalledWith(
         "my-module",
-        undefined
+        undefined,
       );
       // verify startSpan was called with the span name (may have additional undefined args)
       expect(mockTracer.startSpan).toHaveBeenCalled();
@@ -166,7 +178,9 @@ describe("Bring Your Own Provider (BYOP)", () => {
       const client = await SmartClient.create({
         serviceName: "existing-meter-test",
         environment: "node",
-        existingMeterProvider: mockMeterProvider as unknown as Parameters<typeof SmartClient.create>[0]["existingMeterProvider"],
+        existingMeterProvider: mockMeterProvider as unknown as Parameters<
+          typeof SmartClient.create
+        >[0]["existingMeterProvider"],
         disableInstrumentation: true,
       });
 
@@ -179,7 +193,7 @@ describe("Bring Your Own Provider (BYOP)", () => {
       // verify our mock was called
       expect(mockMeterProvider.getMeter).toHaveBeenCalledWith(
         "metrics-module",
-        undefined
+        undefined,
       );
       expect(mockMeter.createCounter).toHaveBeenCalled();
       expect(mockCounter.add).toHaveBeenCalledWith(5, expect.any(Object));
@@ -188,7 +202,9 @@ describe("Bring Your Own Provider (BYOP)", () => {
 
   describe("integration scenarios", () => {
     it("should skip SDK initialization when both providers are provided", async () => {
-      const consoleSpy = vi.spyOn(console, "debug").mockImplementation(() => { /* noop */ });
+      const consoleSpy = vi.spyOn(console, "debug").mockImplementation(() => {
+        /* noop */
+      });
 
       const mockTracer = {
         startSpan: vi.fn().mockReturnValue({
@@ -209,20 +225,30 @@ describe("Bring Your Own Provider (BYOP)", () => {
         }),
       };
 
-      const mockTracerProvider = { getTracer: vi.fn().mockReturnValue(mockTracer) };
-      const mockMeterProvider = { getMeter: vi.fn().mockReturnValue(mockMeter) };
+      const mockTracerProvider = {
+        getTracer: vi.fn().mockReturnValue(mockTracer),
+      };
+      const mockMeterProvider = {
+        getMeter: vi.fn().mockReturnValue(mockMeter),
+      };
 
       // note: NOT setting skipSdkInitialization, but providing both providers
       await SmartClient.create({
         serviceName: "both-providers-skip-test",
         environment: "node",
-        existingTracerProvider: mockTracerProvider as unknown as Parameters<typeof SmartClient.create>[0]["existingTracerProvider"],
-        existingMeterProvider: mockMeterProvider as unknown as Parameters<typeof SmartClient.create>[0]["existingMeterProvider"],
+        existingTracerProvider: mockTracerProvider as unknown as Parameters<
+          typeof SmartClient.create
+        >[0]["existingTracerProvider"],
+        existingMeterProvider: mockMeterProvider as unknown as Parameters<
+          typeof SmartClient.create
+        >[0]["existingMeterProvider"],
       });
 
       // should skip SDK initialization because both providers are provided
       expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining("using provided TracerProvider and MeterProvider")
+        expect.stringContaining(
+          "using provided TracerProvider and MeterProvider",
+        ),
       );
 
       consoleSpy.mockRestore();
@@ -248,14 +274,22 @@ describe("Bring Your Own Provider (BYOP)", () => {
         }),
       };
 
-      const mockTracerProvider = { getTracer: vi.fn().mockReturnValue(mockTracer) };
-      const mockMeterProvider = { getMeter: vi.fn().mockReturnValue(mockMeter) };
+      const mockTracerProvider = {
+        getTracer: vi.fn().mockReturnValue(mockTracer),
+      };
+      const mockMeterProvider = {
+        getMeter: vi.fn().mockReturnValue(mockMeter),
+      };
 
       const client = await SmartClient.create({
         serviceName: "dual-provider-test",
         environment: "node",
-        existingTracerProvider: mockTracerProvider as unknown as Parameters<typeof SmartClient.create>[0]["existingTracerProvider"],
-        existingMeterProvider: mockMeterProvider as unknown as Parameters<typeof SmartClient.create>[0]["existingMeterProvider"],
+        existingTracerProvider: mockTracerProvider as unknown as Parameters<
+          typeof SmartClient.create
+        >[0]["existingTracerProvider"],
+        existingMeterProvider: mockMeterProvider as unknown as Parameters<
+          typeof SmartClient.create
+        >[0]["existingMeterProvider"],
         disableInstrumentation: true,
       });
 
@@ -273,7 +307,9 @@ describe("Bring Your Own Provider (BYOP)", () => {
       // simulate a scenario where a framework has already registered global providers
       // in this case, we just want to use the SmartClient API without re-initializing SDK
 
-      const consoleSpy = vi.spyOn(console, "debug").mockImplementation(() => { /* noop */ });
+      const consoleSpy = vi.spyOn(console, "debug").mockImplementation(() => {
+        /* noop */
+      });
 
       const client = await SmartClient.create({
         serviceName: "nextjs-app",
@@ -292,9 +328,9 @@ describe("Bring Your Own Provider (BYOP)", () => {
       }).not.toThrow();
 
       // shutdown should be no-op (we didn't initialize)
-      await client.destroy();
+      client.destroy();
       expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Skipping SDK initialization")
+        expect.stringContaining("Skipping SDK initialization"),
       );
 
       consoleSpy.mockRestore();

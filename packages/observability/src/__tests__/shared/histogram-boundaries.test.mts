@@ -20,9 +20,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SmartClient } from "../../index.mjs";
+
 import type { UnifiedObservabilityClient } from "../../unified-smart-client.mjs";
+
 import { clearAllInstances } from "../../client-instance.mjs";
+import { SmartClient } from "../../index.mjs";
 
 /**
  * Creates a mock meter that captures histogram operations for verification.
@@ -104,43 +106,52 @@ describe("Histogram Bucket Boundary Tests (M3 Fix)", () => {
           setStatus: vi.fn(),
           recordException: vi.fn(),
           isRecording: () => true,
-          spanContext: () => ({ traceId: "test", spanId: "test", traceFlags: 1 }),
+          spanContext: () => ({
+            traceId: "test",
+            spanId: "test",
+            traceFlags: 1,
+          }),
         }),
-        startActiveSpan: vi.fn((_name: string, optionsOrFn: unknown, contextOrFn?: unknown, fn?: unknown) => {
-          const callback =
-            typeof optionsOrFn === "function"
-              ? (optionsOrFn as (span: unknown) => unknown)
-              : typeof contextOrFn === "function"
-                ? (contextOrFn as (span: unknown) => unknown)
-                : (fn as ((span: unknown) => unknown) | undefined);
-          return callback?.({
-            end: vi.fn(),
-            setAttribute: vi.fn(),
-            setStatus: vi.fn(),
-            recordException: vi.fn(),
-          });
-        }),
+        startActiveSpan: vi.fn(
+          (
+            _name: string,
+            optionsOrFn: unknown,
+            contextOrFn?: unknown,
+            fn?: unknown,
+          ) => {
+            const callback =
+              typeof optionsOrFn === "function"
+                ? (optionsOrFn as (span: unknown) => unknown)
+                : typeof contextOrFn === "function"
+                  ? (contextOrFn as (span: unknown) => unknown)
+                  : (fn as ((span: unknown) => unknown) | undefined);
+            return callback?.({
+              end: vi.fn(),
+              setAttribute: vi.fn(),
+              setStatus: vi.fn(),
+              recordException: vi.fn(),
+            });
+          },
+        ),
       }),
     };
 
     client = await SmartClient.create({
       serviceName: "histogram-boundary-test",
       environment: "node",
-      existingTracerProvider:
-        mockTracerProvider as unknown as Parameters<
-          typeof SmartClient.create
-        >[0]["existingTracerProvider"],
-      existingMeterProvider:
-        mockMeterProvider as unknown as Parameters<
-          typeof SmartClient.create
-        >[0]["existingMeterProvider"],
+      existingTracerProvider: mockTracerProvider as unknown as Parameters<
+        typeof SmartClient.create
+      >[0]["existingTracerProvider"],
+      existingMeterProvider: mockMeterProvider as unknown as Parameters<
+        typeof SmartClient.create
+      >[0]["existingMeterProvider"],
       disableInstrumentation: true,
     });
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     try {
-      await client?.destroy();
+      client?.destroy();
     } catch {
       // ignore
     }

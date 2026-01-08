@@ -15,18 +15,17 @@
  * - Added shutdown vs usage race condition test (Gemini)
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { SmartClient } from "../../index.mjs";
-import {
-  clearAllInstances,
-  getInstanceCount,
-} from "../../client-instance.mjs";
-import type { UnifiedObservabilityClient } from "../../unified-smart-client.mjs";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
 import type { ScopedInstrument } from "../../internal/scoped-instrument.mjs";
+import type { UnifiedObservabilityClient } from "../../unified-smart-client.mjs";
+import type { TestContext } from "../test-utils/setup-helpers.mjs";
+
+import { clearAllInstances, getInstanceCount } from "../../client-instance.mjs";
+import { SmartClient } from "../../index.mjs";
 import {
   setupNodeTestClient,
   teardownTestClient,
-  type TestContext,
 } from "../test-utils/setup-helpers.mjs";
 
 /**
@@ -39,8 +38,8 @@ function runConcurrently<T>(tasks: (() => T)[]): Promise<T[]> {
       (task) =>
         new Promise<T>((resolve) => {
           setImmediate(() => resolve(task()));
-        })
-    )
+        }),
+    ),
   );
 }
 
@@ -53,8 +52,8 @@ function runConcurrentlyMicrotask<T>(tasks: (() => T)[]): Promise<T[]> {
       (task) =>
         new Promise<T>((resolve) => {
           queueMicrotask(() => resolve(task()));
-        })
-    )
+        }),
+    ),
   );
 }
 
@@ -118,7 +117,8 @@ describe("Concurrency Safety", () => {
         "user",
       ];
 
-      const tasks: (() => { scope: string; instrument: ScopedInstrument })[] = [];
+      const tasks: (() => { scope: string; instrument: ScopedInstrument })[] =
+        [];
 
       for (let i = 0; i < 10; i++) {
         for (const scope of scopes) {
@@ -145,7 +145,7 @@ describe("Concurrency Safety", () => {
         const first = instruments[0]!;
         expect(
           instruments.every((i) => i === first),
-          `Scope "${scope}" should return same cached instance`
+          `Scope "${scope}" should return same cached instance`,
         ).toBe(true);
       }
 
@@ -251,11 +251,12 @@ describe("Concurrency Safety", () => {
 
       const tasks = Array(captureCount)
         .fill(null)
-        .map((_, i) => () =>
-          client.errors.capture(new Error(`Captured error ${i}`), {
-            boundary: i % 2 === 0,
-            tags: { index: i },
-          })
+        .map(
+          (_, i) => () =>
+            client.errors.capture(new Error(`Captured error ${i}`), {
+              boundary: i % 2 === 0,
+              tags: { index: i },
+            }),
         );
 
       await runConcurrently(tasks);
@@ -312,7 +313,9 @@ describe("Concurrency Safety", () => {
         .map((_, i) => () => client.metrics.gauge("concurrent.gauge", i));
       const histogramTasks = Array(50)
         .fill(null)
-        .map((_, i) => () => client.metrics.record("concurrent.histogram", i * 10));
+        .map(
+          (_, i) => () => client.metrics.record("concurrent.histogram", i * 10),
+        );
 
       // run 100 concurrent operations
       await runConcurrently([...gaugeTasks, ...histogramTasks]);
@@ -376,13 +379,16 @@ describe("Concurrency Safety", () => {
       const chains = Array(10)
         .fill(null)
         .map((_, chainId) =>
-          client.context.business.run({ userId: `user-${chainId}` }, async () => {
-            // simulate async work with fixed delay to ensure interleaving
-            await new Promise((resolve) => setTimeout(resolve, 5 + chainId));
+          client.context.business.run(
+            { userId: `user-${chainId}` },
+            async () => {
+              // simulate async work with fixed delay to ensure interleaving
+              await new Promise((resolve) => setTimeout(resolve, 5 + chainId));
 
-            const ctx = client.context.business.get();
-            results.push({ chainId, userId: ctx.userId });
-          })
+              const ctx = client.context.business.get();
+              results.push({ chainId, userId: ctx.userId });
+            },
+          ),
         );
 
       await Promise.all(chains);
@@ -403,11 +409,12 @@ describe("Concurrency Safety", () => {
       // add breadcrumbs from concurrent operations
       const tasks = Array(breadcrumbCount)
         .fill(null)
-        .map((_, i) => () =>
-          client.context.business.addBreadcrumb(`Action ${i}`, {
-            category: "test",
-            index: i,
-          })
+        .map(
+          (_, i) => () =>
+            client.context.business.addBreadcrumb(`Action ${i}`, {
+              category: "test",
+              index: i,
+            }),
         );
 
       await runConcurrently(tasks);
@@ -423,8 +430,9 @@ describe("Concurrency Safety", () => {
       // add tags from concurrent operations
       const tasks = Array(tagCount)
         .fill(null)
-        .map((_, i) => () =>
-          client.context.business.addTag(`tag-${i}`, `value-${i}`)
+        .map(
+          (_, i) => () =>
+            client.context.business.addTag(`tag-${i}`, `value-${i}`),
         );
 
       await runConcurrently(tasks);
@@ -445,8 +453,8 @@ describe("Concurrency Safety", () => {
               serviceName: `concurrent-service-${i}`,
               environment: "node",
               disableInstrumentation: true,
-            })
-          )
+            }),
+          ),
       );
 
       // all clients should be created successfully
@@ -472,8 +480,8 @@ describe("Concurrency Safety", () => {
               serviceName: `destroy-test-${i}`,
               environment: "node",
               disableInstrumentation: true,
-            })
-          )
+            }),
+          ),
       );
 
       expect(getInstanceCount()).toBe(5);
@@ -487,6 +495,7 @@ describe("Concurrency Safety", () => {
     });
   });
 
+  //TODO These test cases might not be needed since signature is no longer async
   describe("shutdown vs usage race conditions", () => {
     it("should handle getInstrumentation during shutdown gracefully", async () => {
       const client = await SmartClient.create({
@@ -499,8 +508,8 @@ describe("Concurrency Safety", () => {
       const beforeShutdown = client.getInstrumentation("before-shutdown");
       expect(beforeShutdown).toBeDefined();
 
-      // start shutdown but don't await
-      const shutdownPromise = client.destroy();
+      // start shutdown
+      client.destroy();
 
       // try to get instrumentation during shutdown - should not throw
       let duringShutdownInstrument: ScopedInstrument | undefined;
@@ -511,8 +520,6 @@ describe("Concurrency Safety", () => {
       } catch {
         threwError = true;
       }
-
-      await shutdownPromise;
 
       // implementation should either:
       // 1. return valid instrument (if shutdown hasn't progressed far)
@@ -540,15 +547,13 @@ describe("Concurrency Safety", () => {
       client.metrics.increment("before.shutdown", 1);
 
       // start shutdown
-      const shutdownPromise = client.destroy();
+      client.destroy();
 
       // try to record metrics during shutdown - should not throw
       expect(() => {
         client.metrics.increment("during.shutdown", 1);
         client.metrics.gauge("during.shutdown.gauge", 42);
       }).not.toThrow();
-
-      await shutdownPromise;
 
       // client should be destroyed
       expect(client.isDestroyed).toBe(true);
@@ -562,14 +567,13 @@ describe("Concurrency Safety", () => {
       });
 
       // start shutdown
-      const shutdownPromise = client.destroy();
+      client.destroy();
 
       // try to record error during shutdown - should not throw
       expect(() => {
         client.errors.record(new Error("During shutdown"));
       }).not.toThrow();
 
-      await shutdownPromise;
       expect(client.isDestroyed).toBe(true);
     });
 
@@ -601,8 +605,8 @@ describe("Concurrency Safety", () => {
                   reject(e instanceof Error ? e : new Error(String(e)));
                 }
               });
-            })
-        )
+            }),
+        ),
       );
 
       // all operations should either fulfill or reject gracefully

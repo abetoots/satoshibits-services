@@ -8,23 +8,23 @@
  * - Verifying expected outcomes (exit codes, shutdown calls)
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { trace } from "@opentelemetry/api";
-import {
-  InMemorySpanExporter,
-  SimpleSpanProcessor,
-} from "@opentelemetry/sdk-trace-base";
 import {
   AggregationTemporality,
   InMemoryMetricExporter,
   PeriodicExportingMetricReader,
 } from "@opentelemetry/sdk-metrics";
+import {
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+} from "@opentelemetry/sdk-trace-base";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Import the ACTUAL module under test
 import {
+  getSdkState,
   initializeSdk,
   shutdownSdk,
-  getSdkState,
 } from "../../sdk-wrapper-node.mjs";
 
 describe("SDK Wrapper - Real Module Tests", () => {
@@ -40,7 +40,9 @@ describe("SDK Wrapper - Real Module Tests", () => {
     // prevent actual process exit
     mockExit.mockClear();
     // cast through unknown required because process.exit returns `never`
-    vi.spyOn(process, "exit").mockImplementation(mockExit as unknown as typeof process.exit);
+    vi.spyOn(process, "exit").mockImplementation(
+      mockExit as unknown as typeof process.exit,
+    );
 
     // capture console output using vi.fn() for proper mock functions
     consoleLogSpy = vi.spyOn(console, "log").mockImplementation(vi.fn());
@@ -51,7 +53,7 @@ describe("SDK Wrapper - Real Module Tests", () => {
     // set up in-memory exporters for testing
     spanExporter = new InMemorySpanExporter();
     const metricExporter = new InMemoryMetricExporter(
-      AggregationTemporality.CUMULATIVE
+      AggregationTemporality.CUMULATIVE,
     );
     metricReader = new PeriodicExportingMetricReader({
       exporter: metricExporter,
@@ -75,10 +77,10 @@ describe("SDK Wrapper - Real Module Tests", () => {
   });
 
   describe("initializeSdk - Real Function", () => {
-    it("should initialize SDK and register process handlers", async () => {
+    it("should initialize SDK and register process handlers", () => {
       const listenersBefore = process.listenerCount("SIGTERM");
 
-      await initializeSdk({
+      initializeSdk({
         serviceName: "test-wrapper",
         environment: "node",
         disableInstrumentation: true,
@@ -96,8 +98,8 @@ describe("SDK Wrapper - Real Module Tests", () => {
       expect(listenersAfter).toBeGreaterThan(listenersBefore);
     });
 
-    it("should return existing state if already initialized", async () => {
-      await initializeSdk({
+    it("should return existing state if already initialized", () => {
+      initializeSdk({
         serviceName: "test-first",
         environment: "node",
         disableInstrumentation: true,
@@ -106,7 +108,7 @@ describe("SDK Wrapper - Real Module Tests", () => {
       });
 
       // second initialization should warn and return existing state
-      const state2 = await initializeSdk({
+      const state2 = initializeSdk({
         serviceName: "test-second",
         environment: "node",
         disableInstrumentation: true,
@@ -117,8 +119,8 @@ describe("SDK Wrapper - Real Module Tests", () => {
       expect(consoleLogSpy.mock.calls.length > 0 || true).toBe(true);
     });
 
-    it("should validate sampling rate", async () => {
-      await initializeSdk({
+    it("should validate sampling rate", () => {
+      initializeSdk({
         serviceName: "test-sampling",
         environment: "node",
         disableInstrumentation: true,
@@ -130,7 +132,7 @@ describe("SDK Wrapper - Real Module Tests", () => {
       // should have warned about invalid sampling rate
       const warnCalls = vi.mocked(console.warn).mock.calls;
       const samplingWarning = warnCalls.find((call) =>
-        String(call[0]).includes("samplingRate")
+        String(call[0]).includes("samplingRate"),
       );
       expect(samplingWarning).toBeDefined();
     });
@@ -141,7 +143,7 @@ describe("SDK Wrapper - Real Module Tests", () => {
       // use real timers for process signal tests - fake timers don't work well with async IIFEs
       vi.useRealTimers();
 
-      await initializeSdk({
+      initializeSdk({
         serviceName: "test-sigterm",
         environment: "node",
         disableInstrumentation: true,
@@ -159,7 +161,7 @@ describe("SDK Wrapper - Real Module Tests", () => {
       // verify graceful shutdown message was logged
       // Note: SDK logs "Graceful shutdown complete." not "SIGTERM received"
       expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Graceful shutdown")
+        expect.stringContaining("Graceful shutdown"),
       );
 
       // API Boundary Fix: SDK no longer calls process.exit()
@@ -167,10 +169,10 @@ describe("SDK Wrapper - Real Module Tests", () => {
       // This test verifies shutdown completed without errors
     });
 
-    it("should handle shutdown gracefully when SDK is properly initialized", async () => {
+    it("should handle shutdown gracefully when SDK is properly initialized", () => {
       vi.useRealTimers();
 
-      await initializeSdk({
+      initializeSdk({
         serviceName: "test-graceful",
         environment: "node",
         disableInstrumentation: true,
@@ -192,7 +194,7 @@ describe("SDK Wrapper - Real Module Tests", () => {
     it("should log exception and re-throw to preserve default Node behavior", async () => {
       vi.useRealTimers();
 
-      await initializeSdk({
+      initializeSdk({
         serviceName: "test-uncaught",
         environment: "node",
         disableInstrumentation: true,
@@ -206,7 +208,9 @@ describe("SDK Wrapper - Real Module Tests", () => {
       // use persistent handler to catch BOTH the original emit AND the re-thrown error
       // (SDK handler re-throws via setImmediate, creating a second uncaughtException)
       let caughtError: Error | undefined;
-      const catcher = (err: Error) => { caughtError = err; };
+      const catcher = (err: Error) => {
+        caughtError = err;
+      };
       process.on("uncaughtException", catcher);
 
       // emit uncaughtException to trigger real handler
@@ -218,7 +222,7 @@ describe("SDK Wrapper - Real Module Tests", () => {
       // verify error was logged
       expect(consoleErrorSpy).toHaveBeenCalledWith(
         expect.stringContaining("Uncaught exception"),
-        testError
+        testError,
       );
 
       // verify error was re-thrown (preserves default Node.js crash behavior)
@@ -232,7 +236,7 @@ describe("SDK Wrapper - Real Module Tests", () => {
     it("should use tracer to record exception span", async () => {
       vi.useRealTimers();
 
-      await initializeSdk({
+      initializeSdk({
         serviceName: "test-uncaught-span",
         environment: "node",
         disableInstrumentation: true,
@@ -276,7 +280,7 @@ describe("SDK Wrapper - Real Module Tests", () => {
     it("should unregister itself before re-throwing to prevent infinite loop (Doc 4 H4 Fix)", async () => {
       vi.useRealTimers();
 
-      await initializeSdk({
+      initializeSdk({
         serviceName: "test-h4-fix",
         environment: "node",
         disableInstrumentation: true,
@@ -295,7 +299,10 @@ describe("SDK Wrapper - Real Module Tests", () => {
       let uncaughtLogCount = 0;
       const originalConsoleError = console.error;
       vi.spyOn(console, "error").mockImplementation((...args) => {
-        if (typeof args[0] === "string" && args[0].includes("Uncaught exception")) {
+        if (
+          typeof args[0] === "string" &&
+          args[0].includes("Uncaught exception")
+        ) {
           uncaughtLogCount++;
         }
         // call original to preserve other logging
@@ -329,10 +336,10 @@ describe("SDK Wrapper - Real Module Tests", () => {
   });
 
   describe("unhandledRejection Handler - Real Behavior", () => {
-    it("should use tracer to record rejection span", async () => {
+    it("should use tracer to record rejection span", () => {
       vi.useRealTimers();
 
-      await initializeSdk({
+      initializeSdk({
         serviceName: "test-rejection",
         environment: "node",
         disableInstrumentation: true,
@@ -362,7 +369,7 @@ describe("SDK Wrapper - Real Module Tests", () => {
     it("should clean up handlers on shutdown", async () => {
       const listenersBefore = process.listenerCount("SIGTERM");
 
-      await initializeSdk({
+      initializeSdk({
         serviceName: "test-cleanup",
         environment: "node",
         disableInstrumentation: true,
@@ -386,7 +393,7 @@ describe("SDK Wrapper - Real Module Tests", () => {
     });
 
     it("should be safe to call multiple times", async () => {
-      await initializeSdk({
+      initializeSdk({
         serviceName: "test-multi-shutdown",
         environment: "node",
         disableInstrumentation: true,
@@ -401,10 +408,10 @@ describe("SDK Wrapper - Real Module Tests", () => {
   });
 
   describe("Handler Lifecycle", () => {
-    it("should not double-register handlers on re-initialization", async () => {
+    it("should not double-register handlers on re-initialization", () => {
       const listenersBefore = process.listenerCount("SIGTERM");
 
-      await initializeSdk({
+      initializeSdk({
         serviceName: "test-no-double",
         environment: "node",
         disableInstrumentation: true,
@@ -419,7 +426,7 @@ describe("SDK Wrapper - Real Module Tests", () => {
       expect(listenersAfterFirst).toBeGreaterThan(listenersBefore);
 
       // attempt second initialization (should be blocked)
-      await initializeSdk({
+      initializeSdk({
         serviceName: "test-no-double-2",
         environment: "node",
         disableInstrumentation: true,

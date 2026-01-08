@@ -37,6 +37,7 @@ if (typeof globalThis.process === "undefined") {
   (globalThis as { process?: unknown }).process = {
     env: {},
     listeners: () => [],
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     removeListener: () => {},
   };
 }

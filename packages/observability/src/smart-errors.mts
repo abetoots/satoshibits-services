@@ -7,13 +7,12 @@
 import { SpanStatusCode, trace } from "@opentelemetry/api";
 import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 
+import type { SanitizerOptions } from "./enrichment/sanitizer.mjs";
 import type { Attributes, Tracer } from "@opentelemetry/api";
 import type { Logger } from "@opentelemetry/api-logs";
 
 import { getBusinessContext, getGlobalContext } from "./enrichment/context.mjs";
-import { DataSanitizer, SanitizerPresets, type SanitizerOptions } from "./enrichment/sanitizer.mjs";
-import { getUnifiedClientInstance } from "./client-instance.mjs";
-import * as metrics from "./smart-metrics.mjs";
+import { DataSanitizer, SanitizerPresets } from "./enrichment/sanitizer.mjs";
 import { getResultAdapter } from "./utils/result-adapter.mjs";
 import { isThenable } from "./utils/thenable.mjs";
 
@@ -47,7 +46,8 @@ const STRICT_ERROR_SANITIZER_OPTIONS: SanitizerOptions = {
     },
     // Passwords in connection strings (mongodb://, postgresql://, mysql://, etc.)
     {
-      pattern: /((?:mongodb|postgresql|mysql|redis|amqp):\/\/[^:]+:)([^@]+)(@)/gi,
+      pattern:
+        /((?:mongodb|postgresql|mysql|redis|amqp):\/\/[^:]+:)([^@]+)(@)/gi,
       replacement: "$1[REDACTED]$3",
     },
     // Passwords in URL parameters
@@ -73,12 +73,14 @@ const MINIMAL_ERROR_SANITIZER_OPTIONS: SanitizerOptions = {
   customPatterns: [
     // API keys and secrets
     {
-      pattern: /\b(api[_-]?key|apikey|secret[_-]?key|password|passwd|pwd)[:=\s]+\S+/gi,
+      pattern:
+        /\b(api[_-]?key|apikey|secret[_-]?key|password|passwd|pwd)[:=\s]+\S+/gi,
       replacement: "$1: [REDACTED]",
     },
     // Passwords in connection strings
     {
-      pattern: /((?:mongodb|postgresql|mysql|redis|amqp):\/\/[^:]+:)([^@]+)(@)/gi,
+      pattern:
+        /((?:mongodb|postgresql|mysql|redis|amqp):\/\/[^:]+:)([^@]+)(@)/gi,
       replacement: "$1[REDACTED]$3",
     },
   ],
@@ -104,7 +106,9 @@ function getPresetOptions(preset: ErrorSanitizerPreset): SanitizerOptions {
  * Module-level error sanitizer instance.
  * Configurable via configureErrorSanitizer() during SDK initialization.
  */
-let errorSanitizer: DataSanitizer = new DataSanitizer(STRICT_ERROR_SANITIZER_OPTIONS);
+let errorSanitizer: DataSanitizer = new DataSanitizer(
+  STRICT_ERROR_SANITIZER_OPTIONS,
+);
 
 /**
  * Configure the error sanitizer with custom options.
@@ -288,8 +292,8 @@ export function configureErrorCategorization(
 ): void {
   console.warn(
     "[@satoshibits/observability] configureErrorCategorization() is deprecated. " +
-    "For multi-tenant applications, use instance-level configuration via createErrorReporter(). " +
-    "Global configuration does not support tenant isolation.",
+      "For multi-tenant applications, use instance-level configuration via createErrorReporter(). " +
+      "Global configuration does not support tenant isolation.",
   );
   errorCategorizationConfig = config as InternalErrorCategorizationConfig;
 }
@@ -388,13 +392,16 @@ function categorizeByStructuredData(error: Error): ErrorCategory | undefined {
   const rawStatus =
     (error as Error & { status?: number | string }).status ??
     (error as Error & { statusCode?: number | string }).statusCode ??
-    (error as Error & { response?: { status?: number | string } }).response?.status;
-  const statusCode = typeof rawStatus === "string" ? Number(rawStatus) : rawStatus;
+    (error as Error & { response?: { status?: number | string } }).response
+      ?.status;
+  const statusCode =
+    typeof rawStatus === "string" ? Number(rawStatus) : rawStatus;
 
   if (typeof statusCode === "number" && Number.isFinite(statusCode)) {
     // 400 Bad Request, 409 Conflict, 422 Unprocessable Entity (validation errors)
     // Multi-model review (Codex + Gemini): Added 409 for duplicate/conflict errors
-    if (statusCode === 400 || statusCode === 409 || statusCode === 422) return ErrorCategory.VALIDATION;
+    if (statusCode === 400 || statusCode === 409 || statusCode === 422)
+      return ErrorCategory.VALIDATION;
     if (statusCode === 401) return ErrorCategory.AUTHENTICATION;
     if (statusCode === 403) return ErrorCategory.AUTHORIZATION;
     if (statusCode === 404) return ErrorCategory.NOT_FOUND;
@@ -684,8 +691,8 @@ export function configureRetryClassification(
 ): void {
   console.warn(
     "[@satoshibits/observability] configureRetryClassification() is deprecated. " +
-    "For multi-tenant applications, use instance-level configuration via createErrorReporter(). " +
-    "Global configuration does not support tenant isolation.",
+      "For multi-tenant applications, use instance-level configuration via createErrorReporter(). " +
+      "Global configuration does not support tenant isolation.",
   );
   retryClassificationConfig = config as InternalRetryClassificationConfig;
 }
@@ -897,7 +904,9 @@ export function reportError(
   } as Attributes;
 
   // sanitize error message for status using configurable error sanitizer
-  const sanitizedErrorMessage = getErrorSanitizer().sanitize(error.message) as string;
+  const sanitizedErrorMessage = getErrorSanitizer().sanitize(
+    error.message,
+  ) as string;
 
   // record in trace if there's an active span
   if (span) {
@@ -994,26 +1003,26 @@ export function createErrorReporter(
   const optionsKeys = ["defaultContext", "categorizationConfig", "retryConfig"];
 
   // backward compatibility: detect if this is ErrorReporterOptions or plain context
-  const isOptionsObject = optionsOrContext &&
-    optionsKeys.some(key => key in optionsOrContext);
+  const isOptionsObject =
+    optionsOrContext && optionsKeys.some((key) => key in optionsOrContext);
 
   // M5 fix: Warn if user passes mixed object (options fields + extra properties)
   // This prevents silent data loss during migration
   if (isOptionsObject) {
     const unknownKeys = Object.keys(optionsOrContext).filter(
-      key => !optionsKeys.includes(key)
+      (key) => !optionsKeys.includes(key),
     );
     if (unknownKeys.length > 0) {
       console.warn(
         `[@satoshibits/observability] Properties [${unknownKeys.join(", ")}] on ` +
-        "createErrorReporter() options were ignored. Move them into 'defaultContext': " +
-        `createErrorReporter({ defaultContext: { ${unknownKeys.join(", ")}, ... }, ... })`
+          "createErrorReporter() options were ignored. Move them into 'defaultContext': " +
+          `createErrorReporter({ defaultContext: { ${unknownKeys.join(", ")}, ... }, ... })`,
       );
     }
   }
 
   const options: ErrorReporterOptions = isOptionsObject
-    ? optionsOrContext as ErrorReporterOptions
+    ? (optionsOrContext as ErrorReporterOptions)
     : { defaultContext: optionsOrContext as Record<string, unknown> };
 
   const defaultContext = options.defaultContext ?? {};

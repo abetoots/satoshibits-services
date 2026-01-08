@@ -17,7 +17,10 @@ import type {
 import { getBusinessContext } from "./enrichment/context.mjs";
 import { initializeSanitizer } from "./enrichment/sanitizer.mjs";
 import { sdkStateMachine } from "./sdk-state.mjs";
-import { configureErrorSanitizer, resetErrorSanitizer } from "./smart-errors.mjs";
+import {
+  configureErrorSanitizer,
+  resetErrorSanitizer,
+} from "./smart-errors.mjs";
 import { UnifiedObservabilityClient } from "./unified-smart-client.mjs";
 // Note: SDK wrappers loaded dynamically to avoid bundle bloat
 import { detectEnvironment } from "./utils/environment.mjs";
@@ -30,7 +33,9 @@ import { detectEnvironment } from "./utils/environment.mjs";
  */
 export interface BaseSDK<
   TConfig = BaseClientConfig,
-  TResult extends BaseSDKState | Promise<BaseSDKState> = BaseSDKState | Promise<BaseSDKState>,
+  TResult extends BaseSDKState | Promise<BaseSDKState> =
+    | BaseSDKState
+    | Promise<BaseSDKState>,
 > {
   initializeSdk: (config: TConfig) => TResult;
 }
@@ -86,7 +91,8 @@ export async function initializeEnvironmentSdkDynamic(
             ? config
             : { ...config, environment: "browser" as const };
 
-        resultState = await browserSdk.BrowserSDKWrapper.initializeSdk(browserConfig);
+        resultState =
+          await browserSdk.BrowserSDKWrapper.initializeSdk(browserConfig);
       } else if (environment === "node") {
         const nodeSdk = await import("./sdk-wrapper-node.mjs");
         const nodeConfig =
@@ -94,7 +100,7 @@ export async function initializeEnvironmentSdkDynamic(
             ? config
             : { ...config, environment: "node" as const };
 
-        resultState = await nodeSdk.NodeSDKWrapper.initializeSdk(nodeConfig);
+        resultState = nodeSdk.NodeSDKWrapper.initializeSdk(nodeConfig);
       } else {
         throw new Error(`Unknown environment: ${environment}`);
       }
@@ -102,11 +108,15 @@ export async function initializeEnvironmentSdkDynamic(
       // dispatch success event to state machine (single source of truth)
       sdkStateMachine.dispatch({
         type: "INIT_SUCCESS",
-        shutdown: async () => { await resultState?.shutdown(); },
+        shutdown: async () => {
+          await resultState?.shutdown();
+        },
         sanitizer: resultState.sanitizer,
       });
 
-      console.debug(`OpenTelemetry SDK initialized for ${environment} environment`);
+      console.debug(
+        `OpenTelemetry SDK initialized for ${environment} environment`,
+      );
     } catch (error) {
       console.error(`Failed to initialize ${environment} SDK:`, error);
       sdkStateMachine.dispatch({
@@ -224,7 +234,7 @@ export async function createUnifiedClient(
   // - skipSdkInitialization: true - use globally registered providers
   // - existingTracerProvider + existingMeterProvider both set - use provided providers
   const shouldSkipSdkInit =
-    config.skipSdkInitialization ||
+    config.skipSdkInitialization ??
     (config.existingTracerProvider !== undefined &&
       config.existingMeterProvider !== undefined);
 
@@ -232,7 +242,9 @@ export async function createUnifiedClient(
     const reason = config.skipSdkInitialization
       ? "using globally registered providers"
       : "using provided TracerProvider and MeterProvider";
-    console.debug(`[Observability SDK] Skipping SDK initialization - ${reason}`);
+    console.debug(
+      `[Observability SDK] Skipping SDK initialization - ${reason}`,
+    );
 
     // dispatch INIT_START first so state machine transitions to 'initializing'
     sdkStateMachine.dispatch({
@@ -243,9 +255,12 @@ export async function createUnifiedClient(
     // then dispatch INIT_SUCCESS with no-op shutdown
     sdkStateMachine.dispatch({
       type: "INIT_SUCCESS",
+      // eslint-disable-next-line @typescript-eslint/require-await
       shutdown: async () => {
         // no-op shutdown since we didn't initialize the SDK
-        console.debug("[Observability SDK] Shutdown skipped - SDK was not initialized by us");
+        console.debug(
+          "[Observability SDK] Shutdown skipped - SDK was not initialized by us",
+        );
       },
       sanitizer: null,
     });
