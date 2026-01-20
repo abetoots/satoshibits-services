@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.1
+
+### Patch Changes
+
+- @satoshibits/functional-errors@3.0.0
+
 ## 1.2.0
 
 ### Minor Changes

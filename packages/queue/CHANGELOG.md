@@ -1,5 +1,12 @@
 # @satoshibits/queue
 
+## 3.0.0
+
+### Patch Changes
+
+- Updated dependencies [6891f56]
+  - @satoshibits/functional@1.2.0
+
 ## 2.4.0
 
 ### Minor Changes
