@@ -838,4 +838,104 @@ describe('ReaderResult', () => {
       expect(attempts).toBe(2);
     });
   });
+
+  describe('tap', () => {
+    it('should execute side effect but return original value', async () => {
+      const log: string[] = [];
+      const logEffect = (msg: string): ReaderResult<TestDeps, never, void> =>
+        ReaderResult.asks(() => { log.push(msg); });
+
+      const computation = ReaderResult.tap<TestDeps, string, number>(
+        (n) => logEffect(`Got: ${n}`)
+      )(ReaderResult.of<TestDeps, string, number>(42));
+
+      expect(log).toEqual([]);
+      const result = await ReaderResult.run(mockDeps)(computation);
+      expect(log).toEqual(['Got: 42']);
+      expect(result).toEqual({ success: true, data: 42 });
+    });
+
+    it('should not execute side effect on error', async () => {
+      const sideEffect = vi.fn(() => ReaderResult.of<TestDeps, string, void>(undefined));
+
+      const computation = ReaderResult.tap<TestDeps, string, number>(
+        sideEffect
+      )(ReaderResult.fail<TestDeps, string, number>('initial error'));
+
+      const result = await ReaderResult.run(mockDeps)(computation);
+      expect(result).toEqual({ success: false, error: 'initial error' });
+      expect(sideEffect).not.toHaveBeenCalled();
+    });
+
+    it('should propagate error from side effect', async () => {
+      const computation = ReaderResult.tap<TestDeps, string, number>(
+        () => ReaderResult.fail<TestDeps, string, void>('side effect error')
+      )(ReaderResult.of<TestDeps, string, number>(42));
+
+      const result = await ReaderResult.run(mockDeps)(computation);
+      expect(result).toEqual({ success: false, error: 'side effect error' });
+    });
+  });
+
+  describe('chainFirst', () => {
+    it('should be an alias for tap', async () => {
+      const log: string[] = [];
+      const logEffect = (msg: string): ReaderResult<TestDeps, never, void> =>
+        ReaderResult.asks(() => { log.push(msg); });
+
+      const computation = ReaderResult.chainFirst<TestDeps, string, number>(
+        (n) => logEffect(`Got: ${n}`)
+      )(ReaderResult.of<TestDeps, string, number>(42));
+
+      const result = await ReaderResult.run(mockDeps)(computation);
+      expect(log).toEqual(['Got: 42']);
+      expect(result).toEqual({ success: true, data: 42 });
+    });
+  });
+
+  describe('tapDeps', () => {
+    it('should execute side effect with direct deps access', async () => {
+      const log: string[] = [];
+      interface Deps { prefix: string }
+      const deps: Deps = { prefix: 'LOG:' };
+
+      const computation = ReaderResult.tapDeps<Deps, string, number>(
+        (n, d) => { log.push(`${d.prefix} ${n}`); }
+      )(ReaderResult.of<Deps, string, number>(42));
+
+      const result = await ReaderResult.run(deps)(computation);
+      expect(log).toEqual(['LOG: 42']);
+      expect(result).toEqual({ success: true, data: 42 });
+    });
+
+    it('should handle async side effects', async () => {
+      const log: string[] = [];
+
+      const computation = ReaderResult.tapDeps<TestDeps, string, number>(
+        async (n) => {
+          await Promise.resolve();
+          log.push(`Async: ${n}`);
+        }
+      )(ReaderResult.of<TestDeps, string, number>(42));
+
+      const result = await ReaderResult.run(mockDeps)(computation);
+      expect(log).toEqual(['Async: 42']);
+      expect(result).toEqual({ success: true, data: 42 });
+    });
+
+    it('should propagate errors from side effect', async () => {
+      const computation = ReaderResult.tapDeps<TestDeps, Error, number>(
+        () => {
+          throw new Error('side effect failed');
+        }
+      )(ReaderResult.of<TestDeps, Error, number>(42));
+
+      const result = await ReaderResult.run(mockDeps)(computation);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toBeInstanceOf(Error);
+        expect((result.error as Error).message).toBe('side effect failed');
+      }
+    });
+  });
 });

@@ -416,7 +416,104 @@ export const ReaderResult = {
     )(fa),
 
   /**
-   * Bind a value to a name (for Do notation) 
+   * Executes a ReaderResult for its side effects, discarding the result.
+   * @description Runs a ReaderResult-returning function but preserves the original value.
+   * Useful for logging, metrics, or auditing within a ReaderResult pipeline.
+   *
+   * @template R - The environment/dependencies type
+   * @template E - The error type
+   * @template A - The type of the value
+   * @param {function(A): ReaderResult<R, E, unknown>} f - Function that returns a ReaderResult (result discarded)
+   * @returns {function(ReaderResult<R, E, A>): ReaderResult<R, E, A>} A function that executes side effects
+   *
+   * @category Combinators
+   * @example
+   * ```typescript
+   * type Deps = { logger: { info: (msg: string) => void } };
+   *
+   * const logCreated = (id: string): ReaderResult<Deps, never, void> =>
+   *   ReaderResult.asks(deps => { deps.logger.info(`Created: ${id}`); });
+   *
+   * pipe(
+   *   ReaderResult.Do<Deps, Error>(),
+   *   ReaderResult.bind('user', () => createUser(input)),
+   *   ReaderResult.tap(({ user }) => logCreated(user.id)),
+   *   ReaderResult.map(({ user }) => user)
+   * );
+   * ```
+   *
+   * @since 2025-01-21
+   */
+  tap: <R, E, A>(
+    f: (a: A) => ReaderResult<R, E, unknown>
+  ) => (
+    self: ReaderResult<R, E, A>
+  ): ReaderResult<R, E, A> =>
+    ReaderResult.chain<R, E, A, A>((a: A) =>
+      ReaderResult.map<R, E, unknown, A>(() => a)(f(a))
+    )(self),
+
+  /**
+   * Alias for {@link tap}. Executes a ReaderResult for its side effects, discarding the result.
+   * @description Provided for consistency with other monadic types (Reader, Result, Task, IO).
+   *
+   * @see tap
+   * @since 2025-01-21
+   */
+  chainFirst: <R, E, A>(
+    f: (a: A) => ReaderResult<R, E, unknown>
+  ) => (
+    self: ReaderResult<R, E, A>
+  ): ReaderResult<R, E, A> =>
+    ReaderResult.tap(f)(self),
+
+  /**
+   * Executes a side effect with direct access to both value and dependencies.
+   * @description Ergonomic alternative to {@link tap} when you just need to perform
+   * a sync/async effect without constructing a full ReaderResult.
+   *
+   * @remarks
+   * **Warning:** Any error thrown by the side effect will be cast to type `E`
+   * without validation. Ensure your side effect throws errors compatible with `E`,
+   * or handle exceptions internally within the callback.
+   *
+   * @template R - The environment/dependencies type
+   * @template E - The error type
+   * @template A - The type of the value
+   * @param {function(A, R): unknown} f - Side effect function with value and deps access (can be async)
+   * @returns {function(ReaderResult<R, E, A>): ReaderResult<R, E, A>} A function that executes side effects
+   *
+   * @category Combinators
+   * @example
+   * ```typescript
+   * type Deps = { logger: { info: (data: object, msg: string) => void } };
+   *
+   * pipe(
+   *   ReaderResult.Do<Deps, Error>(),
+   *   ReaderResult.bind('user', () => createUser(input)),
+   *   ReaderResult.tapDeps(({ user }, deps) => {
+   *     deps.logger.info({ userId: user.id }, 'User created');
+   *   }),
+   *   ReaderResult.map(({ user }) => user)
+   * );
+   * ```
+   *
+   * @since 2025-01-21
+   */
+  tapDeps: <R, E, A>(
+    f: (a: A, deps: R) => unknown
+  ) => (
+    self: ReaderResult<R, E, A>
+  ): ReaderResult<R, E, A> =>
+    ReaderResult.tap<R, E, A>((a: A) =>
+      ReaderResult.tryCatch(
+        async (deps: R) => { await f(a, deps); },
+        (error) => error as E
+      )
+    )(self),
+
+  /**
+   * Bind a value to a name (for Do notation)
    */
   let: <R, E, A extends object, K extends string, B>(
     name: K,
