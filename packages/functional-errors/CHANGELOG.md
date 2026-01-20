@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.0
+
+### Patch Changes
+
+- Updated dependencies [6891f56]
+  - @satoshibits/functional@1.2.0
+
 ## 2.0.2
 
 ### Patch Changes
