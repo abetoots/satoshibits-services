@@ -45,6 +45,7 @@ worker.on("failed", (payload) => {
       jobId: payload.jobId,
       error: payload.error,
       willRetry: payload.willRetry,
+      permanent: payload.permanent,
       attempts: payload.attempts,
     },
     "❌ Job failed",

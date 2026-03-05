@@ -30,6 +30,7 @@ import type {
   QueueError,
   QueueStats,
 } from "../../core/types.mjs";
+import { PermanentJobError } from "../../core/errors.mjs";
 import type { BullMQDefaultJobOptions } from "../provider-options.mjs";
 import type {
   IProviderFactory,
@@ -671,10 +672,13 @@ export class BullMQProvider implements IProviderFactory {
       // check if error signals permanent failure (retryable: false)
       // if so, wrap in UnrecoverableError to tell BullMQ to skip retries
       const isPermanentFailure =
-        "retryable" in error && error.retryable === false;
+        error instanceof PermanentJobError ||
+        ("retryable" in error && error.retryable === false);
 
       const errorToPass = isPermanentFailure
-        ? new UnrecoverableError(error.message)
+        ? Object.assign(new UnrecoverableError(error.message), {
+            cause: error,
+          })
         : error instanceof Error
           ? error
           : new Error(error.message);
@@ -737,8 +741,20 @@ export class BullMQProvider implements IProviderFactory {
           };
 
           // call handler - errors propagate to BullMQ for retry/DLQ
-          await handler(job);
-          return { success: true };
+          try {
+            await handler(job);
+            return { success: true };
+          } catch (handlerError) {
+            // translate PermanentJobError to BullMQ's native non-retry mechanism
+            if (handlerError instanceof PermanentJobError) {
+              const unrecoverable = new UnrecoverableError(
+                handlerError.message,
+              );
+              unrecoverable.cause = handlerError;
+              throw unrecoverable;
+            }
+            throw handlerError;
+          }
         },
         {
           connection: this.connection,

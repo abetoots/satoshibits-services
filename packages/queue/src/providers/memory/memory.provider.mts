@@ -24,6 +24,7 @@ import type {
   IQueueProvider,
 } from "../provider.interface.mjs";
 
+import { PermanentJobError } from "../../core/errors.mjs";
 import { QueueErrorFactory } from "../../core/utils.mjs";
 
 /**
@@ -303,9 +304,10 @@ export class MemoryProvider implements IProviderFactory {
 
     const newAttempts = storedJob.attempts + 1;
 
-    // check if error signals permanent failure (retryable: false)
+    // check if error signals permanent failure
     const isPermanentFailure =
-      "retryable" in error && error.retryable === false;
+      error instanceof PermanentJobError ||
+      ("retryable" in error && error.retryable === false);
 
     if (!isPermanentFailure && newAttempts < storedJob.maxAttempts) {
       // requeue for retry (only if retryable and attempts remaining)

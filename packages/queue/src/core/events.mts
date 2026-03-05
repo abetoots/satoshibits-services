@@ -43,6 +43,7 @@ export interface QueueEventMap {
     duration: number;
     willRetry: boolean;
     structuredError?: QueueError | Error;
+    permanent: boolean;
   };
 
   "job.retrying": {

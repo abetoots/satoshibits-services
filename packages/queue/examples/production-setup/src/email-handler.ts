@@ -1,4 +1,5 @@
 import { Result } from "@satoshibits/functional";
+import { PermanentJobError } from "@satoshibits/queue";
 
 import type { EmailJobData } from "./types.js";
 import type { ActiveJob } from "@satoshibits/queue";
@@ -73,31 +74,17 @@ export async function emailHandler(
     // ✅ ERROR CLASSIFICATION
     // See: packages/queue/README.md#mistake-1-treating-all-errors-the-same
 
-    // Transient errors - return Result.err to trigger retry
-    //@ts-expect-error code property was assigned above
-    if (error.code === "NETWORK_ERROR" || error.code === "RATE_LIMIT") {
-      logger.warn(
-        { jobId: job.id, error: (error as Error).message },
-        "Transient error - will retry",
+    // permanent errors — throw PermanentJobError to skip retries
+    if (
+      (error as { code?: string }).code === "INVALID_EMAIL" ||
+      (error as { code?: string }).code === "BOUNCED"
+    ) {
+      throw new PermanentJobError(
+        `Permanent failure: ${(error as Error).message}`,
       );
-      return Result.err(error as Error); // return error to trigger retry
     }
 
-    // Permanent errors - return Result.ok to prevent retry
-    //@ts-expect-error code property was assigned above
-    if (error.code === "INVALID_EMAIL" || error.code === "BOUNCED") {
-      logger.error(
-        { jobId: job.id, error: (error as Error).message },
-        "Permanent failure - won't retry",
-      );
-      return Result.ok(undefined); // mark complete, don't retry
-    }
-
-    // Unknown errors - return Result.err to retry (safer)
-    logger.error(
-      { jobId: job.id, error: (error as Error).message },
-      "Unknown error - will retry",
-    );
-    return Result.err(error as Error); // return error to trigger retry
+    // transient or unknown errors — rethrow to let provider retry
+    throw error;
   }
 }

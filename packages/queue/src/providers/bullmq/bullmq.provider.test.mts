@@ -21,6 +21,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Job, ActiveJob } from "../../core/types.mjs";
 
+import { PermanentJobError } from "../../core/errors.mjs";
 import {
   createBullMQMocks,
   setupBullMQMockDefaults,
@@ -637,6 +638,69 @@ describe("BullMQProvider", () => {
 
       // verify user handler was called
       expect(userHandler).toHaveBeenCalled();
+    });
+
+    it("should wrap PermanentJobError in UnrecoverableError", async () => {
+      const queueProvider = provider.forQueue("test-queue");
+
+      // capture the BullMQ worker handler
+      let bullmqHandler: Processor<unknown, unknown, string> | undefined;
+      const { Worker } = await import("bullmq");
+      vi.mocked(Worker).mockImplementation((_queueName, handler) => {
+        bullmqHandler = handler as Processor<unknown, unknown, string>;
+        return mockWorker as unknown as import("bullmq").Worker<
+          unknown,
+          unknown,
+          string
+        >;
+      });
+
+      // user handler that throws PermanentJobError
+      const userHandler = vi
+        .fn()
+        .mockRejectedValue(new PermanentJobError("Campaign not found"));
+
+      queueProvider.process?.(userHandler, { concurrency: 1 });
+
+      expect(bullmqHandler).toBeDefined();
+      const bullJob = { ...mockBullJob, data: { _jobData: { foo: "bar" } } };
+
+      // should throw UnrecoverableError (not PermanentJobError)
+      //@ts-expect-error testing error path
+      const thrown = await bullmqHandler!(bullJob).catch((e: unknown) => e);
+      expect(thrown).toBeInstanceOf(UnrecoverableError);
+      expect((thrown as Error).message).toBe("Campaign not found");
+    });
+
+    it("should pass through regular errors unchanged", async () => {
+      const queueProvider = provider.forQueue("test-queue");
+
+      // capture the BullMQ worker handler
+      let bullmqHandler: Processor<unknown, unknown, string> | undefined;
+      const { Worker } = await import("bullmq");
+      vi.mocked(Worker).mockImplementation((_queueName, handler) => {
+        bullmqHandler = handler as Processor<unknown, unknown, string>;
+        return mockWorker as unknown as import("bullmq").Worker<
+          unknown,
+          unknown,
+          string
+        >;
+      });
+
+      const originalError = new Error("Network timeout");
+      const userHandler = vi.fn().mockRejectedValue(originalError);
+
+      queueProvider.process?.(userHandler, { concurrency: 1 });
+
+      expect(bullmqHandler).toBeDefined();
+      const bullJob = { ...mockBullJob, data: { _jobData: { foo: "bar" } } };
+
+      // should throw the original error (not wrapped)
+      //@ts-expect-error testing error path
+      await expect(bullmqHandler!(bullJob)).rejects.toThrow("Network timeout");
+      //@ts-expect-error testing error path
+      const thrown = await bullmqHandler!(bullJob).catch((e: unknown) => e);
+      expect(thrown).not.toBeInstanceOf(UnrecoverableError);
     });
   });
 

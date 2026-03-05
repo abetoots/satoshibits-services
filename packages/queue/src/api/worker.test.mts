@@ -18,6 +18,7 @@ import type {
 import type { Job, JobHandler } from "../core/types.mjs";
 import type { IQueueProvider } from "../providers/provider.interface.mjs";
 
+import { PermanentJobError } from "../core/errors.mjs";
 import { Worker } from "./worker.mjs";
 
 describe("Worker - Hybrid Push/Pull Model", () => {
@@ -669,6 +670,7 @@ describe("Worker - Hybrid Push/Pull Model", () => {
         jobId: "job-1",
         queueName: "test-queue",
         error: "Processing failed",
+        permanent: false,
       });
 
       await worker.close();
@@ -859,7 +861,237 @@ describe("Worker - Hybrid Push/Pull Model", () => {
         error: "Processing failed",
         errorType: "Error",
         willRetry: true, // attempts (0) < maxAttempts (3)
+        permanent: false,
       });
+
+      await worker.close();
+    });
+
+    it("should emit failed with permanent: true and willRetry: false for PermanentJobError (pull model)", async () => {
+      const job: Job<unknown> = {
+        id: "job-1",
+        name: "test-job",
+        queueName: "test-queue",
+        data: {},
+        status: "active",
+        attempts: 0,
+        maxAttempts: 3,
+        createdAt: new Date(),
+      };
+
+      vi.mocked(mockProvider.fetch!)
+        .mockResolvedValueOnce(Result.ok([job]))
+        .mockResolvedValue(Result.ok([]));
+
+      handlerSpy.mockResolvedValueOnce(
+        Result.err(new PermanentJobError("Campaign not found")),
+      );
+
+      const worker = new Worker("test-queue", handler, {
+        provider: mockProvider,
+        pollInterval: 10,
+        errorBackoff: 100,
+      });
+
+      const failedEvents: FailedEventPayload[] = [];
+      const retryingEvents: unknown[] = [];
+      worker.on("failed", (payload) => {
+        failedEvents.push(payload);
+      });
+      worker.on("job.retrying", (payload) => {
+        retryingEvents.push(payload);
+      });
+
+      worker.start();
+
+      await vi.waitFor(() => {
+        expect(failedEvents).toHaveLength(1);
+      });
+
+      expect(failedEvents[0]).toMatchObject({
+        jobId: "job-1",
+        queueName: "test-queue",
+        error: "Campaign not found",
+        errorType: "PermanentJobError",
+        willRetry: false,
+        permanent: true,
+      });
+
+      // should NOT emit job.retrying for permanent errors
+      expect(retryingEvents).toHaveLength(0);
+
+      await worker.close();
+    });
+
+    it("should emit failed with permanent: true when PermanentJobError is thrown directly (push model)", async () => {
+      let capturedHandler: ((job: Job) => Promise<void>) | null = null;
+
+      mockProvider.process = vi.fn((handler) => {
+        capturedHandler = handler as (job: Job) => Promise<void>;
+        return vi.fn();
+      });
+
+      // handler throws PermanentJobError directly (not via Result.err)
+      handlerSpy.mockRejectedValueOnce(
+        new PermanentJobError("Invalid data"),
+      );
+
+      const worker = new Worker("test-queue", handler, {
+        provider: mockProvider,
+        pollInterval: 10,
+        errorBackoff: 100,
+      });
+
+      const failedEvents: FailedEventPayload[] = [];
+      const retryingEvents: unknown[] = [];
+      worker.on("failed", (payload) => {
+        failedEvents.push(payload);
+      });
+      worker.on("job.retrying", (payload) => {
+        retryingEvents.push(payload);
+      });
+
+      worker.start();
+
+      const job: Job<unknown> = {
+        id: "job-2",
+        name: "test-job",
+        queueName: "test-queue",
+        data: {},
+        status: "active",
+        attempts: 0,
+        maxAttempts: 3,
+        createdAt: new Date(),
+      };
+
+      // should throw so BullMQ gets the error
+      await expect(capturedHandler!(job)).rejects.toThrow("Invalid data");
+
+      expect(failedEvents).toHaveLength(1);
+      expect(failedEvents[0]).toMatchObject({
+        jobId: "job-2",
+        error: "Invalid data",
+        willRetry: false,
+        permanent: true,
+      });
+
+      // should NOT emit job.retrying
+      expect(retryingEvents).toHaveLength(0);
+
+      await worker.close();
+    });
+
+    it("should emit failed with permanent: true when PermanentJobError is returned via Result.err (push model)", async () => {
+      let capturedHandler: ((job: Job) => Promise<void>) | null = null;
+
+      mockProvider.process = vi.fn((handler) => {
+        capturedHandler = handler as (job: Job) => Promise<void>;
+        return vi.fn();
+      });
+
+      // handler returns Result.err(PermanentJobError) instead of throwing
+      handlerSpy.mockResolvedValueOnce(
+        Result.err(new PermanentJobError("Not found")),
+      );
+
+      const worker = new Worker("test-queue", handler, {
+        provider: mockProvider,
+        pollInterval: 10,
+        errorBackoff: 100,
+      });
+
+      const failedEvents: FailedEventPayload[] = [];
+      const retryingEvents: unknown[] = [];
+      worker.on("failed", (payload) => {
+        failedEvents.push(payload);
+      });
+      worker.on("job.retrying", (payload) => {
+        retryingEvents.push(payload);
+      });
+
+      worker.start();
+
+      const job: Job<unknown> = {
+        id: "job-result-err",
+        name: "test-job",
+        queueName: "test-queue",
+        data: {},
+        status: "active",
+        attempts: 0,
+        maxAttempts: 3,
+        createdAt: new Date(),
+      };
+
+      // should throw so BullMQ gets the error
+      await expect(capturedHandler!(job)).rejects.toThrow("Not found");
+
+      expect(failedEvents).toHaveLength(1);
+      expect(failedEvents[0]).toMatchObject({
+        jobId: "job-result-err",
+        error: "Not found",
+        errorType: "PermanentJobError",
+        willRetry: false,
+        permanent: true,
+      });
+
+      // should NOT emit job.retrying for permanent errors
+      expect(retryingEvents).toHaveLength(0);
+
+      await worker.close();
+    });
+
+    it("should emit failed with permanent: false for regular Error (push model)", async () => {
+      let capturedHandler: ((job: Job) => Promise<void>) | null = null;
+
+      mockProvider.process = vi.fn((handler) => {
+        capturedHandler = handler as (job: Job) => Promise<void>;
+        return vi.fn();
+      });
+
+      handlerSpy.mockResolvedValueOnce(
+        Result.err(new Error("Network timeout")),
+      );
+
+      const worker = new Worker("test-queue", handler, {
+        provider: mockProvider,
+        pollInterval: 10,
+        errorBackoff: 100,
+      });
+
+      const failedEvents: FailedEventPayload[] = [];
+      const retryingEvents: unknown[] = [];
+      worker.on("failed", (payload) => {
+        failedEvents.push(payload);
+      });
+      worker.on("job.retrying", (payload) => {
+        retryingEvents.push(payload);
+      });
+
+      worker.start();
+
+      const job: Job<unknown> = {
+        id: "job-3",
+        name: "test-job",
+        queueName: "test-queue",
+        data: {},
+        status: "active",
+        attempts: 0,
+        maxAttempts: 3,
+        createdAt: new Date(),
+      };
+
+      await expect(capturedHandler!(job)).rejects.toThrow("Network timeout");
+
+      expect(failedEvents).toHaveLength(1);
+      expect(failedEvents[0]).toMatchObject({
+        jobId: "job-3",
+        error: "Network timeout",
+        willRetry: true,
+        permanent: false,
+      });
+
+      // SHOULD emit job.retrying for regular errors
+      expect(retryingEvents).toHaveLength(1);
 
       await worker.close();
     });

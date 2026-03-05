@@ -14,6 +14,7 @@ import type {
   QueueError,
   WorkerOptions,
 } from "../core/types.mjs";
+import { PermanentJobError } from "../core/errors.mjs";
 import type { IBullMQWorkerExtensions } from "../providers/bullmq/bullmq-worker-extensions.interface.mjs";
 import type {
   IProviderFactory,
@@ -445,12 +446,13 @@ export class Worker<T = unknown> extends TypedEventEmitter {
         attempts: job.attempts,
         status: job.status,
         duration: Date.now() - startTime,
-        willRetry: job.attempts < job.maxAttempts,
+        willRetry: !(errorObj instanceof PermanentJobError) && job.attempts < job.maxAttempts,
         structuredError: error as QueueError | Error,
+        permanent: errorObj instanceof PermanentJobError,
       });
 
       // emit job.retrying if the job will be retried
-      if (job.attempts < job.maxAttempts) {
+      if (!(errorObj instanceof PermanentJobError) && job.attempts < job.maxAttempts) {
         this.emit("job.retrying", {
           jobId: job.id,
           queueName: this.queueName,

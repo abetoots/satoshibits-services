@@ -185,7 +185,7 @@ emailWorker.on('completed', (payload) => {
 
 emailWorker.on('failed', (payload) => {
   console.error(`❌ Job ${payload.jobId} failed: ${payload.error}`);
-  console.log(`Will retry: ${payload.willRetry}`);
+  console.log(`Will retry: ${payload.willRetry}, permanent: ${payload.permanent}`);
 });
 
 emailWorker.on('job.retrying', (payload) => {
@@ -222,19 +222,18 @@ These are **your responsibility**. The library provides hooks (events), but you 
 
 **Example: Error Classification**
 ```typescript
+import { PermanentJobError } from '@satoshibits/queue';
+
 const worker = new Worker('payments', async (data, job) => {
   try {
     await processPayment(data);
     return Result.ok(undefined);
   } catch (error) {
     // YOU classify the error
-    if (error.code === 'RATE_LIMIT') {
-      throw error; // transient → retry
-    } else if (error.code === 'INVALID_CARD') {
-      logger.error('Permanent failure', { jobId: job.id, error });
-      return Result.ok(undefined); // permanent → don't retry, mark complete
+    if (error.code === 'INVALID_CARD') {
+      throw new PermanentJobError(`Invalid card: ${error.message}`); // permanent → skip retries
     }
-    throw error; // unknown → retry
+    throw error; // transient or unknown → retry
   }
 });
 
@@ -341,32 +340,35 @@ const worker = new Worker('payments', async (data) => {
 
 If the customer's card is permanently invalid, retrying 3 times accomplishes nothing. You burn resources and delay the inevitable failure.
 
-**Solution: Classify Errors**
+**Solution: Use `PermanentJobError`**
 ```typescript
-// ✅ GOOD: Classify errors
+import { PermanentJobError } from '@satoshibits/queue';
+
+// ✅ GOOD: Classify errors with PermanentJobError
 const worker = new Worker('payments', async (data, job) => {
   try {
     await chargeCustomer(data.cardId);
     return Result.ok(undefined);
   } catch (error) {
-    // permanent errors - don't retry
+    // permanent errors - skip all retries immediately
     if (error.code === 'CARD_INVALID' || error.code === 'INSUFFICIENT_FUNDS') {
-      logger.error('Permanent payment failure', { jobId: job.id, error });
-      return Result.ok(undefined); // mark complete, don't retry
+      throw new PermanentJobError(`Permanent payment failure: ${error.message}`);
     }
 
-    // transient errors - retry
-    if (error.code === 'NETWORK_ERROR' || error.code === 'SERVICE_UNAVAILABLE') {
-      throw error; // let provider retry
-    }
-
-    // unknown error - retry to be safe
+    // transient or unknown errors - let provider retry
     throw error;
   }
 });
 
 await worker.start();
 ```
+
+When you throw a `PermanentJobError`, the Worker:
+1. Detects it via `instanceof PermanentJobError`
+2. Emits a `failed` event with `permanent: true` and `willRetry: false`
+3. Tells the provider to skip all remaining retries (BullMQ translates to `UnrecoverableError`)
+
+> **Anti-pattern warning:** Don't use `Result.ok(undefined)` to handle permanent errors. While it prevents retries, it marks the job as *completed* — hiding the failure from DLQ monitoring, metrics, and `failed` event listeners. Use `PermanentJobError` instead so the job is correctly marked as *failed*.
 
 **Alternative: Using `QueueError` with `retryable: false`**
 
@@ -604,9 +606,14 @@ worker.on('failed', (payload) => {
   logger.error('Job failed', {
     jobId: payload.jobId,
     error: payload.error,
-    willRetry: payload.willRetry
+    willRetry: payload.willRetry,
+    permanent: payload.permanent,
   });
-  metrics.recordJobFailure();
+  if (payload.permanent) {
+    metrics.recordPermanentFailure();
+  } else {
+    metrics.recordJobFailure();
+  }
 });
 
 worker.on('job.retrying', (payload) => {
@@ -665,7 +672,7 @@ await worker.start();
 
 Before going to production, verify:
 
-- [ ] **Error Classification**: Distinguish transient from permanent errors
+- [ ] **Error Classification**: Use `PermanentJobError` for non-retryable errors, throw plain errors for transient
 - [ ] **Graceful Shutdown**: Implement `SIGTERM` handler with `worker.close()`
 - [ ] **DLQ Monitoring**: Check dead letter queue regularly
 - [ ] **Idempotency**: Jobs can run multiple times safely
@@ -731,7 +738,7 @@ emailWorker.on('completed', (payload) => {
 
 emailWorker.on('failed', (payload) => {
   console.error(`❌ Job ${payload.jobId} failed: ${payload.error}`);
-  console.log(`Will retry: ${payload.willRetry}`);
+  console.log(`Will retry: ${payload.willRetry}, permanent: ${payload.permanent}`);
 });
 
 // ========================================
@@ -1014,7 +1021,66 @@ await worker.start();
   - `worker.on('processor.shutting_down', ...)` - Worker is shutting down
   - `worker.on('processor.shutdown_timeout', ...)` - Graceful shutdown timeout exceeded
 
-### 3. TypeScript Support
+### 3. Error Classes
+
+The library provides error classes for explicit error classification in job handlers:
+
+```typescript
+import { PermanentJobError, TransientJobError } from '@satoshibits/queue';
+```
+
+**`PermanentJobError`** — Throw when an error will never succeed on retry:
+- Resource not found (404)
+- Validation errors (invalid input data)
+- Business rule violations (order already fulfilled)
+- Missing required configuration
+
+```typescript
+const worker = new Worker('orders', async (data, job) => {
+  const order = await getOrder(data.orderId);
+  if (!order) {
+    throw new PermanentJobError(`Order not found: ${data.orderId}`);
+  }
+  // ...
+});
+```
+
+**`TransientJobError`** — Optional. Explicitly marks errors as retryable. Any non-`PermanentJobError` throw is treated as transient by default, so this is only needed when you want to be explicit:
+
+```typescript
+if (apiResponse.status === 503) {
+  throw new TransientJobError('API temporarily unavailable');
+}
+```
+
+**How it works internally:**
+
+```
+throw PermanentJobError
+  → Worker detects via instanceof
+  → Emits failed event with { permanent: true, willRetry: false }
+  → Provider skips all remaining retries
+    (BullMQ: translates to UnrecoverableError)
+```
+
+The `failed` event payload includes a `permanent` field so your event handlers can differentiate:
+
+```typescript
+worker.on('failed', (payload) => {
+  if (payload.permanent) {
+    // non-retryable error — alert, move to DLQ review, etc.
+    alertOps('Permanent job failure', { jobId: payload.jobId, error: payload.error });
+  } else if (!payload.willRetry) {
+    // retries exhausted — transient error that never recovered
+    alertOps('Job retries exhausted', { jobId: payload.jobId });
+  }
+  // else: transient error, will retry automatically
+});
+```
+
+> **Anti-pattern:** Using `Result.ok(undefined)` for permanent errors marks the job as *completed*, hiding failures from DLQ monitoring, metrics, and `failed` event listeners. Always use `PermanentJobError` instead.
+
+### 4. TypeScript Support
 
 Full type safety with generics:
 
@@ -1090,7 +1156,7 @@ const worker = new Worker('payments', async (data, job) => {
 });
 ```
 
-### 4. Escape Hatch
+### 5. Escape Hatch
 
 Access provider-specific features when needed:
 
@@ -1112,7 +1178,7 @@ await queue.add('send-email', data, {
 });
 ```
 
-### 5. Provider-Specific Namespaces
+### 6. Provider-Specific Namespaces
 
 For advanced provider-specific features that don't exist across all providers, use the typed namespace pattern:
 
@@ -1866,6 +1932,8 @@ await dlqWorker.start();
 
 **Prevention**:
 ```typescript
+import { PermanentJobError } from '@satoshibits/queue';
+
 const worker = new Worker('orders', async (data, job) => {
   try {
     await processJob(data);
@@ -1874,11 +1942,9 @@ const worker = new Worker('orders', async (data, job) => {
     // classify errors
     if (isTransientError(error)) {
       throw error;  // let provider retry
-    } else {
-      // permanent failure - log and complete to avoid retries
-      logger.error('Permanent failure', { jobId: job.id, error });
-      return Result.ok(undefined); // mark complete, don't retry
     }
+    // permanent failure - throw PermanentJobError to skip retries and land in DLQ
+    throw new PermanentJobError(`Permanent failure: ${error.message}`);
   }
 });
 

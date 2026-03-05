@@ -11,6 +11,8 @@ import { fail } from "node:assert";
 import type { Job } from "../../core/types.mjs";
 import type { IQueueProvider } from "../provider.interface.mjs";
 
+import { PermanentJobError } from "../../core/errors.mjs";
+
 import { createProviderContractTests } from "../__shared__/provider-contract.suite.mjs";
 import { MemoryProvider } from "./memory.provider.mjs";
 
@@ -741,6 +743,48 @@ describe("MemoryProvider", () => {
         message: "Invalid data - cannot be retried",
         retryable: false as const,
       };
+
+      const result = await boundProvider.nack?.(
+        fetchResult.data[0]!,
+        permanentError,
+      );
+      expect(result?.success).toBe(true);
+
+      // job should be failed immediately, not requeued
+      const getResult = await boundProvider.getJob("job-1");
+      expect(getResult.success).toBe(true);
+      if (!getResult.success) fail("Expected success");
+      // job removed (default removeOnFail: true) after permanent failure
+      expect(getResult.data).toBeNull();
+
+      // failed count should be incremented
+      const statsResult = await boundProvider.getStats();
+      expect(statsResult.success).toBe(true);
+      if (!statsResult.success) fail("Expected success");
+      expect(statsResult.data.failed).toBe(1);
+    });
+
+    it("should skip retry and fail immediately for PermanentJobError", async () => {
+      // add job with attempts remaining
+      await boundProvider.add({
+        id: "job-1",
+        name: "test-job",
+        queueName: "test-queue",
+        data: {},
+        status: "waiting",
+        attempts: 0,
+        maxAttempts: 5, // plenty of retries remaining
+        createdAt: new Date(),
+      });
+
+      const fetchResult = await boundProvider.fetch?.(1);
+      expect(fetchResult?.success).toBe(true);
+      if (!fetchResult?.success) fail("Expected fetch success");
+
+      // signal permanent failure with PermanentJobError
+      const permanentError = new PermanentJobError(
+        "Resource not found - cannot be retried",
+      );
 
       const result = await boundProvider.nack?.(
         fetchResult.data[0]!,
