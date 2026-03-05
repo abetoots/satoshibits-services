@@ -1,5 +1,11 @@
 # @satoshibits/queue
 
+## 3.1.0
+
+### Minor Changes
+
+- 03daef9: adds explicit permanent error handling for jobs
+
 ## 3.0.0
 
 ### Patch Changes
