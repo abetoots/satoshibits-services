@@ -915,6 +915,10 @@ export class FetchSpanExporter implements SpanExporter {
     return { stringValue: String(value) };
   }
 
+  async forceFlush(): Promise<void> {
+    return Promise.resolve();
+  }
+
   async shutdown(): Promise<void> {
     this._shutdown = true;
     return Promise.resolve();
@@ -1381,6 +1385,10 @@ export class FetchLogExporter implements LogRecordExporter {
     } catch {
       return false;
     }
+  }
+
+  async forceFlush(): Promise<void> {
+    return Promise.resolve();
   }
 
   async shutdown(): Promise<void> {
