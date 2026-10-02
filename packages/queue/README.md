@@ -1078,7 +1078,13 @@ worker.on('failed', (payload) => {
 });
 ```
 
-`willRetry` is `false` on the last attempt of the job's budget (`attempts` counts the attempts made before the current one, so the last attempt of `maxAttempts: 3` runs with `attempts: 2`), and `job.retrying` is emitted only for a retry that will actually run. Before 3.2.0 the last attempt still reported `willRetry: true`.
+`willRetry` is the worker's prediction from the job's own budget: `false` for a `PermanentJobError`, and `false` on the last attempt (`attempts` counts the attempts made before the current one, so the last attempt of `maxAttempts: 3` runs with `attempts: 2`). `job.retrying` is emitted only when `willRetry` is `true`. Before 3.2.0 the last attempt still reported `willRetry: true`.
+
+It is a prediction, not a confirmation, and the provider has the last word:
+
+- **The event is emitted before the provider records the failure.** If that write fails (for example a lost lock), the job can run again after a `willRetry: false` event, and a job the provider fails without calling your handler (a stalled job past its limit) emits no `failed` event at all. Make the handler for "retries exhausted" idempotent and keep a reconciliation path.
+- **SQS retries by its redrive policy**, not by `maxAttempts`: a message is redelivered until the queue's `maxReceiveCount`, whatever `willRetry` said. Keep the two equal.
+- **Only `PermanentJobError` is reported as permanent.** An error carrying `retryable: false` stops retries in the memory provider and in BullMQ's pull model, and BullMQ's own `UnrecoverableError` stops them in BullMQ, while the event still says `permanent: false` and, before the last attempt, `willRetry: true`. Throw `PermanentJobError` when a consumer acts on this event.
 
 > **Anti-pattern:** Using `Result.ok(undefined)` for permanent errors marks the job as *completed*, hiding failures from DLQ monitoring, metrics, and `failed` event listeners. Always use `PermanentJobError` instead.
 
