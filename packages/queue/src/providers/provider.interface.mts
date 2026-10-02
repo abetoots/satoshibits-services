@@ -62,6 +62,13 @@ export interface IQueueProvider {
    *
    * Handler receives ActiveJob with runtime metadata (receiptHandle, lockToken, etc.)
    *
+   * The handler rejects with the job handler's original error: an `Error`, or
+   * a structured object such as a `QueueError` (only a thrown primitive is
+   * wrapped in an `Error`). The provider applies the permanence rule to it
+   * (`isPermanentError`: a `PermanentJobError`, or `retryable: false`) and
+   * skips the retries for a permanent error. A backend that requires `Error`
+   * objects must convert at this boundary.
+   *
    * @param handler Function to process each job
    * @param options Processing options (concurrency, error callback, etc.)
    * @returns Shutdown function to stop processing
@@ -108,12 +115,13 @@ export interface IQueueProvider {
    * Negative acknowledge - job failed (pull model)
    * Provider handles retry logic, DLQ movement, etc.
    *
-   * If error has `retryable: false` (e.g., QueueError with retryable flag),
-   * provider should skip retry and move job directly to failed state.
+   * If the error is permanent (`isPermanentError`: a `PermanentJobError`, or an
+   * `Error` or structured object carrying `retryable: false`), the provider
+   * should skip retry and move job directly to failed state.
    * This allows handlers to signal permanent failures that shouldn't be retried.
    *
    * @param job ActiveJob with runtime metadata (receiptHandle, lockToken, etc.)
-   * @param error Error that occurred. If error has `retryable: false`, skip retry.
+   * @param error The job handler's original error. If it is permanent, skip retry.
    * @returns Result indicating success or error
    */
   nack?<T>(job: ActiveJob<T>, error: Error | QueueError): Promise<Result<void, QueueError>>;

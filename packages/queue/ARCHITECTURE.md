@@ -281,36 +281,38 @@ When a job fails processing, calling `nack(job, error)` signals the failure to t
 
 **Permanent Error Signaling**:
 
-If the error has `retryable: false` (e.g., a `QueueError`), the provider will skip retry logic and move the job directly to failed state:
+If the error is permanent, the provider will skip retry logic and move the job directly to failed state. One rule defines "permanent" for the worker's `failed` event and for every provider that applies it: a `PermanentJobError`, or an error carrying `retryable === false` (an `Error` instance with that property, or a plain structured object such as a `QueueError`). It lives in `isPermanentError` in [src/core/errors.mts](./src/core/errors.mts).
 
 ```typescript
 // signature accepts Error or QueueError
 nack<T>(job: ActiveJob<T>, error: Error | QueueError): Promise<Result<void, QueueError>>
 
 // provider checks for permanent failure
-const isPermanentFailure = 'retryable' in error && error.retryable === false;
-if (isPermanentFailure) {
+if (isPermanentError(error)) {
   // skip retry, move directly to failed
 }
 ```
 
 This allows handlers to signal "this failed permanently, don't retry" for errors like invalid data, missing resources, or business rule violations.
 
+The worker hands the provider the handler's original error, in the pull model through `nack()` and in the push model as the rejection of the handler given to `process()`. That value is an `Error` or a structured object; only a thrown primitive is wrapped in an `Error`. A push provider whose backend requires `Error` objects converts at its own boundary: BullMQ's processor translates a permanent error to `UnrecoverableError` and wraps any other non-`Error`, keeping the original as `cause`.
+
 **Provider-Specific Behavior**:
 
 **BullMQ**:
 - Increments the job's attempt counter
-- If `retryable: false`: Wraps error in `UnrecoverableError`, skips retry
+- If permanent (`isPermanentError`): Wraps error in `UnrecoverableError`, skips retry (pull `nack()` and push processor alike)
 - If `attempts < maxAttempts`: Re-queues job with backoff delay
 - If `attempts >= maxAttempts`: Moves job to failed queue (DLQ)
 
 **MemoryProvider**:
 - Increments the job's attempt counter
-- If `retryable: false`: Skips retry, moves directly to failed state
+- If permanent (`isPermanentError`): Skips retry, moves directly to failed state
 - If `attempts < maxAttempts`: Re-queues job for retry
 - If `attempts >= maxAttempts`: Marks job as failed
 
 **SQS**:
+- Does not apply the permanence rule: the error is ignored and the redrive policy decides
 - Returns message to queue (makes it visible again)
 - SQS tracks receive count internally
 - If `receiveCount >= maxReceiveCount`: Moves to configured Dead Letter Queue
@@ -319,7 +321,7 @@ This allows handlers to signal "this failed permanently, don't retry" for errors
 - Sends `nack` with `requeue=true` for retryable failures
 - If max retries exceeded (tracked via headers): Routes to dead letter exchange
 
-**Key Principle**: The library does NOT implement retry logic. It delegates to the provider's battle-tested native implementation. The `retryable` flag provides a cross-provider way to signal permanent failures.
+**Key Principle**: The library does NOT implement retry logic. It delegates to the provider's battle-tested native implementation. The permanence rule (`PermanentJobError`, or the `retryable: false` flag) provides a cross-provider way to signal permanent failures, in the providers that can honour it (memory, BullMQ).
 
 ---
 

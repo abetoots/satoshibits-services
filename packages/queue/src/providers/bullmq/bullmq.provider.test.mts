@@ -614,6 +614,86 @@ describe("BullMQProvider", () => {
       );
     });
 
+    // what nack() hands BullMQ's moveToFailed for a given failure
+    async function errorMovedToFailed(failure: unknown): Promise<unknown> {
+      const queueProvider = provider.forQueue("test-queue");
+      mockQueue.getJob.mockResolvedValue(mockBullJob);
+
+      const job: ActiveJob<unknown> = {
+        id: "job-1",
+        name: "test-job",
+        queueName: "test-queue",
+        data: {},
+        status: "active",
+        attempts: 0,
+        maxAttempts: 3,
+        createdAt: new Date(),
+        providerMetadata: { bullmq: { token: "test-token-456" } },
+      };
+
+      const result = await queueProvider.nack?.(job, failure as Error);
+      expect(result?.success).toBe(true);
+
+      expect(mockBullJob.moveToFailed).toHaveBeenCalledTimes(1);
+      const [moved, token] = mockBullJob.moveToFailed.mock.calls[0] as [
+        unknown,
+        string,
+      ];
+      expect(token).toBe("test-token-456");
+      return moved;
+    }
+
+    it.each([
+      {
+        label: "a PermanentJobError",
+        makeError: (): unknown => new PermanentJobError("Campaign not found"),
+        message: "Campaign not found",
+      },
+      {
+        label: "an Error instance carrying retryable: false",
+        makeError: (): unknown =>
+          Object.assign(new Error("flagged error"), { retryable: false }),
+        message: "flagged error",
+      },
+      {
+        label: "a plain object carrying retryable: false",
+        makeError: (): unknown => ({
+          type: "DataError",
+          code: "VALIDATION",
+          message: "plain object error",
+          retryable: false,
+        }),
+        message: "plain object error",
+      },
+    ])(
+      "should move $label to failed as UnrecoverableError with the original as cause (nack)",
+      async ({ makeError, message }) => {
+        const original = makeError();
+
+        const moved = await errorMovedToFailed(original);
+
+        expect(moved).toBeInstanceOf(UnrecoverableError);
+        expect((moved as Error).message).toBe(message);
+        expect((moved as Error).cause).toBe(original);
+      },
+    );
+
+    it("should move a plain object that is not permanent to failed as a retryable Error (nack)", async () => {
+      const original = {
+        type: "RuntimeError",
+        code: "TIMEOUT",
+        message: "retryable object error",
+        retryable: true,
+      };
+
+      const moved = await errorMovedToFailed(original);
+
+      expect(moved).toBeInstanceOf(Error);
+      expect(moved).not.toBeInstanceOf(UnrecoverableError);
+      expect((moved as Error).message).toBe("retryable object error");
+      expect((moved as Error).cause).toBe(original);
+    });
+
     it("should fetch multiple jobs atomically", async () => {
       const queueProvider = provider.forQueue("test-queue");
 
@@ -872,6 +952,119 @@ describe("BullMQProvider", () => {
       //@ts-expect-error testing error path
       const thrown = await bullmqHandler!(bullJob).catch((e: unknown) => e);
       expect(thrown).not.toBeInstanceOf(UnrecoverableError);
+    });
+
+    // run a failing handler through the processor the provider gives BullMQ
+    // and return what BullMQ would catch
+    async function rejectionSeenByBullMQ(
+      handlerError: unknown,
+    ): Promise<unknown> {
+      const queueProvider = provider.forQueue("test-queue");
+
+      let bullmqHandler: Processor<unknown, unknown, string> | undefined;
+      const { Worker } = await import("bullmq");
+      vi.mocked(Worker).mockImplementation((_queueName, handler) => {
+        bullmqHandler = handler as Processor<unknown, unknown, string>;
+        return mockWorker as unknown as import("bullmq").Worker<
+          unknown,
+          unknown,
+          string
+        >;
+      });
+
+      const userHandler = vi.fn().mockRejectedValue(handlerError);
+      queueProvider.process?.(userHandler, { concurrency: 1 });
+
+      expect(bullmqHandler).toBeDefined();
+      const bullJob = { ...mockBullJob, data: { _jobData: { foo: "bar" } } };
+
+      //@ts-expect-error a mock stands in for the BullMQ job
+      return bullmqHandler!(bullJob).then(
+        () => {
+          throw new Error("the processor should have rejected");
+        },
+        (e: unknown) => e,
+      );
+    }
+
+    it.each([
+      {
+        label: "a PermanentJobError",
+        makeError: (): unknown => new PermanentJobError("Campaign not found"),
+        message: "Campaign not found",
+      },
+      {
+        label: "an Error instance carrying retryable: false",
+        makeError: (): unknown =>
+          Object.assign(new Error("flagged error"), { retryable: false }),
+        message: "flagged error",
+      },
+      {
+        label: "a plain object carrying retryable: false",
+        makeError: (): unknown => ({
+          type: "DataError",
+          code: "VALIDATION",
+          message: "plain object error",
+          retryable: false,
+        }),
+        message: "plain object error",
+      },
+    ])(
+      "should translate $label to UnrecoverableError with the original as cause (push)",
+      async ({ makeError, message }) => {
+        const original = makeError();
+
+        const thrown = await rejectionSeenByBullMQ(original);
+
+        expect(thrown).toBeInstanceOf(UnrecoverableError);
+        expect((thrown as Error).message).toBe(message);
+        expect((thrown as Error).cause).toBe(original);
+      },
+    );
+
+    // BullMQ reads `message` and `stack` off what the processor throws: a
+    // plain object must never reach it, permanent or not
+    it.each([
+      {
+        label: "a plain object carrying retryable: true",
+        handlerError: {
+          type: "RuntimeError",
+          code: "TIMEOUT",
+          message: "retryable object error",
+          retryable: true,
+        } as unknown,
+        message: "retryable object error",
+      },
+      {
+        label: "a plain object without the flag",
+        handlerError: { message: "bare object error" } as unknown,
+        message: "bare object error",
+      },
+      {
+        label: "a string",
+        handlerError: "a thrown string" as unknown,
+        message: "a thrown string",
+      },
+    ])(
+      "should wrap $label in a retryable Error, never throw it as is (push)",
+      async ({ handlerError, message }) => {
+        const thrown = await rejectionSeenByBullMQ(handlerError);
+
+        expect(thrown).toBeInstanceOf(Error);
+        expect(thrown).not.toBeInstanceOf(UnrecoverableError);
+        expect((thrown as Error).message).toBe(message);
+        expect((thrown as Error).cause).toBe(handlerError);
+      },
+    );
+
+    it("should throw an Error that is not permanent as the same instance (push)", async () => {
+      const original = Object.assign(new Error("Network timeout"), {
+        retryable: true,
+      });
+
+      const thrown = await rejectionSeenByBullMQ(original);
+
+      expect(thrown).toBe(original);
     });
   });
 

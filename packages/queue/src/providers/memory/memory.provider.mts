@@ -24,7 +24,7 @@ import type {
   IQueueProvider,
 } from "../provider.interface.mjs";
 
-import { PermanentJobError } from "../../core/errors.mjs";
+import { getErrorMessage, isPermanentError } from "../../core/errors.mjs";
 import { QueueErrorFactory } from "../../core/utils.mjs";
 
 /**
@@ -282,7 +282,8 @@ export class MemoryProvider implements IProviderFactory {
    * Implements retry logic: requeues job if attempts < maxAttempts
    * Conditionally removes job on final failure based on removeOnFail option
    *
-   * If error has `retryable: false`, skips retry and moves directly to failed state.
+   * If the error is permanent (`isPermanentError`: a `PermanentJobError`, or
+   * `retryable: false`), skips retry and moves directly to failed state.
    * This allows handlers to signal permanent failures that shouldn't be retried.
    */
   // eslint-disable-next-line @typescript-eslint/require-await -- interface requires Promise return type
@@ -305,9 +306,8 @@ export class MemoryProvider implements IProviderFactory {
     const newAttempts = storedJob.attempts + 1;
 
     // check if error signals permanent failure
-    const isPermanentFailure =
-      error instanceof PermanentJobError ||
-      ("retryable" in error && error.retryable === false);
+    const isPermanentFailure = isPermanentError(error);
+    const errorMessage = getErrorMessage(error);
 
     if (!isPermanentFailure && newAttempts < storedJob.maxAttempts) {
       // requeue for retry (only if retryable and attempts remaining)
@@ -315,17 +315,17 @@ export class MemoryProvider implements IProviderFactory {
         ...storedJob,
         status: "waiting" as const,
         attempts: newAttempts,
-        error: error.message,
+        error: errorMessage,
       };
       queue.jobs.set(jobId, retriedJob);
     } else {
       // final failure - mark as failed
-      // either: permanent error (retryable: false), or exhausted attempts
+      // either: permanent error (see isPermanentError), or exhausted attempts
       const failedJob = {
         ...storedJob,
         status: "failed" as const,
         failedAt: new Date(),
-        error: error.message,
+        error: errorMessage,
         attempts: newAttempts,
       };
       queue.jobs.set(jobId, failedJob);

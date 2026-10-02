@@ -14,7 +14,7 @@ import type {
   QueueError,
   WorkerOptions,
 } from "../core/types.mjs";
-import { PermanentJobError } from "../core/errors.mjs";
+import { getErrorMessage, isPermanentError } from "../core/errors.mjs";
 import type { IBullMQWorkerExtensions } from "../providers/bullmq/bullmq-worker-extensions.interface.mjs";
 import type {
   IProviderFactory,
@@ -389,7 +389,7 @@ export class Worker<T = unknown> extends TypedEventEmitter {
     job: ActiveJob<T>,
     callbacks: {
       onSuccess?: (result: unknown) => Promise<void>;
-      onFailure?: (error: Error) => Promise<void>;
+      onFailure?: (error: Error | QueueError) => Promise<void>;
     },
   ): Promise<void> {
     this.activeJobs++;
@@ -430,25 +430,33 @@ export class Worker<T = unknown> extends TypedEventEmitter {
         metadata: job.metadata,
       });
     } catch (error: unknown) {
-      const errorObj =
-        error instanceof Error ? error : new Error(String(error));
+      // the provider decides the retry from this value, so it gets the
+      // original with its `retryable` flag intact: an Error as is, a
+      // structured object (QueueError) as is. only a primitive, which can
+      // carry neither a flag nor a message, is wrapped
+      const failure: Error | QueueError =
+        error instanceof Error
+          ? error
+          : typeof error === "object" && error !== null
+            ? (error as QueueError)
+            : new Error(String(error));
 
       // failure callback (e.g., nack in pull model)
       if (callbacks.onFailure) {
-        await callbacks.onFailure(errorObj);
+        await callbacks.onFailure(failure);
       }
 
       // `job.attempts` counts the attempts made before this one, so this is
       // attempt `job.attempts + 1`: the last attempt of the budget is not
       // retried
-      const permanent = errorObj instanceof PermanentJobError;
+      const permanent = isPermanentError(failure);
       const willRetry = !permanent && job.attempts + 1 < job.maxAttempts;
 
       this.emit("failed", {
         jobId: job.id,
         queueName: this.queueName,
-        error: errorObj.message,
-        errorType: errorObj.name || "Error",
+        error: getErrorMessage(failure),
+        errorType: (failure instanceof Error && failure.name) || "Error",
         attempts: job.attempts,
         status: job.status,
         duration: Date.now() - startTime,
@@ -468,8 +476,10 @@ export class Worker<T = unknown> extends TypedEventEmitter {
         });
       }
 
-      // re-throw for caller to handle (important for push model)
-      throw errorObj;
+      // re-throw for caller to handle (important for push model): the
+      // provider applies the permanence rule to what it catches here
+      // eslint-disable-next-line @typescript-eslint/only-throw-error -- a structured error keeps its fields for the provider
+      throw failure;
     } finally {
       this.activeJobs--;
     }
