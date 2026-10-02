@@ -19,9 +19,14 @@ import {
 } from "bullmq";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Job, ActiveJob } from "../../core/types.mjs";
+import type { FailedEventPayload } from "../../core/events.mjs";
+import type { Job, ActiveJob, JobHandler } from "../../core/types.mjs";
 
-import { PermanentJobError } from "../../core/errors.mjs";
+import { Result } from "@satoshibits/functional";
+
+import { Worker } from "../../api/worker.mjs";
+import { isPermanentError, PermanentJobError } from "../../core/errors.mjs";
+import { MemoryProvider } from "../memory/memory.provider.mjs";
 import {
   createBullMQMocks,
   setupBullMQMockDefaults,
@@ -694,6 +699,51 @@ describe("BullMQProvider", () => {
       expect((moved as Error).cause).toBe(original);
     });
 
+    // nack() decides alone when it is called without a Worker: inspecting
+    // the failure must not throw, or the job is left without a transition
+    it.each([
+      {
+        label: "a throwing retryable getter",
+        make: (): unknown => ({
+          get retryable(): boolean {
+            // eslint-disable-next-line @typescript-eslint/only-throw-error -- the review's counterexample throws a string
+            throw "inspection failed";
+          },
+        }),
+        unrecoverable: false,
+      },
+      {
+        label: "retryable: false with a throwing message getter",
+        make: (): unknown => ({
+          retryable: false,
+          get message(): string {
+            // eslint-disable-next-line @typescript-eslint/only-throw-error -- the review's counterexample throws a string
+            throw "inspection failed";
+          },
+        }),
+        unrecoverable: true,
+      },
+      {
+        label: "an object with no prototype",
+        make: (): unknown => Object.create(null) as unknown,
+        unrecoverable: false,
+      },
+    ])(
+      "should move $label to failed as a readable Error (nack)",
+      async ({ make, unrecoverable }) => {
+        const original = make();
+
+        const moved = await errorMovedToFailed(original);
+
+        expect(moved instanceof Error).toBe(true);
+        expect(moved instanceof UnrecoverableError).toBe(unrecoverable);
+        expect((moved as Error).message).toBe(
+          "Unknown error (no readable message)",
+        );
+        expect(Object.is((moved as Error).cause, original)).toBe(true);
+      },
+    );
+
     it("should fetch multiple jobs atomically", async () => {
       const queueProvider = provider.forQueue("test-queue");
 
@@ -1065,6 +1115,233 @@ describe("BullMQProvider", () => {
       const thrown = await rejectionSeenByBullMQ(original);
 
       expect(thrown).toBe(original);
+    });
+
+    // BullMQ's control-flow errors are not failures: they must reach BullMQ
+    // as they are, or the native state transition is lost
+    it.each([
+      { label: "DelayedError", error: new DelayedError("moved to delayed") },
+      {
+        label: "WaitingChildrenError",
+        error: new WaitingChildrenError("waiting for children"),
+      },
+      { label: "WaitingError", error: new WaitingError("moved to wait") },
+      { label: "RateLimitError", error: new RateLimitError("rate limited") },
+      {
+        label: "UnrecoverableError",
+        error: new UnrecoverableError("thrown by the handler"),
+      },
+    ])(
+      "should throw BullMQ's own $label as the same instance (push)",
+      async ({ error }) => {
+        const thrown = await rejectionSeenByBullMQ(error);
+
+        expect(thrown).toBe(error);
+      },
+    );
+
+    // values whose inspection throws: the conversion must still hand BullMQ
+    // an Error, with the original as cause, and must not throw itself
+    const UNREADABLE = "Unknown error (no readable message)";
+    const throwingTraps: ProxyHandler<object> = {
+      get: () => {
+        throw new Error("get trap");
+      },
+      has: () => {
+        throw new Error("has trap");
+      },
+      getPrototypeOf: () => {
+        throw new Error("getPrototypeOf trap");
+      },
+      ownKeys: () => {
+        throw new Error("ownKeys trap");
+      },
+      getOwnPropertyDescriptor: () => {
+        throw new Error("getOwnPropertyDescriptor trap");
+      },
+    };
+    const hostileValues = [
+      {
+        label: "a throwing retryable getter",
+        make: (): unknown => ({
+          get retryable(): boolean {
+            // eslint-disable-next-line @typescript-eslint/only-throw-error -- the review's counterexample throws a string
+            throw "inspection failed";
+          },
+        }),
+        unrecoverable: false,
+        message: UNREADABLE,
+      },
+      {
+        label: "retryable: false with a throwing message getter",
+        make: (): unknown => ({
+          retryable: false,
+          get message(): string {
+            // eslint-disable-next-line @typescript-eslint/only-throw-error -- the review's counterexample throws a string
+            throw "inspection failed";
+          },
+        }),
+        unrecoverable: true,
+        message: UNREADABLE,
+      },
+      {
+        label: "an object with no prototype",
+        make: (): unknown => Object.create(null) as unknown,
+        unrecoverable: false,
+        message: UNREADABLE,
+      },
+      {
+        label: "a proxy whose every trap throws",
+        make: (): unknown => new Proxy({}, throwingTraps),
+        unrecoverable: false,
+        message: UNREADABLE,
+      },
+      {
+        // it passes no instanceof check and BullMQ could not read it
+        label: "a proxy over an Error whose every trap throws",
+        make: (): unknown => new Proxy(new Error("hidden"), throwingTraps),
+        unrecoverable: false,
+        message: UNREADABLE,
+      },
+      {
+        // instanceof Error holds, but BullMQ could not read its message
+        label: "an Error whose message getter throws",
+        make: (): unknown => {
+          const error = new Error("hidden");
+          Object.defineProperty(error, "message", {
+            get: () => {
+              throw new Error("message getter");
+            },
+          });
+          return error;
+        },
+        unrecoverable: false,
+        message: UNREADABLE,
+      },
+      {
+        label: "an object with no string message",
+        make: (): unknown => ({ retryable: false, code: "E_BAD" }),
+        unrecoverable: true,
+        message: '{"retryable":false,"code":"E_BAD"}',
+      },
+    ];
+
+    function expectReadableError(
+      value: unknown,
+      expected: { unrecoverable: boolean; message: string; cause: unknown },
+    ): void {
+      // real Error objects only: `instanceof` on the result is safe
+      expect(value instanceof Error).toBe(true);
+      expect(value instanceof UnrecoverableError).toBe(
+        expected.unrecoverable,
+      );
+      expect((value as Error).message).toBe(expected.message);
+      expect(typeof (value as Error).stack).toBe("string");
+      expect(Object.is((value as Error).cause, expected.cause)).toBe(true);
+    }
+
+    it.each(hostileValues)(
+      "should hand BullMQ a readable Error for $label (push)",
+      async ({ make, unrecoverable, message }) => {
+        const original = make();
+
+        const thrown = await rejectionSeenByBullMQ(original);
+
+        expectReadableError(thrown, { unrecoverable, message, cause: original });
+      },
+    );
+
+    // the conversion covers the whole processor, not only the handler call:
+    // mapping the BullMQ job awaits getState(), which can reject too
+    it.each([
+      {
+        label: "a plain object",
+        rejection: { message: "state lookup failed", retryable: true } as unknown,
+        unrecoverable: false,
+        message: "state lookup failed",
+      },
+      {
+        label: "a string",
+        rejection: "state lookup failed" as unknown,
+        unrecoverable: false,
+        message: "state lookup failed",
+      },
+      {
+        label: "an object carrying retryable: false",
+        rejection: { message: "state is gone", retryable: false } as unknown,
+        unrecoverable: true,
+        message: "state is gone",
+      },
+    ])(
+      "should hand BullMQ an Error when mapping the job rejects with $label (push)",
+      async ({ rejection, unrecoverable, message }) => {
+        const queueProvider = provider.forQueue("test-queue");
+
+        let bullmqHandler: Processor<unknown, unknown, string> | undefined;
+        const { Worker: BullWorker } = await import("bullmq");
+        vi.mocked(BullWorker).mockImplementation((_queueName, handler) => {
+          bullmqHandler = handler as Processor<unknown, unknown, string>;
+          return mockWorker as unknown as import("bullmq").Worker<
+            unknown,
+            unknown,
+            string
+          >;
+        });
+
+        const userHandler = vi.fn().mockResolvedValue(undefined);
+        queueProvider.process?.(userHandler, { concurrency: 1 });
+
+        const bullJob = {
+          ...mockBullJob,
+          getState: vi.fn().mockRejectedValue(rejection),
+        };
+
+        //@ts-expect-error a mock stands in for the BullMQ job
+        const thrown: unknown = await bullmqHandler!(bullJob).then(
+          () => {
+            throw new Error("the processor should have rejected");
+          },
+          (e: unknown) => e,
+        );
+
+        // the job never reached the handler
+        expect(userHandler).not.toHaveBeenCalled();
+        expectReadableError(thrown, {
+          unrecoverable,
+          message,
+          cause: rejection,
+        });
+      },
+    );
+
+    it("should pass an Error from mapping the job through unchanged (push)", async () => {
+      const queueProvider = provider.forQueue("test-queue");
+
+      let bullmqHandler: Processor<unknown, unknown, string> | undefined;
+      const { Worker: BullWorker } = await import("bullmq");
+      vi.mocked(BullWorker).mockImplementation((_queueName, handler) => {
+        bullmqHandler = handler as Processor<unknown, unknown, string>;
+        return mockWorker as unknown as import("bullmq").Worker<
+          unknown,
+          unknown,
+          string
+        >;
+      });
+
+      queueProvider.process?.(vi.fn(), { concurrency: 1 });
+
+      const rejection = new Error("Connection is closed.");
+      const bullJob = {
+        ...mockBullJob,
+        getState: vi.fn().mockRejectedValue(rejection),
+      };
+
+      //@ts-expect-error a mock stands in for the BullMQ job
+      const thrown: unknown = await bullmqHandler!(bullJob).catch(
+        (e: unknown) => e,
+      );
+
+      expect(thrown).toBe(rejection);
     });
   });
 
@@ -1450,7 +1727,9 @@ describe("BullMQProvider", () => {
         }
       });
 
-      it("should map lock lost errors to non-retryable RuntimeError", async () => {
+      // losing the lock says another worker has the job, not that the work
+      // can never succeed
+      it("should map lock lost errors to retryable RuntimeError", async () => {
         const queueProvider = provider.forQueue("test-queue");
 
         mockQueue.add.mockRejectedValue(new Error("Lock was lost for job"));
@@ -1474,12 +1753,14 @@ describe("BullMQProvider", () => {
           if (result.error.type === "RuntimeError") {
             expect(result.error.code).toBe("PROCESSING");
             expect(result.error.message).toContain("lock");
-            expect(result.error.retryable).toBe(false);
+            expect(result.error.retryable).toBe(true);
           }
         }
       });
 
-      it("should map Redis script errors to non-retryable RuntimeError", async () => {
+      // the match is any message naming a script: it also catches a flushed
+      // script cache or a busy server, which a retry gets past
+      it("should map Redis script errors to retryable RuntimeError", async () => {
         const queueProvider = provider.forQueue("test-queue");
 
         mockQueue.add.mockRejectedValue(new Error("Redis Lua script failed"));
@@ -1503,7 +1784,7 @@ describe("BullMQProvider", () => {
           if (result.error.type === "RuntimeError") {
             expect(result.error.code).toBe("PROCESSING");
             expect(result.error.message).toContain("script");
-            expect(result.error.retryable).toBe(false);
+            expect(result.error.retryable).toBe(true);
           }
         }
       });
@@ -1592,33 +1873,180 @@ describe("BullMQProvider", () => {
         }
       });
 
-      it("should mark unknown errors as non-retryable by default (HIGH-BQ-002 fix)", async () => {
+      // an error the adapter does not recognise is no evidence of a
+      // permanent condition. `retryable: false` makes a job that rethrows it
+      // fail on its first attempt, so the default is retryable: the job's
+      // own attempt budget bounds the retries
+      it.each([
+        { label: "an unknown error", message: "Unknown bizarre error" },
+        {
+          label: "a write against a read only replica",
+          message: "READONLY You can't write against a read only replica.",
+        },
+        {
+          label: "a Redis out of memory",
+          message: "OOM command not allowed when used memory > 'maxmemory'.",
+        },
+      ])(
+        "should mark $label as retryable by default",
+        async ({ message }) => {
+          const queueProvider = provider.forQueue("test-queue");
+
+          mockQueue.add.mockRejectedValue(new Error(message));
+
+          const job: Job<{ foo: string }> = {
+            id: "job-1",
+            name: "test-job",
+            queueName: "test-queue",
+            data: { foo: "bar" },
+            status: "waiting",
+            attempts: 0,
+            maxAttempts: 3,
+            createdAt: new Date(),
+          };
+
+          const result = await queueProvider.add(job);
+
+          expect(result.success).toBe(false);
+          if (result.success) return;
+          expect(result.error).toMatchObject({
+            type: "RuntimeError",
+            code: "PROCESSING",
+            message,
+            retryable: true,
+          });
+          expect(isPermanentError(result.error)).toBe(false);
+        },
+      );
+
+      // a provider that is shutting down cannot do it right now: nothing
+      // says the caller's work can never succeed
+      it("should mark every shutting down error as retryable", async () => {
         const queueProvider = provider.forQueue("test-queue");
+        await provider.disconnect();
 
-        // unknown error that doesn't match any specific pattern
-        mockQueue.add.mockRejectedValue(new Error("Unknown bizarre error"));
-
-        const job: Job<{ foo: string }> = {
+        const job: ActiveJob<unknown> = {
           id: "job-1",
           name: "test-job",
           queueName: "test-queue",
-          data: { foo: "bar" },
-          status: "waiting",
+          data: {},
+          status: "active",
           attempts: 0,
           maxAttempts: 3,
           createdAt: new Date(),
+          providerMetadata: { bullmq: { token: "test-token" } },
         };
 
-        const result = await queueProvider.add(job);
+        const results = {
+          add: await queueProvider.add(job),
+          fetch: await queueProvider.fetch!(1),
+          ack: await queueProvider.ack!(job),
+          nack: await queueProvider.nack!(job, new Error("failed")),
+          pause: await queueProvider.pause(),
+          resume: await queueProvider.resume(),
+          delete: await queueProvider.delete(),
+          getStats: await queueProvider.getStats(),
+          getHealth: await queueProvider.getHealth(),
+          getDLQJobs: await queueProvider.getDLQJobs!(),
+          retryJob: await queueProvider.retryJob!("job-1"),
+        };
 
-        expect(result.success).toBe(false);
-        if (!result.success) {
-          expect(result.error.type).toBe("RuntimeError");
-          if (result.error.type === "RuntimeError") {
-            expect(result.error.code).toBe("PROCESSING");
-            expect(result.error.retryable).toBe(false); // default non-retryable
-          }
+        for (const [method, result] of Object.entries(results)) {
+          expect(result.success, method).toBe(false);
+          if (result.success) continue;
+          expect(result.error, method).toMatchObject({
+            code: "SHUTDOWN",
+            retryable: true,
+          });
         }
+
+        // process() throws instead of returning a Result
+        let thrown: unknown;
+        try {
+          queueProvider.process!(vi.fn(), {});
+        } catch (error) {
+          thrown = error;
+        }
+        expect(thrown).toMatchObject({
+          message: "Provider is shutting down.",
+          retryable: true,
+        });
+      });
+
+      // the chain a consumer builds: its handler enqueues a follow-up job,
+      // the enqueue fails for a reason the adapter does not recognise, and
+      // the handler rethrows the QueueError it was given
+      it("should retry a job whose handler rethrows an unrecognised enqueue error, for its whole budget", async () => {
+        const followUps = provider.forQueue("follow-ups");
+        mockQueue.add.mockRejectedValue(
+          new Error("READONLY You can't write against a read only replica."),
+        );
+
+        const memory = new MemoryProvider();
+        const bound = memory.forQueue("parents");
+        const added = await bound.add(
+          {
+            id: "parent-1",
+            name: "parent",
+            queueName: "parents",
+            data: {},
+            status: "waiting",
+            attempts: 0,
+            maxAttempts: 3,
+            createdAt: new Date(),
+          },
+          { removeOnFail: false },
+        );
+        expect(added.success).toBe(true);
+
+        const handler = vi.fn<JobHandler<unknown>>(async () => {
+          const result = await followUps.add({
+            id: "child-1",
+            name: "child",
+            queueName: "follow-ups",
+            data: {},
+            status: "waiting",
+            attempts: 0,
+            maxAttempts: 3,
+            createdAt: new Date(),
+          });
+          // eslint-disable-next-line @typescript-eslint/only-throw-error -- what the consumer does with a failed enqueue
+          if (!result.success) throw result.error;
+          return Result.ok(undefined);
+        });
+
+        const worker = new Worker("parents", handler, {
+          provider: memory,
+          pollInterval: 5,
+          errorBackoff: 5,
+        });
+        const failedEvents: FailedEventPayload[] = [];
+        worker.on("failed", (payload) => {
+          failedEvents.push(payload);
+        });
+
+        worker.start();
+        try {
+          await vi.waitFor(async () => {
+            const stored = await bound.getJob("parent-1");
+            expect(stored.success && stored.data?.status).toBe("failed");
+          });
+        } finally {
+          await worker.close();
+          await memory.disconnect();
+        }
+
+        expect(handler).toHaveBeenCalledTimes(3);
+        expect(failedEvents.map((e) => e.permanent)).toEqual([
+          false,
+          false,
+          false,
+        ]);
+        expect(failedEvents.map((e) => e.willRetry)).toEqual([
+          true,
+          true,
+          false,
+        ]);
       });
     });
   });

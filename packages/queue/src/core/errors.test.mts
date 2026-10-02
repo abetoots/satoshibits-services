@@ -9,6 +9,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   getErrorMessage,
+  getErrorName,
+  isErrorInstance,
   isPermanentError,
   PermanentJobError,
   TransientJobError,
@@ -103,8 +105,202 @@ describe("getErrorMessage", () => {
     expect(getErrorMessage(null)).toBe("null");
   });
 
-  it("should stringify an object whose message is not a string", () => {
-    expect(getErrorMessage({ retryable: false })).toBe("[object Object]");
-    expect(getErrorMessage({ message: 42 })).toBe("[object Object]");
+  it("should keep an empty string message", () => {
+    expect(getErrorMessage(new Error(""))).toBe("");
+  });
+
+  it("should describe an object with no string message as JSON", () => {
+    expect(getErrorMessage({ retryable: false })).toBe('{"retryable":false}');
+    expect(getErrorMessage({ message: 42 })).toBe('{"message":42}');
+  });
+
+  it("should cap the JSON of a large object", () => {
+    const message = getErrorMessage({ blob: "x".repeat(5000) });
+
+    expect(message.length).toBeLessThanOrEqual(501);
+    expect(message.startsWith('{"blob":"xxx')).toBe(true);
+  });
+
+  it("should stringify a symbol and a bigint", () => {
+    expect(getErrorMessage(Symbol("boom"))).toBe("Symbol(boom)");
+    expect(getErrorMessage(10n)).toBe("10");
+  });
+});
+
+// a handler can fail with any value. inspecting it must never throw: a throw
+// here would replace the real failure and suppress the `failed` event
+describe("hostile values", () => {
+  const UNREADABLE = "Unknown error (no readable message)";
+
+  const throwingTraps: ProxyHandler<object> = {
+    get: () => {
+      throw new Error("get trap");
+    },
+    has: () => {
+      throw new Error("has trap");
+    },
+    getPrototypeOf: () => {
+      throw new Error("getPrototypeOf trap");
+    },
+    ownKeys: () => {
+      throw new Error("ownKeys trap");
+    },
+    getOwnPropertyDescriptor: () => {
+      throw new Error("getOwnPropertyDescriptor trap");
+    },
+  };
+
+  function revokedProxy(): object {
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    return proxy;
+  }
+
+  const hostile = [
+    {
+      label: "a throwing retryable getter",
+      make: (): unknown => ({
+        get retryable(): boolean {
+          // eslint-disable-next-line @typescript-eslint/only-throw-error -- the review's counterexample throws a string
+          throw "inspection failed";
+        },
+      }),
+      permanent: false,
+      message: UNREADABLE,
+    },
+    {
+      label: "retryable: false with a throwing message getter",
+      make: (): unknown => ({
+        retryable: false,
+        get message(): string {
+          // eslint-disable-next-line @typescript-eslint/only-throw-error -- the review's counterexample throws a string
+          throw "inspection failed";
+        },
+      }),
+      permanent: true,
+      message: UNREADABLE,
+    },
+    {
+      label: "an object with no prototype",
+      make: (): unknown => Object.create(null) as unknown,
+      permanent: false,
+      message: UNREADABLE,
+    },
+    {
+      label: "an object with no prototype carrying retryable: false",
+      make: (): unknown =>
+        Object.assign(Object.create(null) as object, { retryable: false }),
+      permanent: true,
+      message: '{"retryable":false}',
+    },
+    {
+      label: "a proxy whose every trap throws",
+      make: (): unknown => new Proxy({}, throwingTraps),
+      permanent: false,
+      message: UNREADABLE,
+    },
+    {
+      label: "a proxy over an Error whose every trap throws",
+      make: (): unknown => new Proxy(new Error("hidden"), throwingTraps),
+      permanent: false,
+      message: UNREADABLE,
+    },
+    {
+      label: "a revoked proxy",
+      make: revokedProxy,
+      permanent: false,
+      message: UNREADABLE,
+    },
+    {
+      // not an object: converted with String(), which calls its toString
+      label: "a function with a throwing toString",
+      make: (): unknown =>
+        Object.assign((): void => undefined, {
+          retryable: false,
+          toString: (): never => {
+            throw new Error("toString");
+          },
+        }),
+      // a function is wrapped by the worker like a primitive: no flag is read
+      permanent: false,
+      message: UNREADABLE,
+    },
+    {
+      label: "a circular object",
+      make: (): unknown => {
+        const circular: Record<string, unknown> = {};
+        circular.self = circular;
+        return circular;
+      },
+      permanent: false,
+      message: UNREADABLE,
+    },
+    {
+      label: "an object with a throwing toJSON and toString",
+      make: (): unknown => ({
+        toJSON: (): never => {
+          throw new Error("toJSON");
+        },
+        toString: (): never => {
+          throw new Error("toString");
+        },
+      }),
+      permanent: false,
+      message: UNREADABLE,
+    },
+  ];
+
+  it.each(hostile)(
+    "isPermanentError should answer $permanent for $label",
+    ({ make, permanent }) => {
+      expect(isPermanentError(make())).toBe(permanent);
+    },
+  );
+
+  it.each(hostile)(
+    "getErrorMessage should answer for $label",
+    ({ make, message }) => {
+      expect(getErrorMessage(make())).toBe(message);
+    },
+  );
+
+  it.each(hostile)("getErrorName should answer for $label", ({ make }) => {
+    expect(getErrorName(make())).toBe("Error");
+  });
+
+  it.each(hostile)(
+    "isErrorInstance should answer, not throw, for $label",
+    ({ make }) => {
+      expect(typeof isErrorInstance(make())).toBe("boolean");
+    },
+  );
+
+  it("getErrorName should fall back for a throwing or non-string name", () => {
+    const throwing = new Error("boom");
+    Object.defineProperty(throwing, "name", {
+      get: () => {
+        throw new Error("name getter");
+      },
+    });
+    const numeric = Object.assign(new Error("boom"), { name: 42 });
+    const empty = Object.assign(new Error("boom"), { name: "" });
+
+    expect(getErrorName(throwing)).toBe("Error");
+    expect(getErrorName(numeric)).toBe("Error");
+    expect(getErrorName(empty)).toBe("Error");
+    expect(getErrorName(new TypeError("boom"))).toBe("TypeError");
+    expect(getErrorName(new PermanentJobError("boom"))).toBe(
+      "PermanentJobError",
+    );
+    // a structured object is not an Error: its `name` is not an error type
+    expect(getErrorName({ name: "Custom", message: "boom" })).toBe("Error");
+  });
+
+  it("isErrorInstance should recognise Errors only", () => {
+    expect(isErrorInstance(new Error("boom"))).toBe(true);
+    expect(isErrorInstance(new PermanentJobError("boom"))).toBe(true);
+    expect(isErrorInstance({ message: "boom" })).toBe(false);
+    expect(isErrorInstance("boom")).toBe(false);
+    expect(isErrorInstance(null)).toBe(false);
   });
 });

@@ -719,6 +719,53 @@ describe("MemoryProvider", () => {
       expect(result?.error.type).toBe("NotFoundError");
     });
 
+    // nack() decides alone when it is called without a Worker: a failure
+    // value whose inspection throws must still be recorded
+    it("should record a retry for an error whose flag and message cannot be read", async () => {
+      await boundProvider.add(
+        {
+          id: "job-1",
+          name: "test-job",
+          queueName: "test-queue",
+          data: {},
+          status: "waiting",
+          attempts: 0,
+          maxAttempts: 3,
+          createdAt: new Date(),
+        },
+        { removeOnFail: false },
+      );
+
+      const fetchResult = await boundProvider.fetch?.(1);
+      if (!fetchResult?.success) fail("Expected fetch success");
+
+      const hostile = {
+        get retryable(): boolean {
+          // eslint-disable-next-line @typescript-eslint/only-throw-error -- the review's counterexample throws a string
+          throw "inspection failed";
+        },
+        get message(): string {
+          // eslint-disable-next-line @typescript-eslint/only-throw-error -- the review's counterexample throws a string
+          throw "inspection failed";
+        },
+      };
+
+      const result = await boundProvider.nack?.(
+        fetchResult.data[0]!,
+        hostile as unknown as Error,
+      );
+      expect(result?.success).toBe(true);
+
+      const getResult = await boundProvider.getJob("job-1");
+      if (!getResult.success) fail("Expected success");
+      // not permanent: requeued, with the attempt counted
+      expect(getResult.data).toMatchObject({
+        status: "waiting",
+        attempts: 1,
+        error: "Unknown error (no readable message)",
+      });
+    });
+
     it("should skip retry and fail immediately when error has retryable: false", async () => {
       // add job with attempts remaining
       await boundProvider.add({

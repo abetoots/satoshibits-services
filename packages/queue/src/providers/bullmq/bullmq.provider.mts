@@ -30,7 +30,11 @@ import type {
   QueueError,
   QueueStats,
 } from "../../core/types.mjs";
-import { getErrorMessage, isPermanentError } from "../../core/errors.mjs";
+import {
+  getErrorMessage,
+  isPermanentError,
+  isReadableError,
+} from "../../core/errors.mjs";
 import type { BullMQDefaultJobOptions } from "../provider-options.mjs";
 import type {
   IProviderFactory,
@@ -431,7 +435,8 @@ export class BullMQProvider implements IProviderFactory {
       return Result.err({
         type: "RuntimeError",
         code: "SHUTDOWN",
-        retryable: false,
+        // cannot do it right now: says nothing about the caller's work
+        retryable: true,
         message: "Provider is shutting down.",
         queueName,
       });
@@ -521,7 +526,8 @@ export class BullMQProvider implements IProviderFactory {
       return Result.err({
         type: "RuntimeError",
         code: "SHUTDOWN",
-        retryable: false,
+        // cannot do it right now: says nothing about the caller's work
+        retryable: true,
         message: "Provider is shutting down.",
         queueName,
       });
@@ -587,7 +593,8 @@ export class BullMQProvider implements IProviderFactory {
       return Result.err({
         type: "RuntimeError",
         code: "SHUTDOWN",
-        retryable: false,
+        // cannot do it right now: says nothing about the caller's work
+        retryable: true,
         message: "Provider is shutting down.",
         queueName,
       });
@@ -642,7 +649,8 @@ export class BullMQProvider implements IProviderFactory {
       return Result.err({
         type: "RuntimeError",
         code: "SHUTDOWN",
-        retryable: false,
+        // cannot do it right now: says nothing about the caller's work
+        retryable: true,
         message: "Provider is shutting down.",
         queueName,
       });
@@ -692,9 +700,13 @@ export class BullMQProvider implements IProviderFactory {
    * - permanent (see `isPermanentError`): an `UnrecoverableError`, which makes
    *   BullMQ fail the job without retrying it, with the original as `cause`
    * - any other `Error`: unchanged
-   * - anything else (a structured object, a primitive): wrapped in an `Error`
-   *   with the original as `cause`. BullMQ reads `message` and `stack` off
-   *   the failure, so it must always be an `Error`
+   * - anything else (a structured object, a primitive, an `Error` whose
+   *   `message` cannot be read): wrapped in an `Error` with the original as
+   *   `cause`. BullMQ reads `message` and `stack` off the failure, so it must
+   *   always be a readable `Error`
+   *
+   * Never throws: the helpers it uses are guarded against values whose
+   * inspection throws (getters, no prototype, a Proxy).
    */
   private toBullMQError(error: unknown): Error {
     if (isPermanentError(error)) {
@@ -703,7 +715,7 @@ export class BullMQProvider implements IProviderFactory {
       return unrecoverable;
     }
 
-    if (error instanceof Error) {
+    if (isReadableError(error)) {
       return error;
     }
 
@@ -735,37 +747,45 @@ export class BullMQProvider implements IProviderFactory {
       const worker = new BullWorker(
         queueName,
         async (bullJob: BullJob) => {
-          // map BullMQ job to normalized job
-          const mappedJob = await this.mapBullJobToJob<T>(bullJob, queueName);
-
-          // create providerMetadata with non-enumerable job reference
-          // non-enumerable prevents JSON.stringify from throwing on circular refs
-          const bullmqMetadata: { token: string | undefined; job?: BullJob } = {
-            token: bullJob.token,
-          };
-          Object.defineProperty(bullmqMetadata, "job", {
-            value: bullJob,
-            enumerable: false,
-            configurable: true,
-            writable: true,
-          });
-
-          // create ActiveJob with providerMetadata
-          const job: ActiveJob<T> = {
-            ...mappedJob,
-            providerMetadata: {
-              bullmq: bullmqMetadata,
-            },
-          };
-
-          // call handler - errors propagate to BullMQ for retry/DLQ
+          // the conversion covers the WHOLE processor, the mapping of the job
+          // (which awaits getState()) as much as the handler: whatever fails
+          // in here, BullMQ is handed a readable Error, and a permanent
+          // error becomes its native non-retry mechanism
           try {
+            // map BullMQ job to normalized job
+            const mappedJob = await this.mapBullJobToJob<T>(
+              bullJob,
+              queueName,
+            );
+
+            // create providerMetadata with non-enumerable job reference
+            // non-enumerable prevents JSON.stringify from throwing on circular refs
+            const bullmqMetadata: {
+              token: string | undefined;
+              job?: BullJob;
+            } = {
+              token: bullJob.token,
+            };
+            Object.defineProperty(bullmqMetadata, "job", {
+              value: bullJob,
+              enumerable: false,
+              configurable: true,
+              writable: true,
+            });
+
+            // create ActiveJob with providerMetadata
+            const job: ActiveJob<T> = {
+              ...mappedJob,
+              providerMetadata: {
+                bullmq: bullmqMetadata,
+              },
+            };
+
+            // call handler - errors propagate to BullMQ for retry/DLQ
             await handler(job);
             return { success: true };
-          } catch (handlerError) {
-            // translate a permanent error to BullMQ's native non-retry
-            // mechanism, and never hand BullMQ a value that is not an Error
-            throw this.toBullMQError(handlerError);
+          } catch (processorError) {
+            throw this.toBullMQError(processorError);
           }
         },
         {
@@ -828,7 +848,8 @@ export class BullMQProvider implements IProviderFactory {
       return Result.err({
         type: "RuntimeError",
         code: "SHUTDOWN",
-        retryable: false,
+        // cannot do it right now: says nothing about the caller's work
+        retryable: true,
         message: "Provider is shutting down.",
         queueName,
       });
@@ -860,7 +881,8 @@ export class BullMQProvider implements IProviderFactory {
       return Result.err({
         type: "RuntimeError",
         code: "SHUTDOWN",
-        retryable: false,
+        // cannot do it right now: says nothing about the caller's work
+        retryable: true,
         message: "Provider is shutting down.",
         queueName,
       });
@@ -892,7 +914,8 @@ export class BullMQProvider implements IProviderFactory {
       return Result.err({
         type: "RuntimeError",
         code: "SHUTDOWN",
-        retryable: false,
+        // cannot do it right now: says nothing about the caller's work
+        retryable: true,
         message: "Provider is shutting down.",
         queueName,
       });
@@ -932,7 +955,8 @@ export class BullMQProvider implements IProviderFactory {
       return Result.err({
         type: "RuntimeError",
         code: "SHUTDOWN",
-        retryable: false,
+        // cannot do it right now: says nothing about the caller's work
+        retryable: true,
         message: "Provider is shutting down.",
         queueName,
       });
@@ -970,7 +994,8 @@ export class BullMQProvider implements IProviderFactory {
       return Result.err({
         type: "RuntimeError",
         code: "SHUTDOWN",
-        retryable: false,
+        // cannot do it right now: says nothing about the caller's work
+        retryable: true,
         message: "Provider is shutting down.",
         queueName,
       });
@@ -1017,7 +1042,8 @@ export class BullMQProvider implements IProviderFactory {
       return Result.err({
         type: "RuntimeError",
         code: "SHUTDOWN",
-        retryable: false,
+        // cannot do it right now: says nothing about the caller's work
+        retryable: true,
         message: "Provider is shutting down.",
         queueName,
       });
@@ -1055,7 +1081,8 @@ export class BullMQProvider implements IProviderFactory {
       return Result.err({
         type: "RuntimeError",
         code: "SHUTDOWN",
-        retryable: false,
+        // cannot do it right now: says nothing about the caller's work
+        retryable: true,
         message: "Provider is shutting down.",
         queueName,
       });
@@ -1280,7 +1307,9 @@ export class BullMQProvider implements IProviderFactory {
         code: "PROCESSING",
         message: `Job lock error: ${errorMessage}`,
         queueName,
-        retryable: false, // lock errors usually indicate concurrent processing
+        // another worker holds the job, or the lock expired: that ends this
+        // attempt's ownership, it does not make the work impossible
+        retryable: true,
         cause: error instanceof Error ? error : undefined,
       };
     }
@@ -1296,7 +1325,9 @@ export class BullMQProvider implements IProviderFactory {
         code: "PROCESSING",
         message: `Redis script error: ${errorMessage}`,
         queueName,
-        retryable: false, // script errors indicate logic issues
+        // the match is any message naming a script: it also catches a
+        // flushed script cache or a busy server, so it proves nothing permanent
+        retryable: true,
         cause: error instanceof Error ? error : undefined,
       };
     }
@@ -1346,13 +1377,16 @@ export class BullMQProvider implements IProviderFactory {
       };
     }
 
-    // HIGH-BQ-002 FIX: default to runtime error with explicit retryable: false
-    // Unknown errors should not be retried to prevent infinite loops
+    // default: an error this adapter does not recognise (READONLY, OOM, ...)
+    // is no evidence of a permanent condition. `retryable: false` is the
+    // permanence signal (see isPermanentError): a job that rethrows such an
+    // error would fail on its first attempt. the job's attempt budget is
+    // what bounds the retries
     return {
       type: "RuntimeError",
       code: "PROCESSING",
       message: errorMessage,
-      retryable: false, // explicit non-retryable for unknown errors
+      retryable: true,
       queueName,
       cause: error instanceof Error ? error : undefined,
     };
