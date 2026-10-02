@@ -867,6 +867,64 @@ describe("Worker - Hybrid Push/Pull Model", () => {
       await worker.close();
     });
 
+    it.each([
+      { attempts: 2, maxAttempts: 3, label: "the third of three" },
+      { attempts: 0, maxAttempts: 1, label: "the only attempt of one" },
+    ])(
+      "should emit willRetry: false and no job.retrying on $label (pull model)",
+      async ({ attempts, maxAttempts }) => {
+        const job: Job<unknown> = {
+          id: "job-1",
+          name: "test-job",
+          queueName: "test-queue",
+          data: {},
+          status: "active",
+          attempts,
+          maxAttempts,
+          createdAt: new Date(),
+        };
+
+        vi.mocked(mockProvider.fetch!)
+          .mockResolvedValueOnce(Result.ok([job]))
+          .mockResolvedValue(Result.ok([]));
+
+        handlerSpy.mockResolvedValueOnce(
+          Result.err(new Error("Processing failed")),
+        );
+
+        const worker = new Worker("test-queue", handler, {
+          provider: mockProvider,
+          pollInterval: 10,
+          errorBackoff: 100,
+        });
+
+        const events: FailedEventPayload[] = [];
+        const retryingEvents: unknown[] = [];
+        worker.on("failed", (payload) => {
+          events.push(payload);
+        });
+        worker.on("job.retrying", (payload) => {
+          retryingEvents.push(payload);
+        });
+
+        worker.start();
+
+        await vi.waitFor(() => {
+          expect(events).toHaveLength(1);
+        });
+
+        expect(events[0]).toMatchObject({
+          jobId: "job-1",
+          attempts,
+          willRetry: false,
+          permanent: false,
+        });
+        expect(retryingEvents).toHaveLength(0);
+
+        await worker.close();
+      },
+    );
+
     it("should emit failed with permanent: true and willRetry: false for PermanentJobError (pull model)", async () => {
       const job: Job<unknown> = {
         id: "job-1",
