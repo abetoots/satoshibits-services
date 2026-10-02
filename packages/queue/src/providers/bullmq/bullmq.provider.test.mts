@@ -362,6 +362,44 @@ describe("BullMQProvider", () => {
       }
     });
 
+    it("should map BullMQ attemptsMade to attempts and opts.attempts to maxAttempts", async () => {
+      const queueProvider = provider.forQueue("test-queue");
+
+      // `attempts` is the number of attempts already made, so a worker sees
+      // 0 on the first run and maxAttempts - 1 on the last
+      mockQueue.getJob.mockResolvedValue({
+        ...mockBullJob,
+        attemptsMade: 2,
+        opts: { ...mockBullJob.opts, attempts: 12 },
+      });
+
+      const result = await queueProvider.getJob("job-1");
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data?.attempts).toBe(2);
+        expect(result.data?.maxAttempts).toBe(12);
+      }
+    });
+
+    it("should default attempts to 0 and maxAttempts to the provider default when BullMQ reports neither", async () => {
+      const queueProvider = provider.forQueue("test-queue");
+
+      mockQueue.getJob.mockResolvedValue({
+        ...mockBullJob,
+        attemptsMade: undefined,
+        opts: { ...mockBullJob.opts, attempts: undefined },
+      });
+
+      const result = await queueProvider.getJob("job-1");
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data?.attempts).toBe(0);
+        expect(result.data?.maxAttempts).toBe(3);
+      }
+    });
+
     it("should handle unwrapped job data (from external sources)", async () => {
       const queueProvider = provider.forQueue("test-queue");
 
