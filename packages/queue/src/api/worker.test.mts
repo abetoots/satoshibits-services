@@ -2014,14 +2014,18 @@ describe("Worker + MemoryProvider - retry budget", () => {
 
     worker.start();
 
-    await vi.waitFor(async () => {
-      const stored = await bound.getJob("job-budget");
-      expect(stored.success && stored.data?.status).toBe("failed");
-    });
-    // give the fetch loop several more polls: a job the provider had put
-    // back in the queue would be run again here
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    await worker.close();
+    try {
+      await vi.waitFor(async () => {
+        const stored = await bound.getJob("job-budget");
+        expect(stored.success && stored.data?.status).toBe("failed");
+      });
+      // give the fetch loop several more polls: a job the provider had put
+      // back in the queue would be run again here
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    } finally {
+      // a failed wait must not leave the polling loop running
+      await worker.close();
+    }
 
     const stored = await bound.getJob("job-budget");
     if (!stored.success) throw new Error(stored.error.message);

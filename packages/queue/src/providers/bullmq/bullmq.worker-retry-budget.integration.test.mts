@@ -107,6 +107,10 @@ describe("Worker + BullMQProvider - retry budget (Integration)", () => {
       expect(handler).toHaveBeenCalledTimes(3);
       expect(failedEvents.map((e) => e.attempts)).toEqual([0, 1, 2]);
       expect(failedEvents.map((e) => e.willRetry)).toEqual([true, true, false]);
+      // the predicate a consumer uses for "retries exhausted" holds once
+      expect(
+        failedEvents.filter((e) => !e.permanent && !e.willRetry),
+      ).toHaveLength(1);
       expect(retryingEvents.map((e) => e.attempts)).toEqual([1, 2]);
 
       const bullJob = await bullQueue!.getJob(jobId);
@@ -115,9 +119,13 @@ describe("Worker + BullMQProvider - retry budget (Integration)", () => {
       expect(bullJob?.opts.attempts).toBe(3);
     } finally {
       // cleanup: stop the worker, then remove every key of this queue
-      await worker.close();
-      const deleted = await boundProvider.delete();
-      expect(deleted.success).toBe(true);
+      // the keys are removed even if the worker fails to close
+      try {
+        await worker.close();
+      } finally {
+        const deleted = await boundProvider.delete();
+        expect(deleted.success).toBe(true);
+      }
     }
   });
 });
