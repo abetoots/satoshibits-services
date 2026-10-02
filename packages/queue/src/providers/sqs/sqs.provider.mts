@@ -289,7 +289,8 @@ export class SQSProvider implements IProviderFactory {
         code: "SHUTDOWN",
         message: "Provider is shutting down.",
         queueName,
-        retryable: false,
+        // cannot do it right now: says nothing about the caller's work
+        retryable: true,
       });
     }
 
@@ -464,7 +465,8 @@ export class SQSProvider implements IProviderFactory {
         code: "SHUTDOWN",
         message: "Provider is shutting down.",
         queueName,
-        retryable: false,
+        // cannot do it right now: says nothing about the caller's work
+        retryable: true,
       });
     }
 
@@ -561,7 +563,8 @@ export class SQSProvider implements IProviderFactory {
         code: "SHUTDOWN",
         message: "Provider is shutting down.",
         queueName,
-        retryable: false,
+        // cannot do it right now: says nothing about the caller's work
+        retryable: true,
       });
     }
 
@@ -615,7 +618,8 @@ export class SQSProvider implements IProviderFactory {
         code: "SHUTDOWN",
         message: "Provider is shutting down.",
         queueName,
-        retryable: false,
+        // cannot do it right now: says nothing about the caller's work
+        retryable: true,
       });
     }
 
@@ -757,7 +761,8 @@ export class SQSProvider implements IProviderFactory {
         code: "SHUTDOWN",
         message: "Provider is shutting down.",
         queueName,
-        retryable: false,
+        // cannot do it right now: says nothing about the caller's work
+        retryable: true,
       });
     }
 
@@ -825,7 +830,8 @@ export class SQSProvider implements IProviderFactory {
         code: "SHUTDOWN",
         message: "Provider is shutting down.",
         queueName,
-        retryable: false,
+        // cannot do it right now: says nothing about the caller's work
+        retryable: true,
       });
     }
 
@@ -878,7 +884,8 @@ export class SQSProvider implements IProviderFactory {
         code: "SHUTDOWN",
         message: "Provider is shutting down.",
         queueName,
-        retryable: false,
+        // cannot do it right now: says nothing about the caller's work
+        retryable: true,
       });
     }
 
@@ -1159,7 +1166,10 @@ export class SQSProvider implements IProviderFactory {
         code: "PROVIDER_ERROR",
         message: `Unhandled AWS SQS Error (${awsErrorName}): ${errorMessage}`,
         queueName,
-        retryable: false,
+        // an AWS error this adapter has no handler for is not known to be
+        // permanent: `retryable: false` would fail a job that rethrows it on
+        // its first attempt (see isPermanentError)
+        retryable: true,
         cause: error instanceof Error ? error : undefined,
       };
     }
@@ -1199,7 +1209,9 @@ export class SQSProvider implements IProviderFactory {
       code: "PROCESSING",
       message: errorMessage,
       queueName,
-      retryable: false, // explicitly non-retryable for safety - unknown errors should not retry infinitely
+      // an unrecognised error is no evidence of a permanent condition; the
+      // job's attempt budget bounds the retries (see isPermanentError)
+      retryable: true,
       cause: error instanceof Error ? error : undefined,
     };
   }

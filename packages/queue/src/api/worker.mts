@@ -14,7 +14,12 @@ import type {
   QueueError,
   WorkerOptions,
 } from "../core/types.mjs";
-import { getErrorMessage, isPermanentError } from "../core/errors.mjs";
+import {
+  getErrorMessage,
+  getErrorName,
+  isErrorInstance,
+  isPermanentError,
+} from "../core/errors.mjs";
 import type { IBullMQWorkerExtensions } from "../providers/bullmq/bullmq-worker-extensions.interface.mjs";
 import type {
   IProviderFactory,
@@ -430,16 +435,14 @@ export class Worker<T = unknown> extends TypedEventEmitter {
         metadata: job.metadata,
       });
     } catch (error: unknown) {
-      // the provider decides the retry from this value, so it gets the
-      // original with its `retryable` flag intact: an Error as is, a
-      // structured object (QueueError) as is. only a primitive, which can
-      // carry neither a flag nor a message, is wrapped
-      const failure: Error | QueueError =
-        error instanceof Error
-          ? error
-          : typeof error === "object" && error !== null
-            ? (error as QueueError)
-            : new Error(String(error));
+      // nothing here may throw on a hostile value (throwing getters, no
+      // prototype, a Proxy): a throw would replace the real failure and
+      // suppress the `failed` event. the helpers below are all guarded
+      const failure = this.toFailure(error);
+
+      // decided before the provider is involved, from the same rule the
+      // provider applies to this value (isPermanentError)
+      const permanent = isPermanentError(failure);
 
       // failure callback (e.g., nack in pull model)
       if (callbacks.onFailure) {
@@ -449,14 +452,13 @@ export class Worker<T = unknown> extends TypedEventEmitter {
       // `job.attempts` counts the attempts made before this one, so this is
       // attempt `job.attempts + 1`: the last attempt of the budget is not
       // retried
-      const permanent = isPermanentError(failure);
       const willRetry = !permanent && job.attempts + 1 < job.maxAttempts;
 
       this.emit("failed", {
         jobId: job.id,
         queueName: this.queueName,
         error: getErrorMessage(failure),
-        errorType: (failure instanceof Error && failure.name) || "Error",
+        errorType: getErrorName(failure),
         attempts: job.attempts,
         status: job.status,
         duration: Date.now() - startTime,
@@ -483,6 +485,26 @@ export class Worker<T = unknown> extends TypedEventEmitter {
     } finally {
       this.activeJobs--;
     }
+  }
+
+  /**
+   * The value the provider is handed for a failure, flag intact: an Error as
+   * is, a structured object (QueueError) as is. The provider decides the
+   * retry from it. Only a primitive (or a function), which can carry neither
+   * a flag nor a message, is wrapped in an Error, with the original as cause.
+   */
+  private toFailure(error: unknown): Error | QueueError {
+    if (isErrorInstance(error)) {
+      return error;
+    }
+
+    if (typeof error === "object" && error !== null) {
+      return error as QueueError;
+    }
+
+    const wrapped = new Error(getErrorMessage(error));
+    wrapped.cause = error;
+    return wrapped;
   }
 
   /**

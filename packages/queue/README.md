@@ -399,12 +399,21 @@ const worker = new Worker('payments', async (data, job) => {
 });
 ```
 
-The Worker emits `failed` with `permanent: true` and `willRetry: false` (no `job.retrying`), with the object's `message` as `error` and the object itself as `structuredError`. The provider then:
+The Worker emits `failed` with `permanent: true` and `willRetry: false` (no `job.retrying`), with the object's `message` as `error` and the object itself as `structuredError`. The provider, from the same decision:
 - Skips all remaining retry attempts
 - Moves the job directly to failed state
 - Respects the `removeOnFail` option (job is removed or kept in failed state)
 
-This holds for the memory provider and for BullMQ in both models (push, the one a `Worker` uses with `BullMQProvider`, and pull). BullMQ is always handed an `Error`: a permanent error becomes an `UnrecoverableError` whose `cause` is your original value.
+(Which of the two comes first depends on the model: see the ordering note under "What `willRetry` does not cover".)
+
+This holds for the memory provider and for BullMQ in both models (push, the one a `Worker` uses with `BullMQProvider`, and pull). BullMQ is always handed a readable `Error`, whatever fails inside the processor: a permanent error becomes an `UnrecoverableError` whose `cause` is your original value, and any other value that is not an `Error` is wrapped in one, with the original as `cause`.
+
+Inspecting the error never throws: a flag that cannot be read (a throwing getter, a Proxy) is not `false`, so that error is retried, and an object with no string `message` is reported by its JSON, or as `Unknown error (no readable message)`.
+
+**Forwarding a library `QueueError`.** A handler that rethrows or returns the error of a failed library call (for example `if (!result.success) throw result.error` after `queue.add()`) forwards its `retryable` flag, so that flag decides the fate of the job:
+- `retryable: false` is kept for conditions a retry cannot change: invalid configuration, validation and serialization failures, duplicates, a job or queue that does not exist, BullMQ's `UnrecoverableError`.
+- `retryable: true` is set where nothing proves permanence: connection, timeout, rate limit and throttling errors, a provider that is shutting down, a lost lock, a Redis script error, and **any error the adapter does not recognise** (before 3.2.0 those last four were `retryable: false`). The job's own attempt budget bounds the retries.
+- BullMQ's `DelayedError`, `WaitingChildrenError` and `WaitingError` are control flow, not failures: they tell BullMQ to move the job to another state. The adapter maps them to a `QueueError` with `retryable: false` only because they are not errors to retry; do not forward that mapped error as a job failure. To use them, throw the BullMQ error itself from the handler: it reaches BullMQ unchanged. (The Worker still emits `failed` for that throw: it cannot tell it from a failure.)
 
 > **Limits.** SQS does not apply the rule: it retries by its redrive policy whatever the error says (see "What `willRetry` does not cover"). Before 3.2.0, BullMQ's push model retried an error carrying `retryable: false`, a plain object lost the flag and its message (`error: "[object Object]"`), and the `failed` event reported `permanent: false` for both.
 
@@ -1086,7 +1095,7 @@ worker.on('failed', (payload) => {
 
 **What `willRetry` does not cover.** It is a prediction, not a confirmation, and the provider has the last word:
 
-- **In the push model (BullMQ) the event is emitted before the provider records the failure.** If that write fails (for example a lost lock), the job can run again after a `willRetry: false` event. In the pull model (memory, SQS) the worker awaits the provider's `nack()` first and emits `failed` after it; if the `nack()` returns an error, the worker emits `queue.error` and then still emits `failed` with the same prediction. In both models, a job the provider fails without calling your handler (a stalled job past its limit) emits no `failed` event at all. Make the handler for "retries exhausted" idempotent and keep a reconciliation path.
+- **In the push model (BullMQ) the event is emitted before the provider records the failure.** If that write fails (for example a lost lock), the job can run again after a `willRetry: false` event. In the pull model (memory, SQS) the worker awaits the provider's `nack()` first and emits `failed` after it; if the `nack()` returns an error, the worker emits `queue.error` and then still emits `failed` with the same prediction. In both models, a job the provider fails without calling your handler (a stalled job past its limit) emits no `failed` event at all, and neither does an attempt whose `nack()` throws instead of returning an error, or during which one of your own listeners throws (listeners registered with `on()` propagate their errors). Make the handler for "retries exhausted" idempotent and keep a reconciliation path.
 - **SQS retries by its redrive policy**, not by `maxAttempts`: when the queue has a redrive policy, a message is redelivered until its `maxReceiveCount`, whatever `willRetry` said (without one it is redelivered until it expires). Configure the policy and keep `maxReceiveCount` equal to `maxAttempts`.
 - **BullMQ's own ways of stopping the retries are outside the event's knowledge.** Each of the following stops the retries while the event still says `permanent: false` and, before the last attempt, `willRetry: true`:
   - BullMQ's own `UnrecoverableError`, thrown by your handler.

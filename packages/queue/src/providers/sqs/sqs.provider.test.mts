@@ -2028,7 +2028,9 @@ describe("SQSProvider - Phase 1: Core Structure", () => {
   });
 
   describe("REGRESSION: HIGH-013 - Retryable Flag", () => {
-    it("should set retryable: false for unknown errors", () => {
+    // an unrecognised error is no evidence of a permanent condition: a job
+    // that rethrows it must not fail on its first attempt
+    it("should set retryable: true for unknown errors", () => {
       const provider = new SQSProvider({
         region: "us-east-1",
         queueUrls: {
@@ -2046,8 +2048,7 @@ describe("SQSProvider - Phase 1: Core Structure", () => {
       expect(queueError.type).toBe("RuntimeError");
       expect(queueError.code).toBe("PROCESSING");
       if (queueError.type === "RuntimeError") {
-        // critical: unknown errors are non-retryable by default
-        expect(queueError.retryable).toBe(false);
+        expect(queueError.retryable).toBe(true);
       }
     });
   });
@@ -2088,7 +2089,8 @@ describe("SQSProvider - Phase 1: Core Structure", () => {
           expect(result.error.message).toContain("NewUnknownSQSError");
           expect(result.error.message).toContain("Unhandled AWS SQS Error");
           expect(result.error.code).toBe("PROVIDER_ERROR");
-          expect(result.error.retryable).toBe(false);
+          // an AWS error the adapter has no handler for: not known permanent
+          expect(result.error.retryable).toBe(true);
         }
       }
     });
@@ -2260,6 +2262,7 @@ describe("SQSProvider - Phase 1: Core Structure", () => {
         expect(result.success).toBe(false);
         if (!result.success) {
           expect(result.error.code).toBe("SHUTDOWN");
+          expect(result.error.retryable).toBe(true);
           expect(result.error.message).toContain("shutting down");
         }
       });
@@ -2279,6 +2282,7 @@ describe("SQSProvider - Phase 1: Core Structure", () => {
         expect(result.success).toBe(false);
         if (!result.success) {
           expect(result.error.code).toBe("SHUTDOWN");
+          expect(result.error.retryable).toBe(true);
         }
       });
 
@@ -2306,6 +2310,7 @@ describe("SQSProvider - Phase 1: Core Structure", () => {
         expect(result.success).toBe(false);
         if (!result.success) {
           expect(result.error.code).toBe("SHUTDOWN");
+          expect(result.error.retryable).toBe(true);
         }
       });
 
@@ -2324,6 +2329,7 @@ describe("SQSProvider - Phase 1: Core Structure", () => {
         expect(result.success).toBe(false);
         if (!result.success) {
           expect(result.error.code).toBe("SHUTDOWN");
+          expect(result.error.retryable).toBe(true);
         }
       });
     });
@@ -2664,6 +2670,7 @@ describe("SQSProvider - Phase 1: Core Structure", () => {
         expect(result.success).toBe(false);
         if (!result.success) {
           expect(result.error.code).toBe("SHUTDOWN");
+          expect(result.error.retryable).toBe(true);
         }
       });
 
@@ -2682,6 +2689,7 @@ describe("SQSProvider - Phase 1: Core Structure", () => {
         expect(result.success).toBe(false);
         if (!result.success) {
           expect(result.error.code).toBe("SHUTDOWN");
+          expect(result.error.retryable).toBe(true);
         }
       });
 
@@ -2704,6 +2712,7 @@ describe("SQSProvider - Phase 1: Core Structure", () => {
         expect(result.success).toBe(false);
         if (!result.success) {
           expect(result.error.code).toBe("SHUTDOWN");
+          expect(result.error.retryable).toBe(true);
         }
       });
     });

@@ -2119,6 +2119,31 @@ describe("Worker + MemoryProvider - retry budget", () => {
       },
     );
   });
+  it("should record the failure of a job whose error cannot be inspected", async () => {
+    const { failedEvents, handlerRuns, stored } = await runUntilFailed(2, () =>
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- a handler can throw anything
+      Promise.reject({
+        get retryable(): boolean {
+          // eslint-disable-next-line @typescript-eslint/only-throw-error -- the review's counterexample throws a string
+          throw "inspection failed";
+        },
+        get message(): string {
+          // eslint-disable-next-line @typescript-eslint/only-throw-error -- the review's counterexample throws a string
+          throw "inspection failed";
+        },
+      }),
+    );
+
+    // not permanent: it is retried for its budget, and every failure is
+    // both recorded by the provider and reported
+    expect(handlerRuns).toHaveBeenCalledTimes(2);
+    expect(failedEvents.map((e) => e.willRetry)).toEqual([true, false]);
+    expect(stored).toMatchObject({
+      status: "failed",
+      attempts: 2,
+      error: "Unknown error (no readable message)",
+    });
+  });
 });
 
 // one permanence rule: a PermanentJobError, or anything carrying
@@ -2270,12 +2295,15 @@ describe("Worker - permanence rule", () => {
       if (model === "push") {
         // the provider's side of the push model: it awaits the instrumented
         // handler and acts on whatever it rejects with
-        handedToProvider = await capturedHandler!(job).then(
+        // boxed: resolving a promise with the rejection itself would probe
+        // it for `then`, which a hostile value (a Proxy) answers by throwing
+        const caught = await capturedHandler!(job).then(
           () => {
             throw new Error("the instrumented handler should have rejected");
           },
-          (rejection: unknown) => rejection,
+          (rejection: unknown) => ({ rejection }),
         );
+        handedToProvider = caught.rejection;
       } else {
         await vi.waitFor(() => {
           expect(failedEvents).toHaveLength(1);
@@ -2348,4 +2376,138 @@ describe("Worker - permanence rule", () => {
       expect((handedToProvider as Error).message).toBe("a thrown string");
     },
   );
+
+  // the Error a primitive is wrapped in keeps the primitive as its cause
+  describe.each(models)("a thrown primitive (%s model)", (model) => {
+    it.each([
+      { label: "a string", primitive: "a thrown string" as unknown },
+      { label: "a number", primitive: 42 as unknown },
+      { label: "undefined", primitive: undefined as unknown },
+      { label: "null", primitive: null as unknown },
+      { label: "a symbol", primitive: Symbol("thrown") as unknown },
+    ])("should keep $label as the cause", async ({ primitive }) => {
+      const { failedEvents, handedToProvider } = await failOnce(
+        model,
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- a handler can throw anything
+        () => Promise.reject(primitive),
+      );
+
+      expect(failedEvents).toHaveLength(1);
+      expect(failedEvents[0]?.error).toBe(String(primitive));
+      expect(failedEvents[0]?.permanent).toBe(false);
+      expect(failedEvents[0]?.structuredError).toBe(primitive);
+      expect(handedToProvider).toBeInstanceOf(Error);
+      expect((handedToProvider as Error).message).toBe(String(primitive));
+      expect((handedToProvider as Error).cause).toBe(primitive);
+    });
+  });
+
+  // inspecting the failure must not throw: a throw would replace the real
+  // failure, suppress `failed`, or leave the pull job without a nack
+  describe.each(models)("a hostile failure value (%s model)", (model) => {
+    const UNREADABLE = "Unknown error (no readable message)";
+
+    const throwingTraps: ProxyHandler<object> = {
+      get: () => {
+        throw new Error("get trap");
+      },
+      has: () => {
+        throw new Error("has trap");
+      },
+      getPrototypeOf: () => {
+        throw new Error("getPrototypeOf trap");
+      },
+      ownKeys: () => {
+        throw new Error("ownKeys trap");
+      },
+      getOwnPropertyDescriptor: () => {
+        throw new Error("getOwnPropertyDescriptor trap");
+      },
+    };
+
+    it.each([
+      {
+        label: "a throwing retryable getter",
+        make: (): unknown => ({
+          get retryable(): boolean {
+            // eslint-disable-next-line @typescript-eslint/only-throw-error -- the review's counterexample throws a string
+            throw "inspection failed";
+          },
+        }),
+        permanent: false,
+        message: UNREADABLE,
+      },
+      {
+        label: "retryable: false with a throwing message getter",
+        make: (): unknown => ({
+          retryable: false,
+          get message(): string {
+            // eslint-disable-next-line @typescript-eslint/only-throw-error -- the review's counterexample throws a string
+            throw "inspection failed";
+          },
+        }),
+        permanent: true,
+        message: UNREADABLE,
+      },
+      {
+        label: "an object with no prototype",
+        make: (): unknown => Object.create(null) as unknown,
+        permanent: false,
+        message: UNREADABLE,
+      },
+      {
+        label: "a proxy whose every trap throws",
+        make: (): unknown => new Proxy({}, throwingTraps),
+        permanent: false,
+        message: UNREADABLE,
+      },
+      {
+        label: "an object with no string message",
+        make: (): unknown => ({ retryable: false, code: "E_BAD" }),
+        permanent: true,
+        message: '{"retryable":false,"code":"E_BAD"}',
+      },
+    ])(
+      "should emit failed and hand the provider the original for $label",
+      async ({ make, permanent, message }) => {
+        const original = make();
+
+        const { failedEvents, retryingEvents, handedToProvider } =
+          await failOnce(model, () =>
+            // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- a handler can throw anything
+            Promise.reject(original),
+          );
+
+        // field by field: a matcher would walk the hostile value itself
+        expect(failedEvents).toHaveLength(1);
+        expect(failedEvents[0]?.error).toBe(message);
+        expect(failedEvents[0]?.errorType).toBe("Error");
+        expect(failedEvents[0]?.permanent).toBe(permanent);
+        expect(failedEvents[0]?.willRetry).toBe(!permanent);
+        expect(Object.is(failedEvents[0]?.structuredError, original)).toBe(
+          true,
+        );
+        expect(retryingEvents).toHaveLength(permanent ? 0 : 1);
+        expect(Object.is(handedToProvider, original)).toBe(true);
+      },
+    );
+
+    it("should emit failed for an Error whose name getter throws", async () => {
+      const original = new Error("named badly");
+      Object.defineProperty(original, "name", {
+        get: () => {
+          throw new Error("name getter");
+        },
+      });
+
+      const { failedEvents, handedToProvider } = await failOnce(model, () =>
+        Promise.reject(original),
+      );
+
+      expect(failedEvents).toHaveLength(1);
+      expect(failedEvents[0]?.error).toBe("named badly");
+      expect(failedEvents[0]?.errorType).toBe("Error");
+      expect(handedToProvider).toBe(original);
+    });
+  });
 });

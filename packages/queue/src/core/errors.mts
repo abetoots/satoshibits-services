@@ -58,6 +58,54 @@ export class TransientJobError extends Error {
 }
 
 /**
+ * What a handler failed with can be any value: an object with throwing
+ * getters, no prototype, or a Proxy. Everything below reads such a value
+ * without ever throwing, so that inspecting a failure can never replace it,
+ * suppress the `failed` event, or leave a job without a recorded failure.
+ */
+
+// the message for a failure that has none that can be read
+const UNREADABLE_ERROR_MESSAGE = "Unknown error (no readable message)";
+
+// the longest JSON description of a failure used as its message
+const MAX_DESCRIBED_LENGTH = 500;
+
+function isObject(value: unknown): value is object {
+  return typeof value === "object" && value !== null;
+}
+
+/**
+ * Read one property; `undefined` when the read throws (getter, Proxy trap).
+ */
+function readProperty(value: object, key: string): unknown {
+  try {
+    return (value as Record<string, unknown>)[key];
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `instanceof Error`, answering `false` when the check itself throws (a Proxy
+ * with a `getPrototypeOf` trap, a revoked Proxy).
+ */
+export function isErrorInstance(value: unknown): value is Error {
+  try {
+    return value instanceof Error;
+  } catch {
+    return false;
+  }
+}
+
+function isPermanentJobError(value: unknown): boolean {
+  try {
+    return value instanceof PermanentJobError;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The permanence rule: whether a failed job must not be retried.
  *
  * An error is permanent when it is a `PermanentJobError`, or when it carries
@@ -66,36 +114,87 @@ export class TransientJobError extends Error {
  *
  * This is the one definition of the rule. The worker uses it for the `failed`
  * event (`permanent`, `willRetry`) and the memory and BullMQ providers use it
- * to decide the retry, so the event and the provider cannot disagree. SQS
+ * to decide the retry, each reading the flag from the value it is given. SQS
  * does not apply it: it retries by its redrive policy.
  *
- * Accepts any value, since a handler can throw anything.
+ * Accepts any value and never throws: a flag that cannot be read is not
+ * `false`, so such an error is not permanent.
  */
 export function isPermanentError(error: unknown): boolean {
-  if (error instanceof PermanentJobError) {
+  if (isPermanentJobError(error)) {
     return true;
   }
 
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    (error as { retryable?: unknown }).retryable === false
-  );
+  return isObject(error) && readProperty(error, "retryable") === false;
 }
 
 /**
- * A readable message for whatever a handler failed with.
- *
- * The `message` of an `Error` or of a plain structured object when it is a
- * string, otherwise the value converted to a string.
+ * A readable description of an object that has no string `message`: its JSON
+ * (capped), or a fixed message when it has none worth showing.
  */
-export function getErrorMessage(error: unknown): string {
-  if (typeof error === "object" && error !== null) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === "string") {
-      return message;
+function describeObject(value: object): string {
+  try {
+    const json: unknown = JSON.stringify(value);
+    if (typeof json === "string" && json !== "{}") {
+      return json.length > MAX_DESCRIBED_LENGTH
+        ? `${json.slice(0, MAX_DESCRIBED_LENGTH)}…`
+        : json;
     }
+  } catch {
+    // circular, a throwing getter or toJSON, a Proxy trap
   }
 
-  return String(error);
+  return UNREADABLE_ERROR_MESSAGE;
+}
+
+/**
+ * A readable message for whatever a handler failed with. Never throws.
+ *
+ * - the `message` of an `Error` or of a plain structured object, when it is a
+ *   string
+ * - for any other object, its JSON, or a fixed message when it has none
+ * - for a primitive, the value converted to a string
+ */
+export function getErrorMessage(error: unknown): string {
+  if (isObject(error)) {
+    const message = readProperty(error, "message");
+    return typeof message === "string" ? message : describeObject(error);
+  }
+
+  try {
+    return String(error);
+  } catch {
+    return UNREADABLE_ERROR_MESSAGE;
+  }
+}
+
+/**
+ * The `name` of an `Error` instance, for the `failed` event's `errorType`.
+ * `"Error"` for anything else, or when the name cannot be read. Never throws.
+ */
+export function getErrorName(error: unknown): string {
+  if (!isErrorInstance(error)) {
+    return "Error";
+  }
+
+  const name = readProperty(error, "name");
+  return typeof name === "string" && name !== "" ? name : "Error";
+}
+
+/**
+ * Whether BullMQ, or any code that reads `message` and `stack` off an error,
+ * can use this value as is: a real `Error` whose `message` and `stack` can be
+ * read. Never throws.
+ */
+export function isReadableError(value: unknown): value is Error {
+  if (!isErrorInstance(value)) {
+    return false;
+  }
+
+  try {
+    void value.stack;
+    return typeof value.message === "string";
+  } catch {
+    return false;
+  }
 }

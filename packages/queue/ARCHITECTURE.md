@@ -295,7 +295,9 @@ if (isPermanentError(error)) {
 
 This allows handlers to signal "this failed permanently, don't retry" for errors like invalid data, missing resources, or business rule violations.
 
-The worker hands the provider the handler's original error, in the pull model through `nack()` and in the push model as the rejection of the handler given to `process()`. That value is an `Error` or a structured object; only a thrown primitive is wrapped in an `Error`. A push provider whose backend requires `Error` objects converts at its own boundary: BullMQ's processor translates a permanent error to `UnrecoverableError` and wraps any other non-`Error`, keeping the original as `cause`.
+The worker hands the provider the handler's original error, in the pull model through `nack()` and in the push model as the rejection of the handler given to `process()`. That value is an `Error` or a structured object; only a thrown primitive is wrapped in an `Error`, with the primitive as `cause`. A push provider whose backend requires `Error` objects converts at its own boundary: BullMQ's processor translates a permanent error to `UnrecoverableError` and wraps any other non-`Error`, keeping the original as `cause`. That conversion covers the whole processor (the mapping of the BullMQ job as well as the handler), so nothing but a readable `Error` reaches BullMQ.
+
+The worker and the provider each apply the same pure predicate, `isPermanentError`, to that value. All of the inspection helpers in `src/core/errors.mts` are guarded: a throwing getter, an object with no prototype or a Proxy cannot make them throw.
 
 **Provider-Specific Behavior**:
 
@@ -321,7 +323,7 @@ The worker hands the provider the handler's original error, in the pull model th
 - Sends `nack` with `requeue=true` for retryable failures
 - If max retries exceeded (tracked via headers): Routes to dead letter exchange
 
-**Key Principle**: The library does NOT implement retry logic. It delegates to the provider's battle-tested native implementation. The permanence rule (`PermanentJobError`, or the `retryable: false` flag) provides a cross-provider way to signal permanent failures, in the providers that can honour it (memory, BullMQ).
+**Key Principle**: The adapters for real backends (BullMQ, SQS) do NOT implement retry logic: they delegate to the backend's battle-tested native implementation. The one exception is `MemoryProvider`, which has no backend to delegate to and so implements the requeue and the attempt-budget decision itself, in its `nack()`. The permanence rule (`PermanentJobError`, or the `retryable: false` flag) provides a cross-provider way to signal permanent failures, in the providers that can honour it (memory, BullMQ).
 
 ---
 

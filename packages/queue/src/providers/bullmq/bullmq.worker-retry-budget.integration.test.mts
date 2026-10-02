@@ -220,4 +220,109 @@ describe("Worker + BullMQProvider - retry budget (Integration)", () => {
       }
     }
   });
+
+  // structured objects, not Errors: the provider converts them at its
+  // boundary, and real BullMQ must end up with a usable failure either way
+  it.each([
+    {
+      label: "a plain object carrying retryable: false is not retried",
+      error: {
+        type: "DataError",
+        code: "VALIDATION",
+        message: "plain object, never retry",
+        retryable: false,
+      },
+      runs: 1,
+      permanent: [true],
+      willRetry: [false],
+    },
+    {
+      // the shape an unrecognised provider error is mapped to
+      label: "a plain object carrying retryable: true is retried for its budget",
+      error: {
+        type: "RuntimeError",
+        code: "PROCESSING",
+        message: "READONLY You can't write against a read only replica.",
+        retryable: true,
+      },
+      runs: 3,
+      permanent: [false, false, false],
+      willRetry: [true, true, false],
+    },
+  ])(
+    "should fail the job with the object's message when the handler throws a structured error: $label (push model)",
+    async ({ error, runs, permanent, willRetry }) => {
+      const queueName = `retry-budget-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      const jobId = "job-structured";
+      const boundProvider = provider.forQueue(queueName);
+
+      const handler = vi.fn<JobHandler<unknown>>().mockImplementation(() =>
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- a handler can throw a structured error
+        Promise.reject(error),
+      );
+
+      const worker = new Worker(queueName, handler, { provider });
+
+      const failedEvents: FailedEventPayload[] = [];
+      worker.on("failed", (payload) => {
+        failedEvents.push(payload);
+      });
+
+      try {
+        const added = await boundProvider.add(
+          {
+            id: jobId,
+            name: "test-job",
+            queueName,
+            data: { foo: "bar" },
+            status: "waiting",
+            attempts: 0,
+            maxAttempts: 3,
+            createdAt: new Date(),
+          },
+          {
+            removeOnFail: false,
+            providerOptions: {
+              bullmq: { backoff: { type: "fixed", delay: 20 } },
+            },
+          },
+        );
+        if (!added.success) {
+          throw new Error(`Failed to add job: ${added.error.message}`);
+        }
+
+        worker.start();
+
+        const bullQueue = provider.getBullMQQueue(queueName);
+        expect(bullQueue).toBeDefined();
+
+        await vi.waitFor(
+          async () => {
+            const bullJob = await bullQueue!.getJob(jobId);
+            expect(await bullJob?.getState()).toBe("failed");
+          },
+          { timeout: 15000, interval: 50 },
+        );
+        // long enough for another run, had BullMQ scheduled one
+        await new Promise((resolve) => setTimeout(resolve, 300));
+
+        expect(handler).toHaveBeenCalledTimes(runs);
+        expect(failedEvents.map((e) => e.permanent)).toEqual(permanent);
+        expect(failedEvents.map((e) => e.willRetry)).toEqual(willRetry);
+        expect(failedEvents.every((e) => e.error === error.message)).toBe(true);
+
+        const bullJob = await bullQueue!.getJob(jobId);
+        expect(await bullJob?.getState()).toBe("failed");
+        expect(bullJob?.attemptsMade).toBe(runs);
+        expect(bullJob?.failedReason).toBe(error.message);
+      } finally {
+        try {
+          await worker.close();
+        } finally {
+          const deleted = await boundProvider.delete();
+          expect(deleted.success).toBe(true);
+        }
+      }
+    },
+  );
 });
