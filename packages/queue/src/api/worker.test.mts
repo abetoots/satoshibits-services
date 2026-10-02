@@ -1114,7 +1114,7 @@ describe("Worker - Hybrid Push/Pull Model", () => {
       });
 
       const failedEvents: FailedEventPayload[] = [];
-      const retryingEvents: { attempts: number }[] = [];
+      const retryingEvents: unknown[] = [];
       worker.on("failed", (payload) => {
         failedEvents.push(payload);
       });
@@ -1158,7 +1158,23 @@ describe("Worker - Hybrid Push/Pull Model", () => {
       }
 
       // one job.retrying per retry that will actually happen: two, not three
-      expect(retryingEvents.map((e) => e.attempts)).toEqual([1, 2]);
+      // `attempts` on this event is the number the retry will run with
+      expect(retryingEvents).toEqual([
+        {
+          jobId: "job-last-attempt",
+          queueName: "test-queue",
+          attempts: 1,
+          status: "waiting",
+          maxAttempts: 3,
+        },
+        {
+          jobId: "job-last-attempt",
+          queueName: "test-queue",
+          attempts: 2,
+          status: "waiting",
+          maxAttempts: 3,
+        },
+      ]);
 
       await worker.close();
     });
