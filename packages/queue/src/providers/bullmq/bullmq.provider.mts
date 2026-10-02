@@ -30,7 +30,7 @@ import type {
   QueueError,
   QueueStats,
 } from "../../core/types.mjs";
-import { PermanentJobError } from "../../core/errors.mjs";
+import { getErrorMessage, isPermanentError } from "../../core/errors.mjs";
 import type { BullMQDefaultJobOptions } from "../provider-options.mjs";
 import type {
   IProviderFactory,
@@ -628,8 +628,9 @@ export class BullMQProvider implements IProviderFactory {
    * Internal: Negative acknowledge - job failed (pull model)
    * Delegates to BullMQ's native retry logic.
    *
-   * If error has `retryable: false`, wraps in UnrecoverableError to signal
-   * permanent failure to BullMQ (skips retry, moves directly to failed).
+   * If the error is permanent (`isPermanentError`: a `PermanentJobError`, or
+   * `retryable: false`), wraps in UnrecoverableError to signal permanent
+   * failure to BullMQ (skips retry, moves directly to failed).
    */
   async _nackJob<T>(
     queueName: string,
@@ -669,19 +670,9 @@ export class BullMQProvider implements IProviderFactory {
         return Result.err(QueueErrorFactory.jobNotFound(jobId, queueName));
       }
 
-      // check if error signals permanent failure (retryable: false)
-      // if so, wrap in UnrecoverableError to tell BullMQ to skip retries
-      const isPermanentFailure =
-        error instanceof PermanentJobError ||
-        ("retryable" in error && error.retryable === false);
-
-      const errorToPass = isPermanentFailure
-        ? Object.assign(new UnrecoverableError(error.message), {
-            cause: error,
-          })
-        : error instanceof Error
-          ? error
-          : new Error(error.message);
+      // a permanent error becomes UnrecoverableError, which tells BullMQ to
+      // skip the retries; anything else that is not an Error is wrapped
+      const errorToPass = this.toBullMQError(error);
 
       // delegate to BullMQ's native retry logic using the correct token
       // BullMQ will check attemptsMade vs attempts and handle retry/DLQ automatically
@@ -692,6 +683,33 @@ export class BullMQProvider implements IProviderFactory {
     } catch (error) {
       return Result.err(this.mapError(error, queueName));
     }
+  }
+
+  /**
+   * Translate a job failure into the Error BullMQ is given, at the provider
+   * boundary (push processor and pull `nack` alike).
+   *
+   * - permanent (see `isPermanentError`): an `UnrecoverableError`, which makes
+   *   BullMQ fail the job without retrying it, with the original as `cause`
+   * - any other `Error`: unchanged
+   * - anything else (a structured object, a primitive): wrapped in an `Error`
+   *   with the original as `cause`. BullMQ reads `message` and `stack` off
+   *   the failure, so it must always be an `Error`
+   */
+  private toBullMQError(error: unknown): Error {
+    if (isPermanentError(error)) {
+      const unrecoverable = new UnrecoverableError(getErrorMessage(error));
+      unrecoverable.cause = error;
+      return unrecoverable;
+    }
+
+    if (error instanceof Error) {
+      return error;
+    }
+
+    const wrapped = new Error(getErrorMessage(error));
+    wrapped.cause = error;
+    return wrapped;
   }
 
   /**
@@ -745,15 +763,9 @@ export class BullMQProvider implements IProviderFactory {
             await handler(job);
             return { success: true };
           } catch (handlerError) {
-            // translate PermanentJobError to BullMQ's native non-retry mechanism
-            if (handlerError instanceof PermanentJobError) {
-              const unrecoverable = new UnrecoverableError(
-                handlerError.message,
-              );
-              unrecoverable.cause = handlerError;
-              throw unrecoverable;
-            }
-            throw handlerError;
+            // translate a permanent error to BullMQ's native non-retry
+            // mechanism, and never hand BullMQ a value that is not an Error
+            throw this.toBullMQError(handlerError);
           }
         },
         {

@@ -364,17 +364,15 @@ await worker.start();
 ```
 
 When you throw a `PermanentJobError`, the Worker:
-1. Detects it via `instanceof PermanentJobError`
+1. Detects it with the permanence rule (`isPermanentError`: a `PermanentJobError`, or any error carrying `retryable: false`)
 2. Emits a `failed` event with `permanent: true` and `willRetry: false`
-3. Tells the provider to skip all remaining retries (BullMQ translates to `UnrecoverableError`)
+3. Hands the error to the provider, which skips all remaining retries (BullMQ translates it to `UnrecoverableError`; SQS does not apply the rule, see below)
 
 > **Anti-pattern warning:** Don't use `Result.ok(undefined)` to handle permanent errors. While it prevents retries, it marks the job as *completed* — hiding the failure from DLQ monitoring, metrics, and `failed` event listeners. Use `PermanentJobError` instead so the job is correctly marked as *failed*.
 
 **Alternative: Using `QueueError` with `retryable: false`**
 
-> **Known limits (as of 3.2.0).** Through a `Worker`, this alternative works only when the thrown value is an `Error` instance carrying `retryable: false`, and only in the memory provider and BullMQ's pull model. A plain object like the one below is wrapped in `new Error(String(error))` before the provider sees it, loses the flag, so the flag does not stop the retries; BullMQ's push model never applies the rule. The `failed` event reports `permanent: false` in every case. Prefer `PermanentJobError`. See "What `willRetry` does not cover" under the `failed` event example.
-
-For pull-model providers (MemoryProvider) or when you need explicit control, you can throw a `QueueError` with `retryable: false` to signal permanent failure:
+An error carrying `retryable: false` is permanent in the same way as a `PermanentJobError`. It can be a plain structured object such as a `QueueError`, or an `Error` instance with that property, and it can be thrown or returned through `Result.err`:
 
 ```typescript
 import type { QueueError } from '@satoshibits/queue';
@@ -401,12 +399,14 @@ const worker = new Worker('payments', async (data, job) => {
 });
 ```
 
-When `nack()` receives an error with `retryable: false`, the provider will:
-- Skip all remaining retry attempts
-- Move the job directly to failed state
-- Respect `removeOnFail` option (job is removed or kept in failed state)
+The Worker emits `failed` with `permanent: true` and `willRetry: false` (no `job.retrying`), with the object's `message` as `error` and the object itself as `structuredError`. The provider then:
+- Skips all remaining retry attempts
+- Moves the job directly to failed state
+- Respects the `removeOnFail` option (job is removed or kept in failed state)
 
-This works for both push-model (BullMQ) and pull-model (MemoryProvider) providers.
+This holds for the memory provider and for BullMQ in both models (push, the one a `Worker` uses with `BullMQProvider`, and pull). BullMQ is always handed an `Error`: a permanent error becomes an `UnrecoverableError` whose `cause` is your original value.
+
+> **Limits.** SQS does not apply the rule: it retries by its redrive policy whatever the error says (see "What `willRetry` does not cover"). Before 3.2.0, BullMQ's push model retried an error carrying `retryable: false`, a plain object lost the flag and its message (`error: "[object Object]"`), and the `failed` event reported `permanent: false` for both.
 
 ### Mistake 2: Forgetting Graceful Shutdown
 
@@ -1047,7 +1047,7 @@ const worker = new Worker('orders', async (data, job) => {
 });
 ```
 
-**`TransientJobError`** — Optional. Explicitly marks errors as retryable. Any non-`PermanentJobError` throw is treated as transient by default, so this is only needed when you want to be explicit:
+**`TransientJobError`** — Optional. Explicitly marks errors as retryable. Any throw that is not a `PermanentJobError` and does not carry `retryable: false` is treated as transient by default, so this is only needed when you want to be explicit:
 
 ```typescript
 if (apiResponse.status === 503) {
@@ -1058,12 +1058,14 @@ if (apiResponse.status === 503) {
 **How it works internally:**
 
 ```
-throw PermanentJobError
-  → Worker detects via instanceof
+throw PermanentJobError (or an error carrying retryable: false)
+  → Worker detects via isPermanentError
   → Emits failed event with { permanent: true, willRetry: false }
   → Provider skips all remaining retries
-    (BullMQ: translates to UnrecoverableError)
+    (BullMQ: translates to UnrecoverableError; SQS: not applied)
 ```
+
+`isPermanentError` is exported, so a custom provider or an event consumer can apply the same rule.
 
 The `failed` event payload includes a `permanent` field so your event handlers can differentiate:
 
@@ -1080,18 +1082,17 @@ worker.on('failed', (payload) => {
 });
 ```
 
-`willRetry` is the worker's prediction from the job's own budget: `false` for a `PermanentJobError`, and `false` on the last attempt (`attempts` counts the attempts made before the current one, so the last attempt of `maxAttempts: 3` runs with `attempts: 2`). `job.retrying` is emitted only when `willRetry` is `true`. Before 3.2.0 the last attempt still reported `willRetry: true`.
+`willRetry` is the worker's prediction from the job's own budget: `false` for a permanent error (a `PermanentJobError`, or one carrying `retryable: false`), and `false` on the last attempt (`attempts` counts the attempts made before the current one, so the last attempt of `maxAttempts: 3` runs with `attempts: 2`). `job.retrying` is emitted only when `willRetry` is `true`. Before 3.2.0 the last attempt still reported `willRetry: true`.
 
 **What `willRetry` does not cover.** It is a prediction, not a confirmation, and the provider has the last word:
 
 - **In the push model (BullMQ) the event is emitted before the provider records the failure.** If that write fails (for example a lost lock), the job can run again after a `willRetry: false` event. In the pull model (memory, SQS) the worker awaits the provider's `nack()` first and emits `failed` after it; if the `nack()` returns an error, the worker emits `queue.error` and then still emits `failed` with the same prediction. In both models, a job the provider fails without calling your handler (a stalled job past its limit) emits no `failed` event at all. Make the handler for "retries exhausted" idempotent and keep a reconciliation path.
 - **SQS retries by its redrive policy**, not by `maxAttempts`: when the queue has a redrive policy, a message is redelivered until its `maxReceiveCount`, whatever `willRetry` said (without one it is redelivered until it expires). Configure the policy and keep `maxReceiveCount` equal to `maxAttempts`.
-- **Only `PermanentJobError` is reported as permanent.** Each of the following stops the retries while the event still says `permanent: false` and, before the last attempt, `willRetry: true`:
-  - An `Error` instance carrying `retryable: false`, in the memory provider and in BullMQ's `nack()` (pull model). It has to be an `Error` instance: the worker wraps anything else in `new Error(String(error))` before the `nack()`, so a plain object such as `Result.err({ ..., retryable: false })` loses the flag and is retried. BullMQ's push model, the one a `Worker` uses with `BullMQProvider`, does not apply this rule at all: it translates only `PermanentJobError`, and the flag alone does not suppress its retries.
-  - BullMQ's own `UnrecoverableError`, in BullMQ.
+- **BullMQ's own ways of stopping the retries are outside the event's knowledge.** Each of the following stops the retries while the event still says `permanent: false` and, before the last attempt, `willRetry: true`:
+  - BullMQ's own `UnrecoverableError`, thrown by your handler.
   - `job.discard()` on the BullMQ job, or a custom BullMQ backoff strategy returning `-1`.
 
-  Throw `PermanentJobError` when a consumer acts on this event.
+  Throw `PermanentJobError`, or an error carrying `retryable: false`, when a consumer acts on this event.
 
 > **Anti-pattern:** Using `Result.ok(undefined)` for permanent errors marks the job as *completed*, hiding failures from DLQ monitoring, metrics, and `failed` event listeners. Always use `PermanentJobError` instead.
 

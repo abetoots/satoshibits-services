@@ -128,4 +128,96 @@ describe("Worker + BullMQProvider - retry budget (Integration)", () => {
       }
     }
   });
+
+  it("should run a job once when the handler returns an Error carrying retryable: false, whatever its budget (push model)", async () => {
+    const queueName = `retry-budget-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    const jobId = "job-permanent";
+    const boundProvider = provider.forQueue(queueName);
+
+    const handler = vi
+      .fn<JobHandler<unknown>>()
+      .mockImplementation(() =>
+        Promise.resolve(
+          Result.err(
+            Object.assign(new Error("never retry this"), { retryable: false }),
+          ),
+        ),
+      );
+
+    const worker = new Worker(queueName, handler, { provider });
+
+    const failedEvents: FailedEventPayload[] = [];
+    const retryingEvents: JobRetryingEventPayload[] = [];
+    worker.on("failed", (payload) => {
+      failedEvents.push(payload);
+    });
+    worker.on("job.retrying", (payload) => {
+      retryingEvents.push(payload);
+    });
+
+    try {
+      const added = await boundProvider.add(
+        {
+          id: jobId,
+          name: "test-job",
+          queueName,
+          data: { foo: "bar" },
+          status: "waiting",
+          attempts: 0,
+          maxAttempts: 3,
+          createdAt: new Date(),
+        },
+        {
+          // keep the failed job so its final state can be read back
+          removeOnFail: false,
+          // a tiny backoff instead of the provider's 1s exponential default
+          providerOptions: { bullmq: { backoff: { type: "fixed", delay: 20 } } },
+        },
+      );
+      if (!added.success) {
+        throw new Error(`Failed to add job: ${added.error.message}`);
+      }
+
+      worker.start();
+
+      // BullMQ's own record of the job, not the library's mapping of it
+      const bullQueue = provider.getBullMQQueue(queueName);
+      expect(bullQueue).toBeDefined();
+
+      await vi.waitFor(
+        async () => {
+          const bullJob = await bullQueue!.getJob(jobId);
+          expect(await bullJob?.getState()).toBe("failed");
+        },
+        { timeout: 15000, interval: 50 },
+      );
+      // long enough for a second run, had BullMQ scheduled one
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(failedEvents).toHaveLength(1);
+      expect(failedEvents[0]).toMatchObject({
+        attempts: 0,
+        error: "never retry this",
+        permanent: true,
+        willRetry: false,
+      });
+      expect(retryingEvents).toHaveLength(0);
+
+      const bullJob = await bullQueue!.getJob(jobId);
+      expect(await bullJob?.getState()).toBe("failed");
+      expect(bullJob?.attemptsMade).toBe(1);
+      expect(bullJob?.opts.attempts).toBe(3);
+      expect(bullJob?.failedReason).toBe("never retry this");
+    } finally {
+      // cleanup: stop the worker, then remove every key of this queue
+      // the keys are removed even if the worker fails to close
+      try {
+        await worker.close();
+      } finally {
+        const deleted = await boundProvider.delete();
+        expect(deleted.success).toBe(true);
+      }
+    }
+  });
 });

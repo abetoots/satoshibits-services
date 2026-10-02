@@ -62,7 +62,11 @@ export type { IBullMQWorkerExtensions } from "./providers/bullmq/bullmq-worker-e
 export { MemoryProvider } from "./providers/memory/memory.provider.mjs";
 
 // Error Classes
-export { PermanentJobError, TransientJobError } from "./core/errors.mjs";
+export {
+  PermanentJobError,
+  TransientJobError,
+  isPermanentError,
+} from "./core/errors.mjs";
 
 // Utilities (for advanced use cases)
 export { QueueErrorFactory } from "./core/utils.mjs";

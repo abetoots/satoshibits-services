@@ -16,7 +16,7 @@ import type {
   ProcessorShutdownTimeoutEventPayload,
   QueueErrorEventPayload,
 } from "../core/events.mjs";
-import type { Job, JobHandler } from "../core/types.mjs";
+import type { Job, JobHandler, QueueError } from "../core/types.mjs";
 import type { IQueueProvider } from "../providers/provider.interface.mjs";
 
 import { PermanentJobError } from "../core/errors.mjs";
@@ -1973,7 +1973,12 @@ describe("Worker + MemoryProvider - retry budget", () => {
     await provider.disconnect();
   });
 
-  async function runUntilFailed(maxAttempts: number) {
+  async function runUntilFailed(
+    maxAttempts: number,
+    // how the handler fails on every run
+    fail: JobHandler<unknown> = () =>
+      Promise.resolve(Result.err(new Error("always fails"))),
+  ) {
     const queueName = "retry-budget";
     const bound = provider.forQueue(queueName);
 
@@ -1993,9 +1998,7 @@ describe("Worker + MemoryProvider - retry budget", () => {
     );
     expect(added.success).toBe(true);
 
-    const handlerRuns = vi
-      .fn<JobHandler<unknown>>()
-      .mockResolvedValue(Result.err(new Error("always fails")));
+    const handlerRuns = vi.fn<JobHandler<unknown>>().mockImplementation(fail);
 
     const worker = new Worker(queueName, handlerRuns, {
       provider,
@@ -2058,4 +2061,291 @@ describe("Worker + MemoryProvider - retry budget", () => {
 
     expect(stored).toMatchObject({ status: "failed", attempts: 1 });
   });
+
+  // a `retryable: false` error ends the job on its first run, whatever the
+  // budget, and the event says so
+  describe.each([
+    {
+      shape: "an Error instance carrying retryable: false",
+      makeError: (): Error =>
+        Object.assign(new Error("flagged error"), { retryable: false }),
+      message: "flagged error",
+    },
+    {
+      shape: "a plain object carrying retryable: false",
+      makeError: (): QueueError => ({
+        type: "DataError",
+        code: "VALIDATION",
+        message: "plain object error",
+        retryable: false,
+      }),
+      message: "plain object error",
+    },
+  ])("$shape", ({ makeError, message }) => {
+    it.each([
+      {
+        delivery: "returned via Result.err",
+        fail: (): ReturnType<JobHandler<unknown>> =>
+          Promise.resolve(Result.err(makeError())),
+      },
+      {
+        delivery: "thrown",
+        fail: (): ReturnType<JobHandler<unknown>> =>
+          // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- a handler can throw a structured error
+          Promise.reject(makeError()),
+      },
+    ])(
+      "should run the handler once with a budget of 3 when $delivery",
+      async ({ fail }) => {
+        const { failedEvents, retryingEvents, handlerRuns, stored } =
+          await runUntilFailed(3, fail);
+
+        expect(handlerRuns).toHaveBeenCalledTimes(1);
+        expect(failedEvents).toHaveLength(1);
+        expect(failedEvents[0]).toMatchObject({
+          attempts: 0,
+          error: message,
+          permanent: true,
+          willRetry: false,
+        });
+        expect(retryingEvents).toHaveLength(0);
+
+        // the provider's own record: failed after the one attempt
+        expect(stored).toMatchObject({
+          status: "failed",
+          attempts: 1,
+          error: message,
+        });
+      },
+    );
+  });
+});
+
+// one permanence rule: a PermanentJobError, or anything carrying
+// `retryable: false`. the worker reports it on the `failed` event and hands
+// the provider the original value, flag intact, in both models
+describe("Worker - permanence rule", () => {
+  const shapes = [
+    {
+      shape: "an Error instance carrying retryable: false",
+      makeError: (): unknown =>
+        Object.assign(new Error("flagged error"), { retryable: false }),
+      message: "flagged error",
+      permanent: true,
+    },
+    {
+      shape: "a plain object carrying retryable: false",
+      makeError: (): unknown => ({
+        type: "DataError",
+        code: "VALIDATION",
+        message: "plain object error",
+        retryable: false,
+      }),
+      message: "plain object error",
+      permanent: true,
+    },
+    {
+      shape: "a PermanentJobError",
+      makeError: (): unknown => new PermanentJobError("permanent error"),
+      message: "permanent error",
+      permanent: true,
+    },
+    {
+      shape: "a plain Error",
+      makeError: (): unknown => new Error("plain error"),
+      message: "plain error",
+      permanent: false,
+    },
+    // not permanent, and still not an Error: the message and the value survive
+    {
+      shape: "a plain object carrying retryable: true",
+      makeError: (): unknown => ({
+        type: "RuntimeError",
+        code: "TIMEOUT",
+        message: "retryable object error",
+        retryable: true,
+      }),
+      message: "retryable object error",
+      permanent: false,
+    },
+  ];
+  const deliveries = ["thrown", "returned via Result.err"] as const;
+  const models = ["push", "pull"] as const;
+
+  const matrix = shapes.flatMap((s) =>
+    deliveries.flatMap((delivery) =>
+      models.map((model) => ({ ...s, delivery, model })),
+    ),
+  );
+
+  function createProvider(): IQueueProvider {
+    return {
+      capabilities: {
+        supportsDelayedJobs: true,
+        supportsPriority: true,
+        supportsRetries: true,
+        supportsDLQ: false,
+        supportsBatching: true,
+        supportsLongPolling: false,
+        maxJobSize: 0,
+        maxBatchSize: 0,
+        maxDelaySeconds: 0,
+      },
+      connect: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn().mockResolvedValue(undefined),
+      add: vi.fn(),
+      getJob: vi.fn(),
+      pause: vi.fn(),
+      resume: vi.fn(),
+      delete: vi.fn(),
+      getStats: vi.fn(),
+      getHealth: vi.fn(),
+    };
+  }
+
+  function createJob(): Job<unknown> {
+    return {
+      id: "job-1",
+      name: "test-job",
+      queueName: "test-queue",
+      data: {},
+      status: "active",
+      // the first attempt of three: only permanence can rule out a retry
+      attempts: 0,
+      maxAttempts: 3,
+      createdAt: new Date(),
+    };
+  }
+
+  /**
+   * run one job through a worker in the given model and return what the
+   * provider was handed as the failure
+   */
+  async function failOnce(
+    model: "push" | "pull",
+    handler: JobHandler<unknown>,
+  ): Promise<{
+    failedEvents: FailedEventPayload[];
+    retryingEvents: JobRetryingEventPayload[];
+    handedToProvider: unknown;
+  }> {
+    const provider = createProvider();
+    const job = createJob();
+    const failedEvents: FailedEventPayload[] = [];
+    const retryingEvents: JobRetryingEventPayload[] = [];
+    let handedToProvider: unknown;
+
+    let capturedHandler: ((job: Job) => Promise<void>) | undefined;
+    const nack = vi.fn().mockResolvedValue(Result.ok(undefined));
+
+    if (model === "push") {
+      provider.process = vi.fn((instrumented) => {
+        capturedHandler = instrumented as (job: Job) => Promise<void>;
+        return vi.fn();
+      });
+    } else {
+      provider.fetch = vi
+        .fn()
+        .mockResolvedValueOnce(Result.ok([job]))
+        .mockResolvedValue(Result.ok([]));
+      provider.ack = vi.fn().mockResolvedValue(Result.ok(undefined));
+      provider.nack = nack;
+    }
+
+    const worker = new Worker("test-queue", handler, {
+      provider,
+      pollInterval: 10,
+      errorBackoff: 100,
+    });
+    worker.on("failed", (payload) => {
+      failedEvents.push(payload);
+    });
+    worker.on("job.retrying", (payload) => {
+      retryingEvents.push(payload);
+    });
+
+    worker.start();
+
+    try {
+      if (model === "push") {
+        // the provider's side of the push model: it awaits the instrumented
+        // handler and acts on whatever it rejects with
+        handedToProvider = await capturedHandler!(job).then(
+          () => {
+            throw new Error("the instrumented handler should have rejected");
+          },
+          (rejection: unknown) => rejection,
+        );
+      } else {
+        await vi.waitFor(() => {
+          expect(failedEvents).toHaveLength(1);
+        });
+        expect(nack).toHaveBeenCalledTimes(1);
+        expect(nack.mock.calls[0]?.[0]).toBe(job);
+        handedToProvider = nack.mock.calls[0]?.[1] as unknown;
+      }
+    } finally {
+      await worker.close();
+    }
+
+    return { failedEvents, retryingEvents, handedToProvider };
+  }
+
+  it.each(matrix)(
+    "$shape, $delivery ($model model): permanent $permanent",
+    async ({ makeError, message, permanent, delivery, model }) => {
+      const original = makeError();
+      const handler: JobHandler<unknown> =
+        delivery === "thrown"
+          ? // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- a handler can throw a structured error
+            () => Promise.reject(original)
+          : () => Promise.resolve(Result.err(original as Error | QueueError));
+
+      const { failedEvents, retryingEvents, handedToProvider } = await failOnce(
+        model,
+        handler,
+      );
+
+      expect(failedEvents).toHaveLength(1);
+      expect(failedEvents[0]).toMatchObject({
+        jobId: "job-1",
+        attempts: 0,
+        error: message,
+        permanent,
+        // attempt 1 of 3: retried unless the error is permanent
+        willRetry: !permanent,
+      });
+      // the very value the handler produced, not a copy or a wrapper
+      expect(failedEvents[0]?.structuredError).toBe(original);
+      expect(retryingEvents).toHaveLength(permanent ? 0 : 1);
+
+      // the provider decides the retry from this value: it must be the
+      // original, with its `retryable` flag
+      expect(handedToProvider).toBe(original);
+    },
+  );
+
+  // a primitive cannot carry the flag and has no message: it still reaches
+  // the provider as an Error
+  it.each(models)(
+    "should hand the provider an Error for a thrown string (%s model)",
+    async (model) => {
+      const { failedEvents, retryingEvents, handedToProvider } = await failOnce(
+        model,
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- a handler can throw anything
+        () => Promise.reject("a thrown string"),
+      );
+
+      expect(failedEvents).toHaveLength(1);
+      expect(failedEvents[0]).toMatchObject({
+        error: "a thrown string",
+        permanent: false,
+        willRetry: true,
+        structuredError: "a thrown string",
+      });
+      expect(retryingEvents).toHaveLength(1);
+      expect(handedToProvider).toBeInstanceOf(Error);
+      expect((handedToProvider as Error).message).toBe("a thrown string");
+    },
+  );
 });
