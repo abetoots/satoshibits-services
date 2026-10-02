@@ -10,6 +10,6 @@ The worker compared `job.attempts` (the attempts made _before_ the current one) 
 - `job.retrying`: emitted only when `willRetry` is `true` (`maxAttempts - 1` times at most), no longer after the last attempt.
 - `PermanentJobError` behaviour is unchanged (`permanent: true`, `willRetry: false`, no `job.retrying`).
 
-`willRetry` remains the worker's prediction from the job's own budget; the README now lists where a provider can decide otherwise (SQS redrive policy, errors with `retryable: false`, BullMQ's `UnrecoverableError`, a failure the provider could not record).
+`willRetry` remains the worker's prediction from the job's own budget; the README now lists where a provider can decide otherwise (SQS redrive policy, `Error` instances carrying `retryable: false`, BullMQ's `UnrecoverableError`, `job.discard()` and a backoff strategy returning `-1`, a failure the provider could not record).
 
 Released as a minor because consumers that worked around the old behaviour (for example by counting attempts themselves) now also receive the corrected signal.
