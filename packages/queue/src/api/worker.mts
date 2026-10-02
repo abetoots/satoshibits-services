@@ -438,6 +438,12 @@ export class Worker<T = unknown> extends TypedEventEmitter {
         await callbacks.onFailure(errorObj);
       }
 
+      // `job.attempts` counts the attempts made before this one, so this is
+      // attempt `job.attempts + 1`: the last attempt of the budget is not
+      // retried
+      const permanent = errorObj instanceof PermanentJobError;
+      const willRetry = !permanent && job.attempts + 1 < job.maxAttempts;
+
       this.emit("failed", {
         jobId: job.id,
         queueName: this.queueName,
@@ -446,13 +452,13 @@ export class Worker<T = unknown> extends TypedEventEmitter {
         attempts: job.attempts,
         status: job.status,
         duration: Date.now() - startTime,
-        willRetry: !(errorObj instanceof PermanentJobError) && job.attempts < job.maxAttempts,
+        willRetry,
         structuredError: error as QueueError | Error,
-        permanent: errorObj instanceof PermanentJobError,
+        permanent,
       });
 
       // emit job.retrying if the job will be retried
-      if (!(errorObj instanceof PermanentJobError) && job.attempts < job.maxAttempts) {
+      if (willRetry) {
         this.emit("job.retrying", {
           jobId: job.id,
           queueName: this.queueName,

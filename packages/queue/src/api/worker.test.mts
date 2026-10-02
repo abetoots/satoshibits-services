@@ -1096,6 +1096,73 @@ describe("Worker - Hybrid Push/Pull Model", () => {
       await worker.close();
     });
 
+    it("should report willRetry: false and emit no job.retrying on the last attempt", async () => {
+      let capturedHandler: ((job: Job) => Promise<void>) | null = null;
+
+      mockProvider.process = vi.fn((handler) => {
+        capturedHandler = handler as (job: Job) => Promise<void>;
+        return vi.fn();
+      });
+
+      const failure = new TypeError("Network timeout");
+      handlerSpy.mockResolvedValue(Result.err(failure));
+
+      const worker = new Worker("test-queue", handler, {
+        provider: mockProvider,
+        pollInterval: 10,
+        errorBackoff: 100,
+      });
+
+      const failedEvents: FailedEventPayload[] = [];
+      const retryingEvents: { attempts: number }[] = [];
+      worker.on("failed", (payload) => {
+        failedEvents.push(payload);
+      });
+      worker.on("job.retrying", (payload) => {
+        retryingEvents.push(payload);
+      });
+
+      worker.start();
+
+      // `attempts` is the number of attempts made BEFORE this one (BullMQ's
+      // attemptsMade), so a job with maxAttempts 3 runs with attempts 0, 1, 2
+      for (const attempts of [0, 1, 2]) {
+        const job: Job<unknown> = {
+          id: "job-last-attempt",
+          name: "test-job",
+          queueName: "test-queue",
+          data: {},
+          status: "active",
+          attempts,
+          maxAttempts: 3,
+          createdAt: new Date(),
+        };
+        await expect(capturedHandler!(job)).rejects.toThrow("Network timeout");
+      }
+
+      expect(failedEvents.map((e) => e.willRetry)).toEqual([
+        true,
+        true,
+        false,
+      ]);
+      expect(failedEvents.map((e) => e.permanent)).toEqual([
+        false,
+        false,
+        false,
+      ]);
+      expect(failedEvents.map((e) => e.attempts)).toEqual([0, 1, 2]);
+      // the error's own name and the error object itself, on every attempt
+      for (const event of failedEvents) {
+        expect(event.errorType).toBe("TypeError");
+        expect(event.structuredError).toBe(failure);
+      }
+
+      // one job.retrying per retry that will actually happen: two, not three
+      expect(retryingEvents.map((e) => e.attempts)).toEqual([1, 2]);
+
+      await worker.close();
+    });
+
     it("should emit queue.error on fetch failure", async () => {
       vi.mocked(mockProvider.fetch!).mockResolvedValue(
         Result.err({

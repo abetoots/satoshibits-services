@@ -1078,6 +1078,8 @@ worker.on('failed', (payload) => {
 });
 ```
 
+`willRetry` is `false` on the last attempt of the job's budget (`attempts` counts the attempts made before the current one, so the last attempt of `maxAttempts: 3` runs with `attempts: 2`), and `job.retrying` is emitted only for a retry that will actually run. Before 3.2.0 the last attempt still reported `willRetry: true`.
+
 > **Anti-pattern:** Using `Result.ok(undefined)` for permanent errors marks the job as *completed*, hiding failures from DLQ monitoring, metrics, and `failed` event listeners. Always use `PermanentJobError` instead.
 
 ### 4. TypeScript Support
