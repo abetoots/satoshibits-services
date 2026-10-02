@@ -12,6 +12,7 @@ import type {
   ActiveEventPayload,
   CompletedEventPayload,
   FailedEventPayload,
+  JobRetryingEventPayload,
   ProcessorShutdownTimeoutEventPayload,
   QueueErrorEventPayload,
 } from "../core/events.mjs";
@@ -19,6 +20,7 @@ import type { Job, JobHandler } from "../core/types.mjs";
 import type { IQueueProvider } from "../providers/provider.interface.mjs";
 
 import { PermanentJobError } from "../core/errors.mjs";
+import { MemoryProvider } from "../providers/memory/memory.provider.mjs";
 import { Worker } from "./worker.mjs";
 
 describe("Worker - Hybrid Push/Pull Model", () => {
@@ -860,7 +862,7 @@ describe("Worker - Hybrid Push/Pull Model", () => {
         queueName: "test-queue",
         error: "Processing failed",
         errorType: "Error",
-        willRetry: true, // attempts (0) < maxAttempts (3)
+        willRetry: true, // attempt 1 of 3: attempts (0) + 1 < maxAttempts (3)
         permanent: false,
       });
 
@@ -870,6 +872,11 @@ describe("Worker - Hybrid Push/Pull Model", () => {
     it.each([
       { attempts: 2, maxAttempts: 3, label: "the third of three" },
       { attempts: 0, maxAttempts: 1, label: "the only attempt of one" },
+      // over budget: the provider handed out a job that already used it all
+      { attempts: 3, maxAttempts: 3, label: "an attempt past a budget of 3" },
+      { attempts: 5, maxAttempts: 3, label: "an attempt far past the budget" },
+      // zero budget: a bullmq job added without `attempts` carries 0
+      { attempts: 0, maxAttempts: 0, label: "the only attempt of a 0 budget" },
     ])(
       "should emit willRetry: false and no job.retrying on $label (pull model)",
       async ({ attempts, maxAttempts }) => {
@@ -924,6 +931,67 @@ describe("Worker - Hybrid Push/Pull Model", () => {
         await worker.close();
       },
     );
+
+    it("should emit willRetry: true and one job.retrying on the second of three (pull model)", async () => {
+      const job: Job<unknown> = {
+        id: "job-1",
+        name: "test-job",
+        queueName: "test-queue",
+        data: {},
+        status: "active",
+        attempts: 1,
+        maxAttempts: 3,
+        createdAt: new Date(),
+      };
+
+      vi.mocked(mockProvider.fetch!)
+        .mockResolvedValueOnce(Result.ok([job]))
+        .mockResolvedValue(Result.ok([]));
+
+      handlerSpy.mockResolvedValueOnce(
+        Result.err(new Error("Processing failed")),
+      );
+
+      const worker = new Worker("test-queue", handler, {
+        provider: mockProvider,
+        pollInterval: 10,
+        errorBackoff: 100,
+      });
+
+      const events: FailedEventPayload[] = [];
+      const retryingEvents: JobRetryingEventPayload[] = [];
+      worker.on("failed", (payload) => {
+        events.push(payload);
+      });
+      worker.on("job.retrying", (payload) => {
+        retryingEvents.push(payload);
+      });
+
+      worker.start();
+
+      await vi.waitFor(() => {
+        expect(events).toHaveLength(1);
+      });
+      // job.retrying is emitted right after failed, in the same tick
+      await worker.close();
+
+      expect(events[0]).toMatchObject({
+        jobId: "job-1",
+        attempts: 1,
+        willRetry: true,
+        permanent: false,
+      });
+      // one retry is left: the third attempt will run with attempts 2
+      expect(retryingEvents).toEqual([
+        {
+          jobId: "job-1",
+          queueName: "test-queue",
+          attempts: 2,
+          status: "waiting",
+          maxAttempts: 3,
+        },
+      ]);
+    });
 
     it("should emit failed with permanent: true and willRetry: false for PermanentJobError (pull model)", async () => {
       const job: Job<unknown> = {
@@ -1888,5 +1956,102 @@ describe("Worker - Hybrid Push/Pull Model", () => {
       }).not.toThrow();
     });
 
+  });
+});
+
+// the worker predicts `willRetry` from the job it was handed; the provider
+// decides on its own in nack(). these run the two together, with no mock, so
+// a prediction that disagrees with the provider's decision fails here
+describe("Worker + MemoryProvider - retry budget", () => {
+  let provider: MemoryProvider;
+
+  beforeEach(() => {
+    provider = new MemoryProvider();
+  });
+
+  afterEach(async () => {
+    await provider.disconnect();
+  });
+
+  async function runUntilFailed(maxAttempts: number) {
+    const queueName = "retry-budget";
+    const bound = provider.forQueue(queueName);
+
+    const added = await bound.add(
+      {
+        id: "job-budget",
+        name: "test-job",
+        queueName,
+        data: { foo: "bar" },
+        status: "waiting",
+        attempts: 0,
+        maxAttempts,
+        createdAt: new Date(),
+      },
+      // keep the failed job so its final state can be read back
+      { removeOnFail: false },
+    );
+    expect(added.success).toBe(true);
+
+    const handlerRuns = vi
+      .fn<JobHandler<unknown>>()
+      .mockResolvedValue(Result.err(new Error("always fails")));
+
+    const worker = new Worker(queueName, handlerRuns, {
+      provider,
+      pollInterval: 5,
+      errorBackoff: 5,
+    });
+
+    const failedEvents: FailedEventPayload[] = [];
+    const retryingEvents: JobRetryingEventPayload[] = [];
+    worker.on("failed", (payload) => {
+      failedEvents.push(payload);
+    });
+    worker.on("job.retrying", (payload) => {
+      retryingEvents.push(payload);
+    });
+
+    worker.start();
+
+    await vi.waitFor(async () => {
+      const stored = await bound.getJob("job-budget");
+      expect(stored.success && stored.data?.status).toBe("failed");
+    });
+    // give the fetch loop several more polls: a job the provider had put
+    // back in the queue would be run again here
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await worker.close();
+
+    const stored = await bound.getJob("job-budget");
+    if (!stored.success) throw new Error(stored.error.message);
+
+    return { failedEvents, retryingEvents, handlerRuns, stored: stored.data };
+  }
+
+  it("should predict the provider's decision on every attempt of a budget of 3", async () => {
+    const { failedEvents, retryingEvents, handlerRuns, stored } =
+      await runUntilFailed(3);
+
+    expect(handlerRuns).toHaveBeenCalledTimes(3);
+    expect(failedEvents.map((e) => e.attempts)).toEqual([0, 1, 2]);
+    expect(failedEvents.map((e) => e.willRetry)).toEqual([true, true, false]);
+    expect(failedEvents.map((e) => e.permanent)).toEqual([false, false, false]);
+    expect(retryingEvents.map((e) => e.attempts)).toEqual([1, 2]);
+
+    // the provider's own record: failed, with all three attempts counted
+    expect(stored).toMatchObject({ status: "failed", attempts: 3 });
+  });
+
+  it("should predict no retry for a budget of 1", async () => {
+    const { failedEvents, retryingEvents, handlerRuns, stored } =
+      await runUntilFailed(1);
+
+    expect(handlerRuns).toHaveBeenCalledTimes(1);
+    expect(failedEvents.map((e) => e.attempts)).toEqual([0]);
+    expect(failedEvents.map((e) => e.willRetry)).toEqual([false]);
+    expect(retryingEvents).toHaveLength(0);
+
+    expect(stored).toMatchObject({ status: "failed", attempts: 1 });
   });
 });

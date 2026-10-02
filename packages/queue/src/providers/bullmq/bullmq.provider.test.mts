@@ -62,6 +62,19 @@ describe("BullMQProvider", () => {
     });
   });
 
+  // a provider whose default budget is not the 3 used by the shared provider,
+  // by the mock job and by the literal fallback, so each source can be told
+  // apart. bullmq is mocked: nothing connects
+  function providerWithDefaultAttempts(
+    attempts: number | undefined,
+  ): BullMQProvider {
+    return new BullMQProvider({
+      connection: { host: "localhost", port: 6379 },
+      prefix: "test",
+      defaultJobOptions: { attempts },
+    });
+  }
+
   describe("Constructor Validation", () => {
     it("should throw error when connection is missing (MED-BQ-004 fix)", () => {
       expect(() => {
@@ -383,7 +396,9 @@ describe("BullMQProvider", () => {
     });
 
     it("should default attempts to 0 and maxAttempts to the provider default when BullMQ reports neither", async () => {
-      const queueProvider = provider.forQueue("test-queue");
+      // a default of 7 cannot be confused with the literal fallback of 3
+      const sevenProvider = providerWithDefaultAttempts(7);
+      const queueProvider = sevenProvider.forQueue("test-queue");
 
       mockQueue.getJob.mockResolvedValue({
         ...mockBullJob,
@@ -396,6 +411,63 @@ describe("BullMQProvider", () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data?.attempts).toBe(0);
+        expect(result.data?.maxAttempts).toBe(7);
+      }
+    });
+
+    it("should use the provider default for maxAttempts when the BullMQ job has no opts", async () => {
+      const sevenProvider = providerWithDefaultAttempts(7);
+      const queueProvider = sevenProvider.forQueue("test-queue");
+
+      mockQueue.getJob.mockResolvedValue({
+        ...mockBullJob,
+        attemptsMade: 1,
+        opts: undefined,
+      });
+
+      const result = await queueProvider.getJob("job-1");
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data?.attempts).toBe(1);
+        expect(result.data?.maxAttempts).toBe(7);
+      }
+    });
+
+    it("should keep opts.attempts: 0 as maxAttempts 0 instead of falling back to a default", async () => {
+      const sevenProvider = providerWithDefaultAttempts(7);
+      const queueProvider = sevenProvider.forQueue("test-queue");
+
+      // a job added to BullMQ without `attempts` carries opts.attempts 0 and
+      // runs once
+      mockQueue.getJob.mockResolvedValue({
+        ...mockBullJob,
+        attemptsMade: 0,
+        opts: { ...mockBullJob.opts, attempts: 0 },
+      });
+
+      const result = await queueProvider.getJob("job-1");
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data?.attempts).toBe(0);
+        expect(result.data?.maxAttempts).toBe(0);
+      }
+    });
+
+    it("should fall back to maxAttempts 3 when neither BullMQ nor the provider default has a value", async () => {
+      const noDefaultProvider = providerWithDefaultAttempts(undefined);
+      const queueProvider = noDefaultProvider.forQueue("test-queue");
+
+      mockQueue.getJob.mockResolvedValue({
+        ...mockBullJob,
+        opts: { ...mockBullJob.opts, attempts: undefined },
+      });
+
+      const result = await queueProvider.getJob("job-1");
+
+      expect(result.success).toBe(true);
+      if (result.success) {
         expect(result.data?.maxAttempts).toBe(3);
       }
     });
@@ -457,6 +529,29 @@ describe("BullMQProvider", () => {
 
       // verify Worker.getNextJob was called (atomic operation)
       expect(mockWorker.getNextJob).toHaveBeenCalled();
+    });
+
+    it("should hand fetch() callers attempts from attemptsMade and maxAttempts from opts.attempts", async () => {
+      // a default of 7 cannot be confused with the job's own budget of 3
+      const sevenProvider = providerWithDefaultAttempts(7);
+      const queueProvider = sevenProvider.forQueue("test-queue");
+
+      // the last attempt of three, as BullMQ hands it out
+      mockWorker.getNextJob.mockResolvedValueOnce({
+        ...mockBullJob,
+        attemptsMade: 2,
+        opts: { ...mockBullJob.opts, attempts: 3 },
+      });
+
+      const result = await queueProvider.fetch?.(1);
+
+      expect(result?.success).toBe(true);
+      if (result?.success) {
+        expect(result.data).toHaveLength(1);
+        expect(result.data[0]).toEqual(
+          expect.objectContaining({ attempts: 2, maxAttempts: 3 }),
+        );
+      }
     });
 
     it("should call job.moveToCompleted() for ack()", async () => {
@@ -676,6 +771,44 @@ describe("BullMQProvider", () => {
 
       // verify user handler was called
       expect(userHandler).toHaveBeenCalled();
+    });
+
+    it("should hand the handler attempts from attemptsMade and maxAttempts from opts.attempts", async () => {
+      // a default of 7 cannot be confused with the job's own budget of 3
+      const sevenProvider = providerWithDefaultAttempts(7);
+      const queueProvider = sevenProvider.forQueue("test-queue");
+
+      // capture the BullMQ worker handler
+      let bullmqHandler: Processor<unknown, unknown, string> | undefined;
+      const { Worker } = await import("bullmq");
+      vi.mocked(Worker).mockImplementation((_queueName, handler) => {
+        bullmqHandler = handler as Processor<unknown, unknown, string>;
+        return mockWorker as unknown as import("bullmq").Worker<
+          unknown,
+          unknown,
+          string
+        >;
+      });
+
+      const userHandler = vi.fn().mockResolvedValue(undefined);
+
+      queueProvider.process?.(userHandler, { concurrency: 1 });
+
+      expect(bullmqHandler).toBeDefined();
+      // the last attempt of three, as BullMQ hands it to the processor
+      const bullJob = {
+        ...mockBullJob,
+        attemptsMade: 2,
+        opts: { ...mockBullJob.opts, attempts: 3 },
+      };
+
+      //@ts-expect-error a mock stands in for the BullMQ job
+      await bullmqHandler!(bullJob);
+
+      expect(userHandler).toHaveBeenCalledTimes(1);
+      expect(userHandler).toHaveBeenCalledWith(
+        expect.objectContaining({ attempts: 2, maxAttempts: 3 }),
+      );
     });
 
     it("should wrap PermanentJobError in UnrecoverableError", async () => {

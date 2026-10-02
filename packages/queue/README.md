@@ -189,7 +189,7 @@ emailWorker.on('failed', (payload) => {
 });
 
 emailWorker.on('job.retrying', (payload) => {
-  console.log(`🔄 Job ${payload.jobId} retrying (attempt ${payload.attempts}/${payload.maxAttempts})`);
+  console.log(`🔄 Job ${payload.jobId} retrying (attempt ${payload.attempts + 1}/${payload.maxAttempts})`);
 });
 
 // Start processing
@@ -371,6 +371,8 @@ When you throw a `PermanentJobError`, the Worker:
 > **Anti-pattern warning:** Don't use `Result.ok(undefined)` to handle permanent errors. While it prevents retries, it marks the job as *completed* — hiding the failure from DLQ monitoring, metrics, and `failed` event listeners. Use `PermanentJobError` instead so the job is correctly marked as *failed*.
 
 **Alternative: Using `QueueError` with `retryable: false`**
+
+> **Known limits (as of 3.2.0).** Through a `Worker`, this alternative works only when the thrown value is an `Error` instance carrying `retryable: false`, and only in the memory provider and BullMQ's pull model. A plain object like the one below is wrapped in `new Error(String(error))` before the provider sees it, loses the flag and is retried for the full budget; BullMQ's push model never applies the rule. The `failed` event reports `permanent: false` in every case. Prefer `PermanentJobError`. See "What `willRetry` does not cover" under the `failed` event example.
 
 For pull-model providers (MemoryProvider) or when you need explicit control, you can throw a `QueueError` with `retryable: false` to signal permanent failure:
 
@@ -1080,11 +1082,16 @@ worker.on('failed', (payload) => {
 
 `willRetry` is the worker's prediction from the job's own budget: `false` for a `PermanentJobError`, and `false` on the last attempt (`attempts` counts the attempts made before the current one, so the last attempt of `maxAttempts: 3` runs with `attempts: 2`). `job.retrying` is emitted only when `willRetry` is `true`. Before 3.2.0 the last attempt still reported `willRetry: true`.
 
-It is a prediction, not a confirmation, and the provider has the last word:
+**What `willRetry` does not cover.** It is a prediction, not a confirmation, and the provider has the last word:
 
-- **The event is emitted before the provider records the failure.** If that write fails (for example a lost lock), the job can run again after a `willRetry: false` event, and a job the provider fails without calling your handler (a stalled job past its limit) emits no `failed` event at all. Make the handler for "retries exhausted" idempotent and keep a reconciliation path.
+- **In the push model (BullMQ) the event is emitted before the provider records the failure.** If that write fails (for example a lost lock), the job can run again after a `willRetry: false` event. In the pull model (memory, SQS) the worker awaits the provider's `nack()` first and emits `failed` after it; if the `nack()` returns an error, the worker emits `queue.error` and then still emits `failed` with the same prediction. In both models, a job the provider fails without calling your handler (a stalled job past its limit) emits no `failed` event at all. Make the handler for "retries exhausted" idempotent and keep a reconciliation path.
 - **SQS retries by its redrive policy**, not by `maxAttempts`: a message is redelivered until the queue's `maxReceiveCount`, whatever `willRetry` said. Keep the two equal.
-- **Only `PermanentJobError` is reported as permanent.** An error carrying `retryable: false` stops retries in the memory provider and in BullMQ's pull model, and BullMQ's own `UnrecoverableError` stops them in BullMQ, while the event still says `permanent: false` and, before the last attempt, `willRetry: true`. Throw `PermanentJobError` when a consumer acts on this event.
+- **Only `PermanentJobError` is reported as permanent.** Each of the following stops the retries while the event still says `permanent: false` and, before the last attempt, `willRetry: true`:
+  - An `Error` instance carrying `retryable: false`, in the memory provider and in BullMQ's `nack()` (pull model). It has to be an `Error` instance: the worker wraps anything else in `new Error(String(error))` before the `nack()`, so a plain object such as `Result.err({ ..., retryable: false })` loses the flag and is retried. BullMQ's push model, the one a `Worker` uses with `BullMQProvider`, does not apply this rule at all: it translates only `PermanentJobError`, and an error carrying `retryable: false` is retried.
+  - BullMQ's own `UnrecoverableError`, in BullMQ.
+  - `job.discard()` on the BullMQ job, or a custom BullMQ backoff strategy returning `-1`.
+
+  Throw `PermanentJobError` when a consumer acts on this event.
 
 > **Anti-pattern:** Using `Result.ok(undefined)` for permanent errors marks the job as *completed*, hiding failures from DLQ monitoring, metrics, and `failed` event listeners. Always use `PermanentJobError` instead.
 
