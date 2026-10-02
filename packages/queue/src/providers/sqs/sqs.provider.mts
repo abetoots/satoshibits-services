@@ -1028,7 +1028,10 @@ export class SQSProvider implements IProviderFactory {
       if (
         awsErrorName === "RequestThrottled" ||
         awsErrorName === "ThrottlingException" ||
-        awsErrorName === "TooManyRequestsException"
+        awsErrorName === "TooManyRequestsException" ||
+        // KMS throttling is throttling, not a KMS configuration problem: it is
+        // matched here, before the broad "Kms" branch below
+        awsErrorName === "KmsThrottled"
       ) {
         return {
           type: "RuntimeError",

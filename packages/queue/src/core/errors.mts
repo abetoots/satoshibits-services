@@ -182,9 +182,9 @@ export function getErrorName(error: unknown): string {
 }
 
 /**
- * Whether BullMQ, or any code that reads `message` and `stack` off an error,
- * can use this value as is: a real `Error` whose `message` and `stack` can be
- * read. Never throws.
+ * Whether BullMQ, or any code that reads `message`, `stack` and `name` off an
+ * error, can use this value as is: a real `Error` on which all three can be
+ * read (BullMQ reads `name` before it records a failure). Never throws.
  */
 export function isReadableError(value: unknown): value is Error {
   if (!isErrorInstance(value)) {
@@ -193,6 +193,7 @@ export function isReadableError(value: unknown): value is Error {
 
   try {
     void value.stack;
+    void value.name;
     return typeof value.message === "string";
   } catch {
     return false;

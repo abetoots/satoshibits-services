@@ -2161,6 +2161,32 @@ describe("SQSProvider - Phase 1: Core Structure", () => {
       }
     });
 
+    it("should map KMS throttling to a retryable error, not a configuration error", async () => {
+      sqsMock.on(SendMessageCommand).rejects({
+        name: "KmsThrottled",
+        $metadata: {},
+        message: "The request was denied due to request throttling",
+      });
+
+      const provider = new SQSProvider({
+        region: "us-east-1",
+        queueUrls: {
+          "test-queue": "https://sqs.us-east-1.amazonaws.com/123/test-queue",
+        },
+      });
+
+      const boundProvider = provider.forQueue("test-queue");
+      const result = await boundProvider.add(
+        createMockJob({ id: "job-1", data: { test: true } }),
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.retryable).toBe(true);
+        expect(result.error.type).not.toBe("ConfigurationError");
+      }
+    });
+
     it("should map KMS errors to ConfigurationError", async () => {
       sqsMock.on(SendMessageCommand).rejects({
         name: "KmsAccessDeniedException",

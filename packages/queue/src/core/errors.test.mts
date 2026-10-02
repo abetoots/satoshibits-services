@@ -12,6 +12,7 @@ import {
   getErrorName,
   isErrorInstance,
   isPermanentError,
+  isReadableError,
   PermanentJobError,
   TransientJobError,
 } from "./errors.mjs";
@@ -304,3 +305,25 @@ describe("hostile values", () => {
     expect(isErrorInstance(null)).toBe(false);
   });
 });
+
+describe("isReadableError - the name BullMQ reads", () => {
+  it("should reject an Error whose name cannot be read", () => {
+    // bullmq reads err.name before it records the failure: a throwing getter
+    // there would stop the job from ever being moved to failed
+    const error = new Error("failure");
+    // with its own stack value, reading the stack no longer touches the name
+    Object.defineProperty(error, "stack", { value: "readable stack" });
+    Object.defineProperty(error, "name", {
+      get() {
+        throw new Error("name inspection failed");
+      },
+    });
+
+    expect(isReadableError(error)).toBe(false);
+  });
+
+  it("should accept an ordinary Error", () => {
+    expect(isReadableError(new TypeError("failure"))).toBe(true);
+  });
+});
+
