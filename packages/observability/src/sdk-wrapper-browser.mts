@@ -230,7 +230,8 @@ export class BrowserSDK {
         this.loggerProvider = new LoggerProvider({
           resource,
           processors: [
-            new BatchLogRecordProcessor(logExporter, {
+            new BatchLogRecordProcessor({
+              exporter: logExporter,
               maxQueueSize: 100,
               maxExportBatchSize: 50,
               scheduledDelayMillis: 5000,

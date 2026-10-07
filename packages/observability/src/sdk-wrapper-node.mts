@@ -139,17 +139,19 @@ export class NodeSDK {
       resource, // now includes auto-detected + service info
       contextManager: new AsyncLocalStorageContextManager(), // Enable context propagation for Node.js
       // Only set processors if not disabled - undefined processors will use no-op implementations
-      ...(spanProcessor && { spanProcessor }),
-      ...(metricReader && { metricReader }),
+      ...(spanProcessor && { spanProcessors: [spanProcessor] }),
+      ...(metricReader && { metricReaders: [metricReader] }),
       ...(disableExport
         ? {}
         : {
-            logRecordProcessor: new BatchLogRecordProcessor(
-              new OTLPLogExporter({
-                url: `${baseEndpoint}/v1/logs`,
-                headers: validatedConfig.headers,
+            logRecordProcessors: [
+              new BatchLogRecordProcessor({
+                exporter: new OTLPLogExporter({
+                  url: `${baseEndpoint}/v1/logs`,
+                  headers: validatedConfig.headers,
+                }),
               }),
-            ),
+            ],
           }),
       // use SmartSampler if sampling config is provided (AdaptiveSampler internalized)
       sampler: validatedConfig.sampling
