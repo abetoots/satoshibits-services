@@ -16,6 +16,7 @@ import {
   trace,
 } from "@opentelemetry/api";
 import { logs } from "@opentelemetry/api-logs";
+import { loggingErrorHandler, setGlobalErrorHandler } from "@opentelemetry/core";
 import {
   BatchLogRecordProcessor,
   SimpleLogRecordProcessor,
@@ -59,11 +60,12 @@ import type {
 } from "@opentelemetry/sdk-trace";
 
 import { resolveConfig, SIGNALS } from "./config.mjs";
-import { createDiagnostics } from "./diagnostics.mjs";
+import { createDiagnostics, createRateLimiter } from "./diagnostics.mjs";
 import {
   createLogRecordExporter,
   createMetricExporter,
   createSpanExporter,
+  FAILURE_REPORT_INTERVAL_MILLIS,
   hostOf,
   wrapLogRecordExporter,
   wrapMetricExporter,
@@ -347,6 +349,56 @@ function reportStartup(
 }
 
 /**
+ * NodeSDK's constructor replaces the diagnostics logger with a console logger
+ * whenever `OTEL_LOG_LEVEL` is set, and has no option to prevent it. The level
+ * has already been read into the preset's own logger, so the variable is
+ * hidden for the duration of the (synchronous) constructor call.
+ */
+function withoutLogLevelVariable<T>(construct: () => T): T {
+  const level = process.env.OTEL_LOG_LEVEL;
+  if (level === undefined) return construct();
+  delete process.env.OTEL_LOG_LEVEL;
+  try {
+    return construct();
+  } finally {
+    process.env.OTEL_LOG_LEVEL = level;
+  }
+}
+
+/**
+ * The SDK sends every internal error (each failed batch among them) to one
+ * global handler, whose default logs all of them. This one reports the first
+ * and then at most one per interval, so an outage does not flood the log.
+ * Failed exports are also reported per signal by the exporter wrapper.
+ */
+function installErrorHandler(diagnostics: Diagnostics): void {
+  const limit = createRateLimiter(FAILURE_REPORT_INTERVAL_MILLIS);
+  setGlobalErrorHandler((error) => {
+    limit((suppressed) => {
+      const detail = (
+        typeof error === "object" ? error : { message: String(error) }
+      ) as { name?: unknown; message?: unknown; code?: unknown };
+      const name = typeof detail.name === "string" ? detail.name : "Error";
+      diagnostics.report({
+        level: "error",
+        message: "telemetry pipeline error",
+        fields: {
+          error: name,
+          ...(typeof detail.code === "number" && { status: detail.code }),
+          ...(typeof detail.code === "string" && { code: detail.code }),
+          // an exporter error's message is free text from the far end; others are the SDK's own
+          ...(name !== "OTLPExporterError" &&
+            typeof detail.message === "string" && {
+              detail: detail.message.slice(0, 200),
+            }),
+          ...(suppressed > 0 && { suppressed }),
+        },
+      });
+    });
+  });
+}
+
+/**
  * Start telemetry for this process. Call it once, from a module loaded with
  * `node --import`, before any application module is imported.
  *
@@ -384,21 +436,25 @@ export function start(options: StartOptions = {}): PresetStatus {
 
   if (options.loaderHook !== false) installLoaderHook();
 
-  const sdk = new NodeSDK({
-    resource: buildResource(config, redactor),
-    // the resource above is complete; detection here would merge the environment in again, unfiltered
-    autoDetectResources: false,
-    sampler: buildSampler(config.sampler),
-    spanProcessors: pipelines.spanProcessors,
-    metricReaders: pipelines.metricReaders,
-    logRecordProcessors: pipelines.logRecordProcessors,
-    instrumentations: buildInstrumentations(options.instrumentations),
-  });
-  // NodeSDK's constructor installs a console logger when OTEL_LOG_LEVEL is set; ours replaces it
   diag.setLogger(diagnostics.diagLogger, {
     logLevel: diagnostics.diagLevel,
     suppressOverrideMessage: true,
   });
+  installErrorHandler(diagnostics);
+
+  const sdk = withoutLogLevelVariable(
+    () =>
+      new NodeSDK({
+        resource: buildResource(config, redactor),
+        // the resource above is complete; detection here would merge the environment in again, unfiltered
+        autoDetectResources: false,
+        sampler: buildSampler(config.sampler),
+        spanProcessors: pipelines.spanProcessors,
+        metricReaders: pipelines.metricReaders,
+        logRecordProcessors: pipelines.logRecordProcessors,
+        instrumentations: buildInstrumentations(options.instrumentations),
+      }),
+  );
   sdk.start();
   diagnostics.activate();
   reportStartup(diagnostics, config, pipelines.signals);
@@ -499,5 +555,6 @@ export async function resetForTesting(): Promise<void> {
     context.disable();
     propagation.disable();
     diag.disable();
+    setGlobalErrorHandler(loggingErrorHandler());
   }
 }

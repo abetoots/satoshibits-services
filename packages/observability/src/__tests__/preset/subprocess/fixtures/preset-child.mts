@@ -70,9 +70,11 @@ if (scenario.start === "register") {
       ...(scenario.collectDiagnostics && {
         diagnostics: () => {
           // a tracer provider is registered by the same call that installs instrumentation
-          const probe = trace.getTracer("probe").startSpan("probe");
-          sinkFactoryCalledAfterSdkStarted = isSpanContextValid(probe.spanContext());
-          probe.end();
+          const provider = trace.getTracerProvider() as {
+            getDelegate?: () => { constructor: { name: string } };
+          };
+          sinkFactoryCalledAfterSdkStarted =
+            provider.getDelegate?.().constructor.name === "TracerProvider";
           if (scenario.collectDiagnostics === "throwing") {
             return (event) => {
               diagnostics.push(event);
