@@ -4,13 +4,12 @@
  * The preset builds the finished resource itself and gives it to NodeSDK with
  * NodeSDK's own detection turned off. Otherwise NodeSDK would merge
  * `OTEL_RESOURCE_ATTRIBUTES` in afterwards and those values would bypass the
- * filtering and redaction done here.
+ * filtering and redaction done here. The upstream environment detector is not
+ * used either: at debug level it logs the raw attributes it found.
  */
 
 import {
   defaultResource,
-  detectResources,
-  envDetector,
   resourceFromAttributes,
 } from "@opentelemetry/resources";
 import {
@@ -51,13 +50,7 @@ function conventionalOsType(): string {
   return type === "windows_nt" ? "windows" : type;
 }
 
-export function buildResource(
-  config: ResolvedConfig,
-  redactor: Redactor,
-  /** called with the value of `OTEL_RESOURCE_ATTRIBUTES` and `OTEL_SERVICE_NAME` in effect */
-  detect: () => Attributes = () =>
-    detectResources({ detectors: [envDetector] }).attributes,
-): Resource {
+export function buildResource(config: ResolvedConfig, redactor: Redactor): Resource {
   const merged: Attributes = {
     // only the OS type: the detector's kernel version string identifies the machine image
     [ATTR_OS_TYPE]: conventionalOsType(),
@@ -71,12 +64,8 @@ export function buildResource(
     ...(config.deploymentEnvironment !== undefined && {
       [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: config.deploymentEnvironment,
     }),
-    // the environment wins over options for everything but the two keys below
-    ...detect(),
-    // a name passed in code wins, so two processes sharing one environment stay distinct
-    [ATTR_SERVICE_NAME]: config.serviceName,
-    // one per process; the environment cannot pin it to a shared value
-    [ATTR_SERVICE_INSTANCE_ID]: randomUUID(),
+    // the environment wins over options for everything but the two keys added last
+    ...config.environmentAttributes,
   };
 
   const kept: Attributes = {};
@@ -86,6 +75,14 @@ export function buildResource(
 
   // defaultResource supplies telemetry.sdk.*; ours wins on every shared key
   return defaultResource().merge(
-    resourceFromAttributes(redactor.attributes(kept)),
+    resourceFromAttributes({
+      ...redactor.attributes(kept),
+      // the two identity keys are added after redaction: a masked name or
+      // instance id would merge the series of different services and replicas.
+      // a name passed in code wins, so two processes sharing one environment stay distinct
+      [ATTR_SERVICE_NAME]: config.serviceName,
+      // one per process; the environment cannot pin it to a shared value
+      [ATTR_SERVICE_INSTANCE_ID]: randomUUID(),
+    }),
   );
 }

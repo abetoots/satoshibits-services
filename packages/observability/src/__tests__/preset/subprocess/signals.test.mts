@@ -7,37 +7,25 @@
  * unless a test configured that address on purpose.
  */
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import type { OtlpSink } from "../../../testing/otlp-sink.mjs";
 
-import { startOtlpSink } from "../../../testing/otlp-sink.mjs";
 import {
   DEFAULT_OTLP_PORT,
   drainTrap,
   runChild,
   socketsOutside,
-  startDefaultAddressTrap,
+  useSinks,
 } from "./harness.mjs";
 
 const NAME = { OTEL_SERVICE_NAME: "signals-test" };
 
+const sinks = useSinks();
 let trap: OtlpSink;
 let sink: OtlpSink;
-
-beforeAll(async () => {
-  trap = await startDefaultAddressTrap();
-});
-afterAll(async () => {
-  await trap.close();
-});
-beforeEach(async () => {
-  sink = await startOtlpSink();
-});
-afterEach(async () => {
-  await sink.close();
-  // every test ends by proving nothing reached the default address
-  expect(drainTrap(trap), "connections to localhost:4318").toEqual([]);
+beforeEach(() => {
+  ({ trap, sink } = sinks);
 });
 
 const endpoint = () => ({ ...NAME, OTEL_EXPORTER_OTLP_ENDPOINT: sink.url });
@@ -173,6 +161,9 @@ describe("signals on", () => {
 
     const host = new URL(sink.url).host;
     expect(run.result.status).toMatchObject({
+      state: "shut-down",
+      // the positive control for "no loader hook" in the disabled and rejected cases
+      loaderHook: true,
       sampler: "parentbased_always_on",
       signals: {
         traces: { enabled: true, destination: "otlp", endpoint: host, protocol: "http/protobuf" },
@@ -205,7 +196,7 @@ describe("signals on", () => {
   });
 
   it("sends a signal to its own endpoint, exactly as given, over the general one", async () => {
-    const other = await startOtlpSink();
+    const other = await sinks.extra();
     try {
       const run = await runChild(
         {},
@@ -225,8 +216,21 @@ describe("signals on", () => {
     }
   });
 
+  it("keeps a general endpoint's query string a query string, after the signal path", async () => {
+    const run = await runChild(
+      {},
+      { ...NAME, OTEL_EXPORTER_OTLP_ENDPOINT: `${sink.url}/base?tenant=a` },
+    );
+    expect(run.result.startError).toBeNull();
+    expect([...new Set(sink.requests.map((r) => r.path))].sort()).toEqual([
+      "/base/v1/metrics?tenant=a",
+      "/base/v1/traces?tenant=a",
+    ]);
+    expect(sink.spans().map((s) => s.name)).toEqual(["child-span-0"]);
+  });
+
   it("an endpoint passed in code overrides the general variable", async () => {
-    const fromCode = await startOtlpSink();
+    const fromCode = await sinks.extra();
     try {
       const run = await runChild({ options: { endpoint: fromCode.url } }, endpoint());
       expect(run.result.startError).toBeNull();

@@ -61,21 +61,60 @@ describe("diagnostics", () => {
     expect(events.map((e) => e.level)).toEqual(levels);
   });
 
-  it("appends the API's extra arguments, naming errors and truncating long values", () => {
+  it("describes the API's extra arguments by shape, never by content", () => {
     const { events, diagnostics } = collecting();
     diagnostics.activate();
-    const circular: Record<string, unknown> = {};
-    circular.self = circular;
+    const batch = [{ attributes: { api_key: "SENTINEL-IN-BATCH" } }];
+    const resource = { _rawAttributes: [["api_key", "SENTINEL-IN-RESOURCE"]], pending: false };
     diagnostics.diagLogger.error(
       "export failed",
       new TypeError("fetch failed"),
-      { status: 503 },
-      circular,
+      resource,
+      batch,
+      42,
+      null,
       "x".repeat(2000),
     );
     const message = events[0]!.message;
-    expect(message).toContain('export failed TypeError: fetch failed {"status":503} [unserializable] xxx');
+    expect(message).toContain(
+      "export failed TypeError: fetch failed {_rawAttributes, pending} [array of 1] 42 null xxx",
+    );
+    expect(message).not.toContain("SENTINEL");
     expect(message.length).toBeLessThan(700);
+  });
+
+  it("cuts URLs down to scheme and host, in messages, arguments and fields", () => {
+    const { events, diagnostics } = collecting();
+    diagnostics.activate();
+    const url = "https://user:SENTINEL-PW@collector.example:4318/otlp/v1/traces?token=SENTINEL-Q";
+    diagnostics.diagLogger.warn(`could not parse '${url}'`, new Error(`connect failed for ${url}`));
+    diagnostics.report({ level: "error", message: "m", fields: { detail: `at ${url}`, status: 401 } });
+
+    expect(events[0]!.message).toBe(
+      "could not parse 'https://collector.example:4318' Error: connect failed for https://collector.example:4318",
+    );
+    expect(events[1]!.fields).toEqual({ detail: "at https://collector.example:4318", status: 401 });
+    expect(JSON.stringify(events)).not.toContain("SENTINEL");
+  });
+
+  it("applies the redaction it is given to every message and text field", () => {
+    const events: DiagnosticsEvent[] = [];
+    const diagnostics = createDiagnostics({
+      sinkFactory: () => (event) => events.push(event),
+      redactText: (text) => text.replaceAll("alice@example.com", "a***@example.com"),
+    });
+    diagnostics.activate();
+    diagnostics.diagLogger.error("failed for alice@example.com");
+    diagnostics.report({ level: "warn", message: "m", fields: { detail: "alice@example.com" } });
+    expect(JSON.stringify(events)).not.toContain("alice@");
+    expect(events[0]!.message).toBe("failed for a***@example.com");
+  });
+
+  it("sanitizes events that were held before activation too", () => {
+    const { events, diagnostics } = collecting();
+    diagnostics.diagLogger.warn("early http://u:SENTINEL@h:1/p");
+    diagnostics.activate();
+    expect(events[0]!.message).toBe("early http://h:1");
   });
 
   it("survives a sink that throws, and keeps reporting to it", () => {

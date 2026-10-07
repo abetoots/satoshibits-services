@@ -3,28 +3,18 @@
  * Asserted at a local OTLP sink, in a fresh process per case.
  */
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import type { OtlpSink } from "../../../testing/otlp-sink.mjs";
 
-import { startOtlpSink } from "../../../testing/otlp-sink.mjs";
-import { drainTrap, runChild, startDefaultAddressTrap } from "./harness.mjs";
+import { runChild, useSinks } from "./harness.mjs";
 
-let trap: OtlpSink;
+const sinks = useSinks();
+const JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJTRU5USU5FTCJ9.c2lnbmF0dXJlLXNlbnRpbmVs";
+
 let sink: OtlpSink;
-
-beforeAll(async () => {
-  trap = await startDefaultAddressTrap();
-});
-afterAll(async () => {
-  await trap.close();
-});
-beforeEach(async () => {
-  sink = await startOtlpSink();
-});
-afterEach(async () => {
-  await sink.close();
-  expect(drainTrap(trap), "connections to localhost:4318").toEqual([]);
+beforeEach(() => {
+  ({ sink } = sinks);
 });
 
 /** all three signals on, to the test's sink */
@@ -123,7 +113,9 @@ describe("resource", () => {
       {},
       allSignals({
         OTEL_RESOURCE_ATTRIBUTES:
-          "api_key=SENTINEL-RESOURCE-SECRET,owner.contact=alice.sentinel@example.com,plain.key=plain-value",
+          "api_key=SENTINEL-RESOURCE-SECRET,owner.contact=alice.sentinel@example.com,plain.key=plain-value," +
+          // a secret under a key that gives nothing away: caught by its shape
+          `deploy.note=${JWT}`,
       }),
     );
 
@@ -132,6 +124,7 @@ describe("resource", () => {
       expect(resource.api_key, signal).toBe("[REDACTED]");
       expect(resource["owner.contact"], signal).toBe("a***@example.com");
       expect(resource["plain.key"], signal).toBe("plain-value");
+      expect(resource["deploy.note"], signal).toBe("[REDACTED]");
     }
     expect(sink.requests.map((r) => r.path).sort()).toEqual(
       expect.arrayContaining(["/v1/logs", "/v1/metrics", "/v1/traces"]),
@@ -139,7 +132,20 @@ describe("resource", () => {
     for (const request of sink.requests) {
       expect(request.bodyText, request.path).not.toContain("SENTINEL-RESOURCE-SECRET");
       expect(request.bodyText, request.path).not.toContain("alice.sentinel");
+      expect(request.bodyText, request.path).not.toContain(JWT);
     }
+  });
+
+  it("ignores a malformed OTEL_RESOURCE_ATTRIBUTES whole, and says so", async () => {
+    const run = await runChild(
+      {},
+      allSignals({ OTEL_RESOURCE_ATTRIBUTES: "team.name=a,broken-entry" }),
+    );
+    expect(run.result.startError).toBeNull();
+    expect(sink.spans()[0]!.resource["team.name"]).toBeUndefined();
+    expect(run.stderrLines.map((line) => line.msg)).toContain(
+      "OTEL_RESOURCE_ATTRIBUTES is malformed (expected key=value pairs separated by commas, percent-encoded); all of it is ignored",
+    );
   });
 
   it("keeps an allow-listed key readable", async () => {

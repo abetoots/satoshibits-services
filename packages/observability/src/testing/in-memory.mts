@@ -5,6 +5,10 @@
  * same redacting wrapper in front of each exporter. A test therefore sees
  * what a backend would receive, not what the code handed to the API.
  *
+ * Spans and log records are handed out as exported: read-through views of the
+ * SDK's records. Read their properties; do not spread, serialize or
+ * deep-compare the objects themselves.
+ *
  * The `OTEL_*` variables of the test process still apply (a sampler
  * variable, for instance). `OTEL_SDK_DISABLED=true` makes this throw: a test
  * that asks for telemetry must not pass on none.
@@ -32,6 +36,7 @@ export interface TestMetricPoint {
 }
 
 export interface TestTelemetry {
+  /** the status when started; call `getStatus()` for the current one */
   status: PresetStatus;
   /** finished spans, as exported */
   spans: () => Promise<ReadableSpan[]>;
@@ -61,21 +66,21 @@ export function startTestTelemetry(
   );
   const logRecordExporter = new InMemoryLogRecordExporter();
 
-  const status = start({
-    serviceName: "test",
-    instrumentations: false,
-    loaderHook: false,
-    ...options,
-    testExporters: { spanExporter, metricExporter, logRecordExporter },
-  });
-  if (status.state !== "running") {
-    // forget the disabled start, so it does not block the next test's
-    void resetForTesting();
+  // checked first, so nothing is started and nothing needs undoing
+  if (process.env.OTEL_SDK_DISABLED?.trim().toLowerCase() === "true") {
     throw new Error(
-      `@satoshibits/observability/testing: telemetry is ${status.state}; ` +
+      "@satoshibits/observability/testing: telemetry is disabled; " +
         "unset OTEL_SDK_DISABLED for tests that read telemetry",
     );
   }
+
+  const status = start({
+    instrumentations: false,
+    loaderHook: false,
+    ...options,
+    serviceName: options.serviceName ?? "test",
+    testExporters: { spanExporter, metricExporter, logRecordExporter },
+  });
 
   const metrics = async (): Promise<MetricData[]> => {
     metricExporter.reset();

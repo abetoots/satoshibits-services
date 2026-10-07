@@ -128,6 +128,26 @@ describe("signals", () => {
     expect(signals.metrics).toMatchObject({ url: "http://m:4318/v1/metrics" });
   });
 
+  it("appends the signal path to the path of a general endpoint that has a query string", () => {
+    expect(
+      resolved({ ...NAME, OTEL_EXPORTER_OTLP_ENDPOINT: "https://c.example/base?tenant=a" })
+        .signals.traces,
+    ).toMatchObject({ url: "https://c.example/base/v1/traces?tenant=a" });
+  });
+
+  it("warns when a logs-specific variable is set but logs were never turned on", () => {
+    const config = resolved({
+      ...ENDPOINT,
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "http://logs:4318/v1/logs",
+      OTEL_EXPORTER_OTLP_LOGS_HEADERS: "a=b",
+    });
+    expect(config.signals.logs).toEqual({ enabled: false, reason: "not-requested" });
+    expect(config.warnings).toEqual([
+      "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT, OTEL_EXPORTER_OTLP_LOGS_HEADERS is set but logs are not exported: set OTEL_LOGS_EXPORTER=otlp to turn them on",
+    ]);
+    expect(resolved(ENDPOINT).warnings).toEqual([]);
+  });
+
   it("treats a blank variable as unset", () => {
     expect(
       resolved({ ...NAME, OTEL_EXPORTER_OTLP_ENDPOINT: "  " }).signals.traces,
@@ -144,6 +164,18 @@ describe("protocol", () => {
     });
     expect(signals.traces).toMatchObject({ protocol: "http/json" });
     expect(signals.metrics).toMatchObject({ protocol: "http/protobuf" });
+  });
+
+  it("reads protocol, exporter and sampler names without regard to case", () => {
+    const config = resolved({
+      ...ENDPOINT,
+      OTEL_EXPORTER_OTLP_PROTOCOL: "HTTP/JSON",
+      OTEL_METRICS_EXPORTER: "None",
+      OTEL_TRACES_SAMPLER: "Always_Off",
+    });
+    expect(config.signals.traces).toMatchObject({ protocol: "http/json" });
+    expect(config.signals.metrics).toEqual({ enabled: false, reason: "exporter-none" });
+    expect(config.sampler.type).toBe("always_off");
   });
 
   it.each([
@@ -186,6 +218,22 @@ describe("rejected settings", () => {
     expect(problems({ ...NAME, ...env })).toContain(message);
   });
 
+  it("rejects an endpoint with a fragment, which would swallow the signal path", () => {
+    expect(problems({ ...NAME, OTEL_EXPORTER_OTLP_ENDPOINT: "http://c:4318/#frag" })).toEqual([
+      "OTEL_EXPORTER_OTLP_ENDPOINT must not contain a fragment (#...)",
+    ]);
+  });
+
+  it("rejects an unusable general variable even when the endpoint option overrides it", () => {
+    // the upstream exporters parse the variable regardless, and print a bad value
+    expect(
+      problems(
+        { ...NAME, OTEL_EXPORTER_OTLP_ENDPOINT: "http://[bad" },
+        { endpoint: "http://good:4318" },
+      ),
+    ).toEqual(["OTEL_EXPORTER_OTLP_ENDPOINT is not a valid URL"]);
+  });
+
   it("names the option, not the variable, when the endpoint option is unusable", () => {
     expect(problems(ENDPOINT, { endpoint: "::::" })).toContain(
       "the endpoint option is not a valid URL",
@@ -212,8 +260,15 @@ describe("rejected settings", () => {
         OTEL_EXPORTER_OTLP_ENDPOINT: "http://c:4318",
         OTEL_EXPORTER_OTLP_PROTOCOL: "grpc",
         OTEL_TRACES_SAMPLER: "sometimes",
-      }).length,
-    ).toBeGreaterThanOrEqual(3);
+      }),
+    ).toEqual([
+      "no service name: pass serviceName to start() or set OTEL_SERVICE_NAME",
+      // once per signal: each one would have used the general protocol
+      "OTEL_EXPORTER_OTLP_PROTOCOL=grpc is not supported: use http/protobuf or http/json",
+      "OTEL_EXPORTER_OTLP_PROTOCOL=grpc is not supported: use http/protobuf or http/json",
+      "OTEL_EXPORTER_OTLP_PROTOCOL=grpc is not supported: use http/protobuf or http/json",
+      'OTEL_TRACES_SAMPLER="sometimes" is not one of always_on, always_off, traceidratio, parentbased_always_on, parentbased_always_off, parentbased_traceidratio',
+    ]);
   });
 });
 
@@ -228,6 +283,40 @@ describe("service name", () => {
     expect(
       resolved({ OTEL_RESOURCE_ATTRIBUTES: env.OTEL_RESOURCE_ATTRIBUTES }).serviceName,
     ).toBe("from attrs");
+  });
+});
+
+describe("OTEL_RESOURCE_ATTRIBUTES", () => {
+  it("is parsed once: percent-decoded keys and values, the last duplicate winning", () => {
+    const config = resolved({
+      OTEL_RESOURCE_ATTRIBUTES:
+        "service%2Ename=encoded%20name, team = a ,team=b,empty=,url=http%3A%2F%2Fx%3Fa%3Db",
+    });
+    expect(config.serviceName).toBe("encoded name");
+    expect(config.environmentAttributes).toEqual({
+      "service.name": "encoded name",
+      team: "b",
+      empty: "",
+      url: "http://x?a=b",
+    });
+    expect(config.warnings).toEqual([]);
+  });
+
+  it.each(["a=b,novalue", "=x", "a=%E0%A4%A"])(
+    "discards all of a malformed value (%s), with a warning, as the specification says",
+    (value) => {
+      const config = resolved({ ...NAME, OTEL_RESOURCE_ATTRIBUTES: value });
+      expect(config.environmentAttributes).toEqual({});
+      expect(config.warnings).toEqual([
+        "OTEL_RESOURCE_ATTRIBUTES is malformed (expected key=value pairs separated by commas, percent-encoded); all of it is ignored",
+      ]);
+    },
+  );
+
+  it("does not take a service name from a value it discards", () => {
+    expect(problems({ OTEL_RESOURCE_ATTRIBUTES: "service.name=x,broken" })).toEqual([
+      "no service name: pass serviceName to start() or set OTEL_SERVICE_NAME",
+    ]);
   });
 });
 
@@ -257,6 +346,18 @@ describe("sampler", () => {
     expect(
       resolved(NAME, { sampler: { type: "traceidratio", ratio: 0.5 } }).sampler,
     ).toEqual({ type: "traceidratio", ratio: 0.5, source: "option" });
+  });
+
+  it("warns that an argument given to a sampler that takes none is ignored", () => {
+    const config = resolved({
+      ...NAME,
+      OTEL_TRACES_SAMPLER: "always_on",
+      OTEL_TRACES_SAMPLER_ARG: "0.1",
+    });
+    expect(config.sampler).toMatchObject({ type: "always_on", ratio: 1 });
+    expect(config.warnings).toEqual([
+      "OTEL_TRACES_SAMPLER_ARG is ignored: the always_on sampler takes no argument",
+    ]);
   });
 
   it("defaults a ratio sampler's missing argument to 1, as the specification says", () => {
@@ -329,17 +430,55 @@ describe("tuning variables", () => {
     expect(config.spanBatch.maxQueueSize).toBeUndefined();
   });
 
-  it("ignores an unusable value with a warning instead of failing", () => {
+  it.each([
+    ["OTEL_METRIC_EXPORT_INTERVAL", "soon", "number"],
+    ["OTEL_METRIC_EXPORT_INTERVAL", "0", "number"],
+    ["OTEL_METRIC_EXPORT_TIMEOUT", "-5", "number"],
+    ["OTEL_BSP_SCHEDULE_DELAY", "Infinity", "number"],
+    ["OTEL_BSP_SCHEDULE_DELAY", "99999999999", "number"],
+    ["OTEL_BSP_EXPORT_TIMEOUT", "0", "number"],
+    // a zero batch size makes the processor export empty batches forever; a zero queue drops everything
+    ["OTEL_BSP_MAX_EXPORT_BATCH_SIZE", "0", "whole number"],
+    ["OTEL_BSP_MAX_QUEUE_SIZE", "0", "whole number"],
+    ["OTEL_BSP_MAX_QUEUE_SIZE", "-1", "whole number"],
+    ["OTEL_BSP_MAX_EXPORT_BATCH_SIZE", "0.5", "whole number"],
+    ["OTEL_BLRP_MAX_EXPORT_BATCH_SIZE", "0", "whole number"],
+    ["OTEL_BLRP_MAX_QUEUE_SIZE", "1.5", "whole number"],
+  ])("ignores %s=%s with a warning instead of failing or forwarding it", (variable, value, kind) => {
+    const config = resolved({ ...NAME, [variable]: value });
+    expect(config.warnings).toEqual([
+      `${variable}="${value}" is not a positive ${kind}; using the default`,
+    ]);
+    expect([
+      config.metricExportIntervalMillis,
+      config.metricExportTimeoutMillis,
+      ...(Object.values(config.spanBatch) as unknown[]),
+      ...(Object.values(config.logBatch) as unknown[]),
+    ]).toEqual(Array.from({ length: 10 }, () => undefined));
+  });
+
+  it("accepts a fractional delay but only whole sizes", () => {
     const config = resolved({
       ...NAME,
-      OTEL_METRIC_EXPORT_INTERVAL: "soon",
-      OTEL_BSP_MAX_QUEUE_SIZE: "-1",
+      OTEL_BSP_SCHEDULE_DELAY: "0.5",
+      OTEL_BSP_MAX_QUEUE_SIZE: "1",
     });
-    expect(config.metricExportIntervalMillis).toBeUndefined();
-    expect(config.spanBatch.maxQueueSize).toBeUndefined();
+    expect(config.spanBatch.scheduledDelayMillis).toBe(0.5);
+    expect(config.spanBatch.maxQueueSize).toBe(1);
+    expect(config.warnings).toEqual([]);
+  });
+
+  it("uses the interval as the timeout, with a warning, when the timeout is the larger", () => {
+    // the upstream reader refuses to be constructed otherwise
+    const config = resolved({
+      ...NAME,
+      OTEL_METRIC_EXPORT_INTERVAL: "200",
+      OTEL_METRIC_EXPORT_TIMEOUT: "500",
+    });
+    expect(config.metricExportIntervalMillis).toBe(200);
+    expect(config.metricExportTimeoutMillis).toBe(200);
     expect(config.warnings).toEqual([
-      'OTEL_METRIC_EXPORT_INTERVAL="soon" is not a non-negative number; using the default',
-      'OTEL_BSP_MAX_QUEUE_SIZE="-1" is not a non-negative number; using the default',
+      "OTEL_METRIC_EXPORT_TIMEOUT is greater than OTEL_METRIC_EXPORT_INTERVAL; using the interval as the timeout",
     ]);
   });
 });

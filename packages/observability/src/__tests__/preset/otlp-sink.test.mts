@@ -3,7 +3,7 @@
  * the sink must report what they sent, in either encoding.
  */
 
-import { ROOT_CONTEXT, SpanStatusCode, trace } from "@opentelemetry/api";
+import { ROOT_CONTEXT, SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
 import { SeverityNumber } from "@opentelemetry/api-logs";
 import { ExportResultCode } from "@opentelemetry/core";
 import { OTLPLogExporter as JsonLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
@@ -181,7 +181,7 @@ describe("OTLP sink", () => {
         severityNumber: SeverityNumber.WARN,
         severityText: "WARN",
         body: { message: "disk low", detail: { free: 12, tags: ["a"] } },
-        attributes: { "log.key": "lv" },
+        attributes: { "log.key": "lv", payload: new Uint8Array([1, 2, 255]) },
         context: trace.setSpan(ROOT_CONTEXT, span),
       });
       span.end();
@@ -194,7 +194,8 @@ describe("OTLP sink", () => {
       expect(records[0]).toMatchObject({
         body: { message: "disk low", detail: { free: 12, tags: ["a"] } },
         severityText: "WARN",
-        attributes: { "log.key": "lv" },
+        // bytes are hex in this view, whichever encoding carried them
+        attributes: { "log.key": "lv", payload: "0102ff" },
         traceId: span.spanContext().traceId,
         spanId: span.spanContext().spanId,
         scope: { name: "log-scope" },
@@ -217,6 +218,61 @@ describe("OTLP sink", () => {
     );
     expect(sink.spans().map((s) => s.name)).toContain("checkout");
   });
+
+  it("reports metrics sent as JSON the same way, including integer values", async () => {
+    const { OTLPMetricExporter: JsonMetricExporter } = await import(
+      "@opentelemetry/exporter-metrics-otlp-http"
+    );
+    sink = await startOtlpSink();
+    const reader = new PeriodicExportingMetricReader({
+      exporter: new JsonMetricExporter({ url: `${sink.url}/v1/metrics` }),
+      exportIntervalMillis: 60_000,
+    });
+    const provider = new MeterProvider({ resource, readers: [reader] });
+    closers.push(() => provider.shutdown());
+    provider.getMeter("metric-scope").createCounter("jobs_total").add(5, { queue: "email" });
+    await provider.forceFlush();
+
+    expect(sink.requestsTo("/v1/metrics")[0]!.encoding).toBe("json");
+    expect(sink.metrics().find((m) => m.name === "jobs_total")).toMatchObject({
+      type: "sum",
+      points: [{ attributes: { queue: "email" }, value: 5 }],
+    });
+  });
+
+  it.each([
+    ["protobuf", ProtoTraceExporter],
+    ["json", JsonTraceExporter],
+  ] as const)(
+    "reports span kind and parent id the same way as %s",
+    async (_encoding, Exporter) => {
+      sink = await startOtlpSink();
+      const provider = new BasicTracerProvider({
+        resource,
+        spanProcessors: [
+          new SimpleSpanProcessor(new Exporter({ url: `${sink.url}/v1/traces` })),
+        ],
+      });
+      closers.push(() => provider.shutdown());
+      const tracer = provider.getTracer("t");
+      const parent = tracer.startSpan("parent", { kind: SpanKind.SERVER });
+      const child = tracer.startSpan(
+        "child",
+        { kind: SpanKind.CLIENT },
+        trace.setSpan(ROOT_CONTEXT, parent),
+      );
+      child.end();
+      parent.end();
+      await provider.forceFlush();
+
+      const sent = Object.fromEntries(sink.spans().map((s) => [s.name, s]));
+      // OTLP numbers kinds from 1: SERVER is 2, CLIENT is 3
+      expect(sent.parent!.kind).toBe(2);
+      expect(sent.child!.kind).toBe(3);
+      expect(sent.child!.parentSpanId).toBe(parent.spanContext().spanId);
+      expect(sent.parent!.parentSpanId).toBeUndefined();
+    },
+  );
 
   it("answers with the injected status, and still records the request", async () => {
     sink = await startOtlpSink();
@@ -300,5 +356,48 @@ describe("OTLP sink", () => {
     expect(sink.requests).toHaveLength(0);
     expect(sink.undecodable).toHaveLength(1);
     expect(() => sink!.spans()).toThrow(/could not decode/);
+  });
+
+  it.each([
+    [
+      "a corrupt gzip body",
+      "/v1/traces",
+      { "content-type": "application/x-protobuf", "content-encoding": "gzip" },
+      new Uint8Array([1, 2, 3]),
+    ],
+    [
+      "a path that is not an OTLP signal path",
+      "/v1/trace",
+      { "content-type": "application/x-protobuf" },
+      new Uint8Array([]),
+    ],
+    [
+      // field 1 (a message) sent as a varint
+      "a field with the wrong wire type",
+      "/v1/traces",
+      { "content-type": "application/x-protobuf" },
+      new Uint8Array([0x08, 0x01]),
+    ],
+  ])("refuses %s the same way, without crashing", async (_what, path, headers, body) => {
+    sink = await startOtlpSink();
+    const response = await fetch(`${sink.url}${path}`, { method: "POST", headers, body });
+    expect(response.status).toBe(400);
+    expect(sink.requests).toHaveLength(0);
+    expect(sink.undecodable).toHaveLength(1);
+    expect(() => sink!.spans()).toThrow(/could not decode/);
+  });
+
+  it("waitFor rejects, rather than throwing elsewhere, when its condition throws", async () => {
+    sink = await startOtlpSink();
+    // the expectation is attached before the request, so the rejection always has a handler
+    const rejected = expect(
+      sink.waitFor(() => sink!.spans().length > 0, 2000),
+    ).rejects.toThrow(/could not decode/);
+    await fetch(`${sink.url}/v1/traces`, {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "not otlp",
+    });
+    await rejected;
   });
 });

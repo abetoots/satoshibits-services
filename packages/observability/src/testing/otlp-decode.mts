@@ -13,6 +13,7 @@
 type Scalar =
   | "string"
   | "bytes"
+  | "base64"
   | "varint"
   | "bool"
   | "fixed64"
@@ -131,7 +132,7 @@ const SCHEMAS: Record<string, Schema> = {
     4: f("doubleValue", "double"),
     5: f("arrayValue", m("ArrayValue")),
     6: f("kvlistValue", m("KeyValueList")),
-    7: f("bytesValue", "bytes"),
+    7: f("bytesValue", "base64"),
   },
   ArrayValue: { 1: f("values", m("AnyValue"), true) },
   KeyValueList: { 1: f("values", m("KeyValue"), true) },
@@ -152,7 +153,13 @@ function readVarint(buf: Buffer, at: number): [bigint, number] {
   }
 }
 
+const VARINT_TYPES: ReadonlySet<Scalar> = new Set(["varint", "bool"]);
+
 function scalar(type: Scalar, raw: Buffer | bigint): unknown {
+  // a field arriving with the wrong wire type means the schema here, or the sender, is wrong
+  if ((typeof raw === "bigint") !== VARINT_TYPES.has(type)) {
+    throw new Error(`wire type does not fit declared type ${type}`);
+  }
   if (typeof raw === "bigint") {
     if (type === "bool") return raw === 1n;
     // int64 values arrive as unsigned varints; fold back to signed
@@ -164,6 +171,9 @@ function scalar(type: Scalar, raw: Buffer | bigint): unknown {
       return raw.toString("utf8");
     case "bytes":
       return raw.toString("hex");
+    case "base64":
+      // the spelling the JSON encoding uses for an AnyValue's bytes
+      return raw.toString("base64");
     case "double":
       return raw.readDoubleLE(0);
     case "fixed64":
@@ -208,10 +218,15 @@ function decodeMessage(buf: Buffer, schemaName: string): Json {
 
     const field = schema[fieldNumber];
     if (!field) continue;
-    const value =
-      typeof field.type === "string"
-        ? scalar(field.type, raw)
-        : decodeMessage(raw as Buffer, field.type.message);
+    let value: unknown;
+    if (typeof field.type === "string") {
+      value = scalar(field.type, raw);
+    } else {
+      if (wireType !== 2) {
+        throw new Error(`field ${field.name} is a message but has wire type ${wireType}`);
+      }
+      value = decodeMessage(raw as Buffer, field.type.message);
+    }
     if (field.repeated) {
       ((out[field.name] ??= []) as unknown[]).push(value);
     } else {
@@ -282,7 +297,9 @@ function plainValue(anyValue: unknown): unknown {
   // the JSON encoding writes 64-bit integers as strings
   if ("intValue" in v) return Number(v.intValue);
   if ("doubleValue" in v) return v.doubleValue;
-  if ("bytesValue" in v) return v.bytesValue;
+  if ("bytesValue" in v) {
+    return Buffer.from(String(v.bytesValue), "base64").toString("hex");
+  }
   if ("arrayValue" in v) {
     return list((v.arrayValue as Json | undefined)?.values).map(plainValue);
   }
@@ -427,8 +444,11 @@ export function decodeOtlpRequest(
   contentType: string | undefined,
   body: Buffer,
 ): DecodedExport {
-  const suffix = Object.keys(ROOT_SCHEMA).find((p) => path.endsWith(p));
-  if (!suffix) return { spans: [], metrics: [], logRecords: [] };
+  const pathname = path.split("?")[0]!;
+  const suffix = Object.keys(ROOT_SCHEMA).find((p) => pathname.endsWith(p));
+  if (!suffix) {
+    throw new Error(`not an OTLP signal path: ${pathname}`);
+  }
   const encoding = encodingOf(contentType);
   if (encoding === "json") {
     return simplify(JSON.parse(body.toString("utf8")) as Json);
