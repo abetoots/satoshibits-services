@@ -70,11 +70,11 @@ if (scenario.start === "register") {
       ...(scenario.collectDiagnostics && {
         diagnostics: () => {
           // a tracer provider is registered by the same call that installs instrumentation
-          const provider = trace.getTracerProvider() as {
-            getDelegate?: () => { constructor: { name: string } };
-          };
-          sinkFactoryCalledAfterSdkStarted =
-            provider.getDelegate?.().constructor.name === "TracerProvider";
+          // a registered tracer provider hands out recording spans; none are exported by this
+          sinkFactoryCalledAfterSdkStarted = trace
+            .getTracer("probe")
+            .startSpan("probe")
+            .isRecording();
           if (scenario.collectDiagnostics === "throwing") {
             return (event) => {
               diagnostics.push(event);
@@ -89,6 +89,8 @@ if (scenario.start === "register") {
     startError = error instanceof Error ? error.message : String(error);
   }
 }
+
+const logLevelAfterStart = process.env.OTEL_LOG_LEVEL ?? null;
 
 // ===== emit =====
 const scopeName = scenario.scopeName ?? "preset-child";
@@ -154,6 +156,7 @@ const result: ChildResult = {
   sockets,
   diagnostics,
   sinkFactoryCalledAfterSdkStarted,
+  logLevelAfterStart,
 };
 process.stdout.write(`RESULT ${JSON.stringify(result)}\n`);
 

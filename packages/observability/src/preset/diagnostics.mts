@@ -6,6 +6,11 @@
  * The preset always installs this one, at warning level by default, writing
  * one JSON line per event to stderr.
  *
+ * Diagnostics are a way out of the process like any exporter, so everything
+ * passes a sanitizing step first: free text is redacted, URLs are cut down to
+ * scheme and host, and objects the SDK passes along (a whole export batch, at
+ * debug level) are described by their shape, never dumped.
+ *
  * A project can supply its own sink through a factory. The factory is called
  * lazily, on the first event after {@link Diagnostics.activate}, so a logger
  * library is never imported before instrumentation is in place. Events
@@ -70,22 +75,47 @@ export const stderrSink: DiagnosticsSink = (event) => {
   );
 };
 
-function describeArgument(argument: unknown): string {
-  let text: string;
-  if (argument instanceof Error) {
-    text = `${argument.name}: ${argument.message}`;
-  } else if (typeof argument === "string") {
-    text = argument;
-  } else {
+/**
+ * Cut every URL in a text down to scheme and host. An endpoint URL can carry
+ * credentials in its user-info, path or query, and error messages quote URLs.
+ */
+export function scrubUrls(text: string): string {
+  return text.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, (match) => {
     try {
-      text = JSON.stringify(argument) ?? String(argument);
+      const url = new URL(match);
+      return `${url.protocol}//${url.host}`;
     } catch {
-      text = "[unserializable]";
+      return "[url]";
     }
-  }
-  return text.length > MAX_ARGUMENT_LENGTH
+  });
+}
+
+const truncate = (text: string): string =>
+  text.length > MAX_ARGUMENT_LENGTH
     ? `${text.slice(0, MAX_ARGUMENT_LENGTH)}…`
     : text;
+
+/** describe a logger argument without printing what it holds */
+function describeArgument(argument: unknown): string {
+  if (argument instanceof Error) {
+    return truncate(`${argument.name}: ${argument.message}`);
+  }
+  if (typeof argument === "string") return truncate(argument);
+  if (
+    typeof argument === "number" ||
+    typeof argument === "boolean" ||
+    argument === null ||
+    argument === undefined
+  ) {
+    return String(argument);
+  }
+  if (Array.isArray(argument)) return `[array of ${argument.length}]`;
+  if (typeof argument === "object") {
+    const keys = Object.keys(argument);
+    const shown = keys.slice(0, 8).join(", ");
+    return `{${shown}${keys.length > 8 ? ", …" : ""}}`;
+  }
+  return `[${typeof argument}]`;
 }
 
 export interface CreateDiagnosticsOptions {
@@ -93,6 +123,8 @@ export interface CreateDiagnosticsOptions {
   logLevel?: string;
   /** returns the project's sink; called once, lazily, after `activate()` */
   sinkFactory?: () => DiagnosticsSink;
+  /** redacts free text (the same redaction exported data gets); URLs are always scrubbed */
+  redactText?: (text: string) => string;
 }
 
 export function createDiagnostics(
@@ -105,8 +137,26 @@ export function createDiagnostics(
   let sink: DiagnosticsSink | undefined;
   let held: DiagnosticsEvent[] = [];
 
-  const deliver = (event: DiagnosticsEvent) => {
+  const clean = (text: string): string => {
+    const scrubbed = scrubUrls(text);
+    return options.redactText ? options.redactText(scrubbed) : scrubbed;
+  };
+  const sanitized = (event: DiagnosticsEvent): DiagnosticsEvent => ({
+    level: event.level,
+    message: clean(event.message),
+    ...(event.fields && {
+      fields: Object.fromEntries(
+        Object.entries(event.fields).map(([key, value]) => [
+          key,
+          typeof value === "string" ? clean(value) : value,
+        ]),
+      ),
+    }),
+  });
+
+  const deliver = (raw: DiagnosticsEvent) => {
     try {
+      const event = sanitized(raw);
       if (sink === undefined) {
         try {
           sink = options.sinkFactory?.() ?? stderrSink;

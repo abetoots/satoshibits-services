@@ -59,7 +59,7 @@ import type {
   SpanProcessor,
 } from "@opentelemetry/sdk-trace";
 
-import { resolveConfig, SIGNALS } from "./config.mjs";
+import { isRatioSampler, resolveConfig, SIGNALS } from "./config.mjs";
 import { createDiagnostics, createRateLimiter } from "./diagnostics.mjs";
 import {
   createLogRecordExporter,
@@ -176,7 +176,7 @@ function buildSampler(sampler: ResolvedConfig["sampler"]): Sampler {
 }
 
 const describeSampler = (sampler: ResolvedConfig["sampler"]): string =>
-  sampler.type.endsWith("traceidratio")
+  isRatioSampler(sampler.type)
     ? `${sampler.type}(${sampler.ratio})`
     : sampler.type;
 
@@ -281,16 +281,6 @@ function buildPipelines(
       }),
     );
   } else if (config.signals.metrics.enabled) {
-    let interval = config.metricExportIntervalMillis;
-    let timeout = config.metricExportTimeoutMillis;
-    if (interval === 0) interval = undefined;
-    if (timeout === 0) timeout = undefined;
-    if (interval !== undefined && timeout !== undefined && timeout > interval) {
-      config.warnings.push(
-        "OTEL_METRIC_EXPORT_TIMEOUT is greater than OTEL_METRIC_EXPORT_INTERVAL; using the interval as the timeout",
-      );
-      timeout = interval;
-    }
     metricReaders.push(
       new PeriodicExportingMetricReader({
         exporter: wrapMetricExporter(
@@ -298,8 +288,8 @@ function buildPipelines(
           contextFor("metrics"),
         ),
         ...defined({
-          exportIntervalMillis: interval,
-          exportTimeoutMillis: timeout,
+          exportIntervalMillis: config.metricExportIntervalMillis,
+          exportTimeoutMillis: config.metricExportTimeoutMillis,
         }),
       }),
     );
@@ -368,35 +358,56 @@ function withoutLogLevelVariable<T>(construct: () => T): T {
 /**
  * The SDK sends every internal error (each failed batch among them) to one
  * global handler, whose default logs all of them. This one reports the first
- * and then at most one per interval, so an outage does not flood the log.
- * Failed exports are also reported per signal by the exporter wrapper.
+ * error of each kind and then at most one of that kind per interval, so an
+ * outage neither floods the log nor hides an unrelated error behind it.
+ *
+ * A rejected or undeliverable export arrives here as an `OTLPExporterError`
+ * or a network error; the exporter wrapper has already reported it, by
+ * signal, so it is not reported again.
  */
 function installErrorHandler(diagnostics: Diagnostics): void {
-  const limit = createRateLimiter(FAILURE_REPORT_INTERVAL_MILLIS);
+  const limiters = new Map<string, ReturnType<typeof createRateLimiter>>();
   setGlobalErrorHandler((error) => {
-    limit((suppressed) => {
+    try {
       const detail = (
-        typeof error === "object" ? error : { message: String(error) }
+        typeof error === "object" && error !== null
+          ? error
+          : { message: String(error) }
       ) as { name?: unknown; message?: unknown; code?: unknown };
       const name = typeof detail.name === "string" ? detail.name : "Error";
-      diagnostics.report({
-        level: "error",
-        message: "telemetry pipeline error",
-        fields: {
-          error: name,
-          ...(typeof detail.code === "number" && { status: detail.code }),
-          ...(typeof detail.code === "string" && { code: detail.code }),
-          // an exporter error's message is free text from the far end; others are the SDK's own
-          ...(name !== "OTLPExporterError" &&
-            typeof detail.message === "string" && {
-              detail: detail.message.slice(0, 200),
-            }),
-          ...(suppressed > 0 && { suppressed }),
-        },
+      const message = typeof detail.message === "string" ? detail.message : "";
+      // reported per signal by the wrapper: an HTTP rejection, or a socket error (which carries a code)
+      if (name === "OTLPExporterError" || typeof detail.code === "string") return;
+      // one limit per kind of error; the kinds are few (the SDK's own classes)
+      let limit = limiters.get(name);
+      if (limit === undefined) {
+        if (limiters.size >= 32) return;
+        limit = createRateLimiter(FAILURE_REPORT_INTERVAL_MILLIS);
+        limiters.set(name, limit);
+      }
+      limit((suppressed) => {
+        diagnostics.report({
+          level: "error",
+          message: "telemetry pipeline error",
+          fields: {
+            error: name,
+            // some SDK errors quote the exporter's error, whose text comes from the far end
+            ...(message !== "" &&
+              !message.includes("OTLPExporterError") && {
+                detail: message.slice(0, 200),
+              }),
+            ...(suppressed > 0 && { suppressed }),
+          },
+        });
       });
-    });
+    } catch {
+      // the handler is called from inside the SDK's promise chains; it must never throw
+    }
   });
 }
+
+/** an independent copy: callers cannot change, and do not see changes to, the runtime's own state */
+const snapshot = (status: PresetStatus): PresetStatus => structuredClone(status);
 
 /**
  * Start telemetry for this process. Call it once, from a module loaded with
@@ -423,39 +434,56 @@ export function start(options: StartOptions = {}): PresetStatus {
       },
       flushables: [],
     };
-    return handle.status;
+    return snapshot(handle.status);
   }
   const { config } = resolution;
 
+  const redactor = createRedactor(options.redaction);
   const diagnostics = createDiagnostics({
     logLevel: process.env.OTEL_LOG_LEVEL,
     sinkFactory: options.diagnostics,
+    redactText: redactor.text,
   });
-  const redactor = createRedactor(options.redaction);
-  const pipelines = buildPipelines(config, options, { diagnostics, redactor });
 
-  if (options.loaderHook !== false) installLoaderHook();
-
+  // from here on things are registered. The diagnostics logger goes first: the
+  // upstream constructors below report unusable settings through it, and it
+  // holds what it is given until the sink may be created.
   diag.setLogger(diagnostics.diagLogger, {
     logLevel: diagnostics.diagLevel,
     suppressOverrideMessage: true,
   });
   installErrorHandler(diagnostics);
 
-  const sdk = withoutLogLevelVariable(
-    () =>
-      new NodeSDK({
-        resource: buildResource(config, redactor),
-        // the resource above is complete; detection here would merge the environment in again, unfiltered
-        autoDetectResources: false,
-        sampler: buildSampler(config.sampler),
-        spanProcessors: pipelines.spanProcessors,
-        metricReaders: pipelines.metricReaders,
-        logRecordProcessors: pipelines.logRecordProcessors,
-        instrumentations: buildInstrumentations(options.instrumentations),
-      }),
-  );
-  sdk.start();
+  let sdk: NodeSDK;
+  let pipelines: Pipelines;
+  try {
+    const resource = buildResource(config, redactor);
+    const sampler = buildSampler(config.sampler);
+    const instrumentations = buildInstrumentations(options.instrumentations);
+    pipelines = buildPipelines(config, options, { diagnostics, redactor });
+    if (options.loaderHook !== false) installLoaderHook();
+    const built = pipelines;
+    sdk = withoutLogLevelVariable(
+      () =>
+        new NodeSDK({
+          resource,
+          // the resource is complete; detection here would merge the environment in again, unfiltered
+          autoDetectResources: false,
+          sampler,
+          spanProcessors: built.spanProcessors,
+          metricReaders: built.metricReaders,
+          logRecordProcessors: built.logRecordProcessors,
+          instrumentations,
+        }),
+    );
+    sdk.start();
+  } catch (error) {
+    // give back what was registered above, and let what was held be seen
+    diagnostics.activate();
+    diag.disable();
+    setGlobalErrorHandler(loggingErrorHandler());
+    throw error;
+  }
   diagnostics.activate();
   reportStartup(diagnostics, config, pipelines.signals);
 
@@ -474,7 +502,7 @@ export function start(options: StartOptions = {}): PresetStatus {
       signals: pipelines.signals,
     },
   };
-  return handle.status;
+  return snapshot(handle.status);
 }
 
 /** reject when `work` has not settled within `timeoutMillis`; the timer never outlives the call */
@@ -529,32 +557,33 @@ export async function shutdown(
 
 /** What is running: per signal on or off and why, and where data goes. Never header values. */
 export function getStatus(): PresetStatus {
-  return (
-    handle?.status ?? {
-      state: "not-started",
-      loaderHook: loaderHookInstalled(),
-      signals: allOff("not-started"),
-    }
-  );
+  return handle
+    ? snapshot(handle.status)
+    : {
+        state: "not-started",
+        loaderHook: loaderHookInstalled(),
+        signals: allOff("not-started"),
+      };
 }
 
 /**
  * Test support, reached through the `/testing` entry: stop what is running and
  * forget it, so the next test can call `start()` again in the same process.
  * It clears the API's global registrations, whoever made them.
+ *
+ * Everything global is undone synchronously, before the first await, so a
+ * `start()` that follows at once (without awaiting this) is not undone by it.
  */
 export async function resetForTesting(): Promise<void> {
   const current = handle;
   handle = undefined;
-  try {
-    await current?.sdk?.shutdown();
-  } finally {
-    trace.disable();
-    metrics.disable();
-    logs.disable();
-    context.disable();
-    propagation.disable();
-    diag.disable();
-    setGlobalErrorHandler(loggingErrorHandler());
-  }
+  trace.disable();
+  metrics.disable();
+  logs.disable();
+  context.disable();
+  propagation.disable();
+  diag.disable();
+  setGlobalErrorHandler(loggingErrorHandler());
+  // the SDK holds its own references to the providers, so this still flushes and stops them
+  await current?.sdk?.shutdown();
 }

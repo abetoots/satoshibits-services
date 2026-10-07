@@ -84,6 +84,8 @@ export interface ResolvedConfig {
   serviceVersion?: string;
   deploymentEnvironment?: string;
   resourceAttributes: Attributes;
+  /** `OTEL_RESOURCE_ATTRIBUTES`, parsed; empty when unset or malformed */
+  environmentAttributes: Record<string, string>;
   headers?: Record<string, string>;
   signals: Record<Signal, SignalConfig>;
   sampler: Required<SamplerOption> & { source: "env" | "option" | "default" };
@@ -128,26 +130,15 @@ const nonBlank = (value: string | undefined): string | undefined => {
 /** a variable that is unset or blank counts as unset, as the specification says */
 const read = (env: Env, name: string): string | undefined => nonBlank(env[name]);
 
-function resolveEndpoint(
-  signal: Signal,
-  general: string | undefined,
-  generalSource: string,
-  env: Env,
+/** parse an endpoint; push a problem (naming the source, never the value) when unusable */
+function parseEndpoint(
+  value: string,
+  source: string,
   problems: string[],
-): string | undefined {
-  const specificName = `OTEL_EXPORTER_OTLP_${SIGNAL_VAR[signal]}_ENDPOINT`;
-  const specific = read(env, specificName);
-  // a signal-specific endpoint is used as given; the general one gets the signal path
-  const candidate =
-    specific ??
-    (general === undefined
-      ? undefined
-      : `${general.replace(/\/+$/, "")}/v1/${signal}`);
-  if (candidate === undefined) return undefined;
-  const source = specific === undefined ? generalSource : specificName;
+): URL | undefined {
   let url: URL;
   try {
-    url = new URL(candidate);
+    url = new URL(value);
   } catch {
     problems.push(`${source} is not a valid URL`);
     return undefined;
@@ -156,7 +147,30 @@ function resolveEndpoint(
     problems.push(`${source} must be an http or https URL`);
     return undefined;
   }
-  return candidate;
+  if (url.hash !== "") {
+    problems.push(`${source} must not contain a fragment (#...)`);
+    return undefined;
+  }
+  return url;
+}
+
+function resolveEndpoint(
+  signal: Signal,
+  general: URL | undefined,
+  env: Env,
+  problems: string[],
+): string | undefined {
+  const specificName = `OTEL_EXPORTER_OTLP_${SIGNAL_VAR[signal]}_ENDPOINT`;
+  const specific = read(env, specificName);
+  // a signal-specific endpoint is used as given
+  if (specific !== undefined) {
+    return parseEndpoint(specific, specificName, problems) && specific;
+  }
+  if (general === undefined) return undefined;
+  // the general one gets the signal path, appended to its path (a query string stays a query string)
+  const url = new URL(general.href);
+  url.pathname = `${url.pathname.replace(/\/+$/, "")}/v1/${signal}`;
+  return url.href;
 }
 
 function resolveProtocol(
@@ -167,7 +181,8 @@ function resolveProtocol(
   const specificName = `OTEL_EXPORTER_OTLP_${SIGNAL_VAR[signal]}_PROTOCOL`;
   const generalName = "OTEL_EXPORTER_OTLP_PROTOCOL";
   const specific = read(env, specificName);
-  const value = specific ?? read(env, generalName);
+  // enum values are case-insensitive, as the specification recommends
+  const value = (specific ?? read(env, generalName))?.toLowerCase();
   if (value === undefined || value === "http/protobuf") return "http/protobuf";
   if (value === "http/json") return "http/json";
   const name = specific === undefined ? generalName : specificName;
@@ -181,16 +196,16 @@ function resolveProtocol(
 
 function resolveSignal(
   signal: Signal,
-  general: string | undefined,
-  generalSource: string,
+  general: URL | undefined,
   env: Env,
   problems: string[],
+  warnings: string[],
 ): SignalConfig {
   const exporterName = `OTEL_${SIGNAL_VAR[signal]}_EXPORTER`;
   const exporter = read(env, exporterName)?.toLowerCase();
   // validated even when the signal ends up off: a setting is honoured or rejected, never ignored
   const protocol = resolveProtocol(signal, env, problems);
-  const url = resolveEndpoint(signal, general, generalSource, env, problems);
+  const url = resolveEndpoint(signal, general, env, problems);
 
   if (exporter !== undefined && exporter !== "otlp" && exporter !== "none") {
     problems.push(
@@ -201,25 +216,35 @@ function resolveSignal(
   if (exporter === "none") return { enabled: false, reason: "exporter-none" };
   // logs are opt-in: application logs usually have a destination already
   if (signal === "logs" && exporter === undefined) {
+    const configured = Object.keys(env).filter(
+      (name) => name.startsWith("OTEL_EXPORTER_OTLP_LOGS_") && read(env, name),
+    );
+    if (configured.length > 0) {
+      warnings.push(
+        `${configured.sort().join(", ")} is set but logs are not exported: set OTEL_LOGS_EXPORTER=otlp to turn them on`,
+      );
+    }
     return { enabled: false, reason: "not-requested" };
   }
   if (url === undefined) return { enabled: false, reason: "no-endpoint" };
   return { enabled: true, url, protocol };
 }
 
-const isRatioType = (type: SamplerType): boolean => type.endsWith("traceidratio");
+export const isRatioSampler = (type: SamplerType): boolean =>
+  type.endsWith("traceidratio");
 
 function resolveSampler(
   option: SamplerOption | undefined,
   env: Env,
   problems: string[],
+  warnings: string[],
 ): ResolvedConfig["sampler"] {
   const fallback = {
     type: "parentbased_always_on",
     ratio: 1,
     source: "default",
   } as const;
-  const name = read(env, "OTEL_TRACES_SAMPLER");
+  const name = read(env, "OTEL_TRACES_SAMPLER")?.toLowerCase();
   const arg = read(env, "OTEL_TRACES_SAMPLER_ARG");
 
   if (name === undefined) {
@@ -251,7 +276,12 @@ function resolveSampler(
   }
   const type = name as SamplerType;
   let ratio = 1;
-  if (isRatioType(type) && arg !== undefined) {
+  if (!isRatioSampler(type) && arg !== undefined) {
+    warnings.push(
+      `OTEL_TRACES_SAMPLER_ARG is ignored: the ${type} sampler takes no argument`,
+    );
+  }
+  if (isRatioSampler(type) && arg !== undefined) {
     ratio = Number(arg);
     if (!(ratio >= 0 && ratio <= 1)) {
       problems.push(
@@ -263,38 +293,72 @@ function resolveSampler(
   return { type, ratio, source: "env" };
 }
 
-/** an unusable tuning value is ignored with a warning, as the specification says */
-function tuning(env: Env, name: string, warnings: string[]): number | undefined {
+/** the largest delay a node timer accepts */
+const MAX_TIMER_MILLIS = 2 ** 31 - 1;
+
+/**
+ * A tuning value the SDK cannot use is ignored with a warning, as the
+ * specification says. Zero is such a value: a zero batch size makes the
+ * upstream processor export empty batches forever, and a zero queue drops
+ * every record.
+ */
+function tuning(
+  env: Env,
+  name: string,
+  kind: "count" | "millis",
+  warnings: string[],
+): number | undefined {
   const raw = read(env, name);
   if (raw === undefined) return undefined;
   const value = Number(raw);
-  if (!Number.isFinite(value) || value < 0) {
-    warnings.push(`${name}="${raw}" is not a non-negative number; using the default`);
+  const usable =
+    Number.isFinite(value) &&
+    value > 0 &&
+    value <= MAX_TIMER_MILLIS &&
+    (kind === "millis" || Number.isInteger(value));
+  if (!usable) {
+    warnings.push(
+      `${name}="${raw}" is not a positive ${kind === "count" ? "whole number" : "number"}; using the default`,
+    );
     return undefined;
   }
   return value;
 }
 
 const batchTuning = (env: Env, prefix: string, warnings: string[]): BatchTuning => ({
-  maxQueueSize: tuning(env, `${prefix}_MAX_QUEUE_SIZE`, warnings),
-  scheduledDelayMillis: tuning(env, `${prefix}_SCHEDULE_DELAY`, warnings),
-  exportTimeoutMillis: tuning(env, `${prefix}_EXPORT_TIMEOUT`, warnings),
-  maxExportBatchSize: tuning(env, `${prefix}_MAX_EXPORT_BATCH_SIZE`, warnings),
+  maxQueueSize: tuning(env, `${prefix}_MAX_QUEUE_SIZE`, "count", warnings),
+  scheduledDelayMillis: tuning(env, `${prefix}_SCHEDULE_DELAY`, "millis", warnings),
+  exportTimeoutMillis: tuning(env, `${prefix}_EXPORT_TIMEOUT`, "millis", warnings),
+  maxExportBatchSize: tuning(env, `${prefix}_MAX_EXPORT_BATCH_SIZE`, "count", warnings),
 });
 
-/** `service.name` given through `OTEL_RESOURCE_ATTRIBUTES`, if any */
-function serviceNameFromResourceAttributes(env: Env): string | undefined {
-  for (const pair of (read(env, "OTEL_RESOURCE_ATTRIBUTES") ?? "").split(",")) {
-    const at = pair.indexOf("=");
-    if (at > 0 && pair.slice(0, at).trim() === "service.name") {
-      try {
-        return nonBlank(decodeURIComponent(pair.slice(at + 1)));
-      } catch {
-        return undefined;
-      }
+/**
+ * `OTEL_RESOURCE_ATTRIBUTES`, parsed once, here, for both the service name and
+ * the resource. The specification says a value with any malformed entry is
+ * discarded whole; that is reported, where the upstream detector stays silent.
+ */
+function environmentAttributes(
+  env: Env,
+  warnings: string[],
+): Record<string, string> {
+  const raw = read(env, "OTEL_RESOURCE_ATTRIBUTES");
+  if (raw === undefined) return {};
+  const attributes: Record<string, string> = {};
+  try {
+    for (const entry of raw.split(",")) {
+      if (entry.trim() === "") continue;
+      const at = entry.indexOf("=");
+      const key = at > 0 ? decodeURIComponent(entry.slice(0, at).trim()) : "";
+      if (key === "") throw new Error("entry without a key");
+      attributes[key] = decodeURIComponent(entry.slice(at + 1).trim());
     }
+  } catch {
+    warnings.push(
+      "OTEL_RESOURCE_ATTRIBUTES is malformed (expected key=value pairs separated by commas, percent-encoded); all of it is ignored",
+    );
+    return {};
   }
-  return undefined;
+  return attributes;
 }
 
 /**
@@ -313,27 +377,50 @@ export function resolveConfig(
   const problems: string[] = [];
   const warnings: string[] = [];
 
+  const fromEnvironment = environmentAttributes(env, warnings);
   const serviceName =
     nonBlank(options.serviceName) ??
     read(env, "OTEL_SERVICE_NAME") ??
-    serviceNameFromResourceAttributes(env);
+    nonBlank(fromEnvironment["service.name"]);
   if (!serviceName) {
     problems.push(
       "no service name: pass serviceName to start() or set OTEL_SERVICE_NAME",
     );
   }
 
-  const optionEndpoint = nonBlank(options.endpoint);
-  const general = optionEndpoint ?? read(env, "OTEL_EXPORTER_OTLP_ENDPOINT");
-  const generalSource =
-    optionEndpoint === undefined ? "OTEL_EXPORTER_OTLP_ENDPOINT" : "the endpoint option";
+  // the variable is validated even when the option overrides it: the upstream
+  // exporters parse it regardless, and report a bad one by printing its value
+  const envEndpointValue = read(env, "OTEL_EXPORTER_OTLP_ENDPOINT");
+  const envEndpoint =
+    envEndpointValue === undefined
+      ? undefined
+      : parseEndpoint(envEndpointValue, "OTEL_EXPORTER_OTLP_ENDPOINT", problems);
+  const optionEndpointValue = nonBlank(options.endpoint);
+  const general =
+    optionEndpointValue === undefined
+      ? envEndpoint
+      : parseEndpoint(optionEndpointValue, "the endpoint option", problems);
 
   const signals = {} as Record<Signal, SignalConfig>;
   for (const signal of SIGNALS) {
-    signals[signal] = resolveSignal(signal, general, generalSource, env, problems);
+    signals[signal] = resolveSignal(signal, general, env, problems, warnings);
   }
 
-  const sampler = resolveSampler(options.sampler, env, problems);
+  const sampler = resolveSampler(options.sampler, env, problems, warnings);
+
+  const metricExportIntervalMillis = tuning(env, "OTEL_METRIC_EXPORT_INTERVAL", "millis", warnings);
+  let metricExportTimeoutMillis = tuning(env, "OTEL_METRIC_EXPORT_TIMEOUT", "millis", warnings);
+  if (
+    metricExportIntervalMillis !== undefined &&
+    metricExportTimeoutMillis !== undefined &&
+    metricExportTimeoutMillis > metricExportIntervalMillis
+  ) {
+    // the reader refuses to be constructed with a timeout above its interval
+    warnings.push(
+      "OTEL_METRIC_EXPORT_TIMEOUT is greater than OTEL_METRIC_EXPORT_INTERVAL; using the interval as the timeout",
+    );
+    metricExportTimeoutMillis = metricExportIntervalMillis;
+  }
 
   const config: ResolvedConfig = {
     serviceName: serviceName ?? "",
@@ -341,11 +428,12 @@ export function resolveConfig(
     serviceVersion: options.serviceVersion,
     deploymentEnvironment: options.deploymentEnvironment,
     resourceAttributes: options.resourceAttributes ?? {},
+    environmentAttributes: fromEnvironment,
     headers: options.headers,
     signals,
     sampler,
-    metricExportIntervalMillis: tuning(env, "OTEL_METRIC_EXPORT_INTERVAL", warnings),
-    metricExportTimeoutMillis: tuning(env, "OTEL_METRIC_EXPORT_TIMEOUT", warnings),
+    metricExportIntervalMillis,
+    metricExportTimeoutMillis,
     spanBatch: batchTuning(env, "OTEL_BSP", warnings),
     logBatch: batchTuning(env, "OTEL_BLRP", warnings),
     warnings,

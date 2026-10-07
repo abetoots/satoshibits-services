@@ -45,7 +45,6 @@ export interface ExporterContext {
   redactor: Redactor;
   /** shown in failure reports; never the full URL, which can carry credentials */
   endpointHost?: string;
-  failureReportIntervalMillis?: number;
 }
 
 /** the host and port of an endpoint, for status and diagnostics */
@@ -54,9 +53,7 @@ export function hostOf(url: string): string {
 }
 
 function failureReporter(signal: Signal, context: ExporterContext) {
-  const limit = createRateLimiter(
-    context.failureReportIntervalMillis ?? FAILURE_REPORT_INTERVAL_MILLIS,
-  );
+  const limit = createRateLimiter(FAILURE_REPORT_INTERVAL_MILLIS);
   return (error: unknown) => {
     limit((suppressed) => {
       const detail = (error ?? {}) as { name?: unknown; code?: unknown };
@@ -66,7 +63,8 @@ function failureReporter(signal: Signal, context: ExporterContext) {
         // the error's message is left out on purpose: it is free text from the far end
         fields: {
           signal,
-          // an HTTP status for a rejected request, a code such as ECONNREFUSED otherwise
+          // an HTTP status for a rejected request, a code such as ECONNREFUSED otherwise;
+          // neither when the exporter gave up after retrying (a 429 or 503 that never cleared)
           ...(typeof detail.code === "number" && { status: detail.code }),
           ...(typeof detail.code === "string" && { code: detail.code }),
           error: typeof detail.name === "string" ? detail.name : "Error",
@@ -91,6 +89,27 @@ function observing(
 }
 
 /**
+ * Run one export. A throw from redaction or from the exporter itself is
+ * reported like any failed export and answered with a failed result, so the
+ * processor that called is never left waiting and never sees an exception.
+ */
+function guarded(
+  report: (error: unknown) => void,
+  resultCallback: (result: ExportResult) => void,
+  send: (observed: (result: ExportResult) => void) => void,
+): void {
+  try {
+    send(observing(report, resultCallback));
+  } catch (error) {
+    report(error);
+    resultCallback({
+      code: ExportResultCode.FAILED,
+      error: error instanceof Error ? error : new Error(String(error)),
+    });
+  }
+}
+
+/**
  * A view of `record` with some properties replaced. Everything else,
  * methods included, is read through to the original.
  */
@@ -110,14 +129,16 @@ export function wrapSpanExporter(
   const { redactor } = context;
   return {
     export: (spans: ReadableSpan[], resultCallback) => {
-      inner.export(
-        spans.map((span) =>
-          viewOf(span, {
-            instrumentationScope: redactor.scope(span.instrumentationScope),
-          }),
-        ),
-        observing(report, resultCallback),
-      );
+      guarded(report, resultCallback, (observed) => {
+        inner.export(
+          spans.map((span) =>
+            viewOf(span, {
+              instrumentationScope: redactor.scope(span.instrumentationScope),
+            }),
+          ),
+          observed,
+        );
+      });
     },
     shutdown: () => inner.shutdown(),
     forceFlush: () => inner.forceFlush?.() ?? Promise.resolve(),
@@ -132,16 +153,18 @@ export function wrapMetricExporter(
   const { redactor } = context;
   return {
     export: (metrics: ResourceMetrics, resultCallback) => {
-      inner.export(
-        {
-          ...metrics,
-          scopeMetrics: metrics.scopeMetrics.map((scopeMetrics) => ({
-            ...scopeMetrics,
-            scope: redactor.scope(scopeMetrics.scope),
-          })),
-        },
-        observing(report, resultCallback),
-      );
+      guarded(report, resultCallback, (observed) => {
+        inner.export(
+          {
+            ...metrics,
+            scopeMetrics: metrics.scopeMetrics.map((scopeMetrics) => ({
+              ...scopeMetrics,
+              scope: redactor.scope(scopeMetrics.scope),
+            })),
+          },
+          observed,
+        );
+      });
     },
     forceFlush: () => inner.forceFlush(),
     shutdown: () => inner.shutdown(),
@@ -165,14 +188,16 @@ export function wrapLogRecordExporter(
   const { redactor } = context;
   return {
     export: (records: ReadableLogRecord[], resultCallback) => {
-      inner.export(
-        records.map((record) =>
-          viewOf(record, {
-            instrumentationScope: redactor.scope(record.instrumentationScope),
-          }),
-        ),
-        observing(report, resultCallback),
-      );
+      guarded(report, resultCallback, (observed) => {
+        inner.export(
+          records.map((record) =>
+            viewOf(record, {
+              instrumentationScope: redactor.scope(record.instrumentationScope),
+            }),
+          ),
+          observed,
+        );
+      });
     },
     shutdown: () => inner.shutdown(),
     forceFlush: () => inner.forceFlush(),

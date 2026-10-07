@@ -2,7 +2,13 @@
  * The in-memory half of the test kit, used the way a consumer's test would.
  */
 
-import { metrics, SpanStatusCode, trace } from "@opentelemetry/api";
+import {
+  diag,
+  metrics,
+  ROOT_CONTEXT,
+  SpanStatusCode,
+  trace,
+} from "@opentelemetry/api";
 import { logs } from "@opentelemetry/api-logs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -121,15 +127,99 @@ describe("startTestTelemetry", () => {
     expect(connect).not.toHaveBeenCalled();
   });
 
-  it("throws, instead of collecting nothing, when the SDK is disabled", () => {
+  it("throws, instead of collecting nothing, when the SDK is disabled, and leaves nothing behind", async () => {
     vi.stubEnv("OTEL_SDK_DISABLED", "true");
     expect(() => startTestTelemetry()).toThrow(
       /telemetry is disabled; unset OTEL_SDK_DISABLED/,
     );
-    // the failed attempt does not block the next start
+    expect(getStatus().state).toBe("not-started");
     vi.unstubAllEnvs();
+
+    // a start that follows at once must stay started
     telemetry = startTestTelemetry();
-    expect(telemetry.status.state).toBe("running");
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    trace.getTracer("kit").startSpan("after-restart").end();
+    expect((await telemetry.spans()).map((s) => s.name)).toEqual(["after-restart"]);
+  });
+
+  it("a stop that is not awaited does not undo the start that follows it", async () => {
+    telemetry = startTestTelemetry({ serviceName: "first" });
+    void telemetry.stop();
+    telemetry = startTestTelemetry({ serviceName: "second" });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    trace.getTracer("kit").startSpan("kept").end();
+    expect((await telemetry.spans()).map((s) => s.name)).toEqual(["kept"]);
+  });
+
+  it("hands out status as a copy the caller cannot use to change the runtime", async () => {
+    telemetry = startTestTelemetry();
+    const status = getStatus();
+    status.state = "shut-down";
+    status.signals.traces = { enabled: false, reason: "no-endpoint" };
+    telemetry.status.state = "disabled";
+
+    expect(getStatus()).toMatchObject({
+      state: "running",
+      signals: { traces: { enabled: true } },
+    });
+    // forceFlush still works: the runtime did not see the edits
+    trace.getTracer("kit").startSpan("s").end();
+    expect(await telemetry.spans()).toHaveLength(1);
+  });
+
+  it("keeps the default service name when the option is present but undefined", async () => {
+    telemetry = startTestTelemetry({ serviceName: undefined });
+    trace.getTracer("kit").startSpan("s").end();
+    const [span] = await telemetry.spans();
+    expect(span!.resource.attributes["service.name"]).toBe("test");
+  });
+
+  it("never masks the service name or the instance id, whatever the redaction options", async () => {
+    telemetry = startTestTelemetry({
+      serviceName: "billing 0f8fad5b-d9cb-469f-a165-70867728950e",
+      redaction: { sanitizer: { maskUUIDs: true } },
+      resourceAttributes: { "other.id": "0f8fad5b-d9cb-469f-a165-70867728950e" },
+    });
+    trace.getTracer("kit").startSpan("s").end();
+    const [span] = await telemetry.spans();
+    const attributes = span!.resource.attributes;
+    expect(attributes["service.name"]).toBe("billing 0f8fad5b-d9cb-469f-a165-70867728950e");
+    expect(attributes["service.instance.id"]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4/);
+    // the positive control: the option does mask other values
+    expect(attributes["other.id"]).toBe("********-****-****-****-************");
+  });
+
+  it("honours parent-based sampling: an unsampled remote parent is followed, a sampled one too", async () => {
+    telemetry = startTestTelemetry({ sampler: { type: "parentbased_always_off" } });
+    const tracer = trace.getTracer("kit");
+    const remote = (flags: number) =>
+      trace.setSpanContext(ROOT_CONTEXT, {
+        traceId: "0af7651916cd43dd8448eb211c80319c",
+        spanId: "b7ad6b7169203331",
+        traceFlags: flags,
+        isRemote: true,
+      });
+    tracer.startSpan("root").end();
+    tracer.startSpan("under-unsampled", {}, remote(0)).end();
+    tracer.startSpan("under-sampled", {}, remote(1)).end();
+
+    // the root sampler says no; only the child of a sampled parent is kept
+    expect((await telemetry.spans()).map((s) => s.name)).toEqual(["under-sampled"]);
+  });
+
+  it("gives diagnostics the same redaction as exported data, and scrubs URLs", () => {
+    const events: { message: string }[] = [];
+    telemetry = startTestTelemetry({
+      diagnostics: () => (event) => events.push(event),
+    });
+    // any SDK component may log through the API's diagnostics logger
+    diag.warn(
+      "export failed for frank.sentinel@example.com at https://u:SENTINEL-PW@h.example/p?t=SENTINEL-Q",
+    );
+    expect(events.map((e) => e.message)).toEqual([
+      "export failed for f***@example.com at https://h.example",
+    ]);
   });
 
   it("refuses a second start while one is running", () => {

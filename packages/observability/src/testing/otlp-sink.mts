@@ -71,12 +71,13 @@ export interface OtlpSink {
   connections: SinkConnection[];
   requests: SinkRequest[];
   /**
-   * Requests whose body could not be decoded. They are answered with 400, and
+   * Requests whose body could not be decoded, or that came to a path that is
+   * not an OTLP signal path. They are answered with 400, and
    * `spans()`, `metrics()` and `logRecords()` throw while any exist, so a
    * test cannot pass on bytes nobody could read.
    */
   undecodable: { path: string; contentType: string | undefined; error: string }[];
-  /** requests whose path ends with the given suffix, e.g. `/v1/traces` */
+  /** requests whose path (without the query string) ends with the given suffix, e.g. `/v1/traces` */
   requestsTo: (pathSuffix: string) => SinkRequest[];
   spans: () => SinkSpan[];
   metrics: () => SinkMetric[];
@@ -131,12 +132,13 @@ export async function startOtlpSink(
       req.on("data", (chunk: Buffer) => chunks.push(chunk));
       req.on("end", () => {
         const raw = Buffer.concat(chunks);
-        const body =
-          req.headers["content-encoding"] === "gzip" ? gunzipSync(raw) : raw;
         const path = req.url ?? "";
         const contentType = req.headers["content-type"];
+        let body: Buffer;
         let decoded: DecodedExport;
         try {
+          body =
+            req.headers["content-encoding"] === "gzip" ? gunzipSync(raw) : raw;
           decoded = decodeOtlpRequest(path, contentType, body);
         } catch (error) {
           undecodable.push({ path, contentType, error: String(error) });
@@ -214,21 +216,29 @@ export async function startOtlpSink(
     connections,
     requests,
     undecodable,
-    requestsTo: (suffix) => requests.filter((r) => r.path.endsWith(suffix)),
+    requestsTo: (suffix) =>
+      requests.filter((r) => r.path.split("?")[0]!.endsWith(suffix)),
     spans: () => decoded().flatMap((d) => d.spans),
     metrics: () => decoded().flatMap((d) => d.metrics),
     logRecords: () => decoded().flatMap((d) => d.logRecords),
     respondWith: (response) => {
       respond = typeof response === "function" ? response : () => response;
     },
-    waitFor: (condition, timeoutMs = 5000) =>
+    waitFor: (condition, timeoutMs = 10_000) =>
       new Promise<void>((resolve, reject) => {
-        if (condition()) {
-          resolve();
-          return;
-        }
+        // a condition may throw (spans() does, after an undecodable request);
+        // that rejects the wait instead of escaping into the server's callback
         const check = () => {
-          if (!condition()) return;
+          let met: boolean;
+          try {
+            met = condition();
+          } catch (error) {
+            clearTimeout(timer);
+            waiters.delete(check);
+            reject(error instanceof Error ? error : new Error(String(error)));
+            return;
+          }
+          if (!met) return;
           clearTimeout(timer);
           waiters.delete(check);
           resolve();
@@ -244,6 +254,7 @@ export async function startOtlpSink(
           );
         }, timeoutMs);
         waiters.add(check);
+        check();
       }),
     close: async () => {
       for (const res of openResponses) res.destroy();

@@ -13,6 +13,7 @@
  */
 
 import { build } from "esbuild";
+import { afterAll, afterEach, beforeAll, beforeEach, expect } from "vitest";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -64,6 +65,8 @@ export interface ChildResult {
   sockets: { host: string; port: number }[];
   diagnostics: DiagnosticsEvent[];
   sinkFactoryCalledAfterSdkStarted: boolean | null;
+  /** `OTEL_LOG_LEVEL` as the child sees it after start() returned */
+  logLevelAfterStart: string | null;
 }
 
 export interface ChildRun {
@@ -104,6 +107,24 @@ function bundleFixture(): Promise<string> {
 
 /** telemetry variables must never leak from the test runner into a child */
 const SCRUBBED_ENV_PREFIXES = ["OTEL_", "OBS_", "VITEST"];
+/** settings of the developer's shell that would add output or sockets to the child */
+const SCRUBBED_ENV_NAMES = new Set([
+  "NODE_OPTIONS",
+  "NODE_USE_ENV_PROXY",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "http_proxy",
+  "https_proxy",
+]);
+
+/** a child that has printed nothing by then is killed and the run rejected */
+const CHILD_DEADLINE_MILLIS = 25_000;
+
+/** every run since the last call, for a check shared by all tests of a file */
+const recentRuns: ChildRun[] = [];
+export function takeRecentRuns(): ChildRun[] {
+  return recentRuns.splice(0);
+}
 
 /**
  * Run the fixture. `env` is the ONLY telemetry-related environment the child
@@ -118,6 +139,7 @@ export async function runChild(
   const childEnv: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (SCRUBBED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) continue;
+    if (SCRUBBED_ENV_NAMES.has(key)) continue;
     childEnv[key] = value;
   }
   Object.assign(childEnv, env, {
@@ -135,7 +157,11 @@ export async function runChild(
     child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
     child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
     child.on("error", reject);
+    const deadline = setTimeout(() => {
+      child.kill("SIGKILL");
+    }, CHILD_DEADLINE_MILLIS);
     child.on("close", (code) => {
+      clearTimeout(deadline);
       const line = stdout.split("\n").find((l) => l.startsWith("RESULT "));
       if (!line) {
         reject(
@@ -156,13 +182,15 @@ export async function runChild(
           // not a diagnostics line
         }
       }
-      resolve({
+      const run: ChildRun = {
         code,
         stdout,
         stderr,
         stderrLines,
         result: JSON.parse(line.slice("RESULT ".length)) as ChildResult,
-      });
+      };
+      recentRuns.push(run);
+      resolve(run);
     });
   });
 }
@@ -190,10 +218,89 @@ export function socketsOutside(
 }
 
 /**
+ * The outbound sockets of every child run since the last call that went to a
+ * port outside `allowedPorts` (the ports of every sink a test started,
+ * closed ones included). Call it from `afterEach`.
+ */
+export function strayRecentSockets(allowedPorts: ReadonlySet<number>): ChildResult["sockets"] {
+  return takeRecentRuns().flatMap((run) =>
+    run.result.sockets.filter((socket) => !allowedPorts.has(socket.port)),
+  );
+}
+
+/**
  * What reached the trap since the last call, cleared as it is read so one
  * leak fails one test and not every test after it.
  */
 export function drainTrap(trap: OtlpSink): OtlpSink["connections"] {
   trap.requests.length = 0;
   return trap.connections.splice(0);
+}
+
+const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+/**
+ * The sinks every subprocess test file uses, with the checks every test ends on:
+ * nothing reached the default address, and no child opened a socket to a port
+ * that is not one of the test's sinks.
+ *
+ * Register it once at the top of a file, before the file's own hooks.
+ */
+export function useSinks(): {
+  /** the sink on localhost:4318, for the whole file */
+  readonly trap: OtlpSink;
+  /** a fresh sink on an ephemeral port, per test */
+  readonly sink: OtlpSink;
+  /** another sink for this test; closed with it */
+  extra: () => Promise<OtlpSink>;
+} {
+  let trap: OtlpSink | undefined;
+  let sink: OtlpSink | undefined;
+  let extras: OtlpSink[] = [];
+  let ports = new Set<number>();
+
+  const open = async (): Promise<OtlpSink> => {
+    const opened = await startOtlpSink();
+    ports.add(opened.port);
+    return opened;
+  };
+
+  beforeAll(async () => {
+    trap = await startDefaultAddressTrap();
+  });
+  afterAll(async () => {
+    await settle();
+    const late = trap ? drainTrap(trap) : [];
+    await trap?.close();
+    expect(late, "connections to localhost:4318 after the last test").toEqual([]);
+  });
+  beforeEach(async () => {
+    takeRecentRuns();
+    ports = new Set([DEFAULT_OTLP_PORT]);
+    extras = [];
+    sink = await open();
+  });
+  afterEach(async () => {
+    // a connection made just before a child exited may not have been accepted yet
+    await settle();
+    const reachedTrap = trap ? drainTrap(trap) : [];
+    const stray = strayRecentSockets(ports);
+    await Promise.all([sink, ...extras].map((s) => s?.close().catch(() => undefined)));
+    expect(reachedTrap, "connections to localhost:4318").toEqual([]);
+    expect(stray, "sockets to a port that is not one of the test's sinks").toEqual([]);
+  });
+
+  return {
+    get trap() {
+      return trap!;
+    },
+    get sink() {
+      return sink!;
+    },
+    extra: async () => {
+      const opened = await open();
+      extras.push(opened);
+      return opened;
+    },
+  };
 }
