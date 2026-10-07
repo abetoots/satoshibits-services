@@ -65,6 +65,26 @@ export default defineConfig({
           env: { OBS_TEST_NO_EXPORT: "1" },
         },
       },
+      // the 2.0 preset and its test kit: real pipelines, in-process
+      {
+        test: {
+          name: "preset",
+          environment: "node",
+          include: ["src/__tests__/preset/*.test.mts"],
+        },
+      },
+      // the preset in child processes. They bind the specification's default
+      // port (4318), so the files run one at a time in a single worker.
+      {
+        test: {
+          name: "preset:subprocess",
+          environment: "node",
+          include: ["src/__tests__/preset/subprocess/*.test.mts"],
+          pool: "forks",
+          poolOptions: { forks: { singleFork: true } },
+          testTimeout: 30_000,
+        },
+      },
 
       // Browser tests
       useBrowserRunner
