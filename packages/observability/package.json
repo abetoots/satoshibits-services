@@ -19,6 +19,14 @@
     "./testing": {
       "import": "./dist/testing.mjs",
       "types": "./dist/testing.d.mts"
+    },
+    "./preset": {
+      "import": "./dist/preset.mjs",
+      "types": "./dist/preset.d.mts"
+    },
+    "./register": {
+      "import": "./dist/register.mjs",
+      "types": "./dist/register.d.mts"
     }
   },
   "type": "module",

@@ -30,3 +30,25 @@ export type {
   RecordedBreadcrumb,
   RecordedTag,
 } from "./__tests__/test-utils/mock-client.mjs";
+
+// ===== the real-pipeline test kit (2.0) =====
+
+export { startTestTelemetry } from "./testing/in-memory.mjs";
+export type { TestMetricPoint, TestTelemetry } from "./testing/in-memory.mjs";
+
+export { startOtlpSink } from "./testing/otlp-sink.mjs";
+export type {
+  OtlpSink,
+  SinkConnection,
+  SinkRequest,
+  SinkResponse,
+  StartOtlpSinkOptions,
+} from "./testing/otlp-sink.mjs";
+export type {
+  DecodedExport,
+  OtlpEncoding,
+  SinkLogRecord,
+  SinkMetric,
+  SinkScope,
+  SinkSpan,
+} from "./testing/otlp-decode.mjs";
