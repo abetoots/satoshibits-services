@@ -1717,6 +1717,35 @@ describe("Failure containment: hooks, thenables and incoming messages", () => {
     });
   });
 
+  describe("a handler given to setupMainThreadHandlers", () => {
+    it("is reported, and nothing is unhandled, when it is async and rejects", async () => {
+      const onListenerError = vi.fn();
+      build({ onListenerError });
+      const failure = new Error("helper handler rejected");
+      const cleanup = setupMainThreadHandlers<ReviewEvents>(
+        {
+          // eslint-disable-next-line @typescript-eslint/require-await
+          syncEvent: async () => {
+            throw failure;
+          },
+        },
+        emitter,
+      );
+
+      receive(incoming("syncEvent", false));
+      await nextMacrotask();
+      cleanup();
+
+      expect(onUnhandledRejection).not.toHaveBeenCalled();
+      expect(onListenerError).toHaveBeenCalledTimes(1);
+      expect(onListenerError.mock.calls[0]![0]).toBe(failure);
+      expect(onListenerError.mock.calls[0]![1]).toEqual({
+        source: "messageHandler",
+        event: "syncEvent",
+      });
+    });
+  });
+
   describe("what is stated and stays as it was", () => {
     it("a custom arrangeListeners that throws still throws to the caller of the emit", async () => {
       build();
