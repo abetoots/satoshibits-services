@@ -405,7 +405,9 @@ export class ThreadedOrderedEventEmitter<
    * Handle thread messages and re-emit locally with proper ordering
    */
   private handleThreadMessage(message: ThreadMessage<keyof L, any[]>): void {
-    if (message.type !== "event") return;
+    // whatever a channel delivers ends up here: it may not be a message
+     
+    if (message?.type !== "event") return;
 
     // A local emitter takes nothing from other threads, however it arrives
     if (!this.broadcast) return;
@@ -451,6 +453,16 @@ export class ThreadedOrderedEventEmitter<
           source: "deserializer",
           event: String(message.event),
         });
+        return;
+      }
+      // the arguments are spread below: anything but a list would throw there
+      if (!Array.isArray(message.args)) {
+        this.reportError(
+          new TypeError(
+            "onDeserializeThreadMessage did not return the list of arguments",
+          ),
+          { source: "deserializer", event: String(message.event) },
+        );
         return;
       }
     }
@@ -817,8 +829,9 @@ export class ThreadedOrderedEventEmitter<
     timestamp: number;
     threadId: string | number;
   }[] {
-    // `slice(-0)` is the whole array: a limit of 0 is "none", not "all"
-    return limit > 0 ? this.eventHistory.slice(-Math.floor(limit)) : [];
+    // `slice(-0)` is the whole array: a limit below 1 (a fraction that would
+    // round down to 0 included, and NaN) is "none", not "all"
+    return limit >= 1 ? this.eventHistory.slice(-Math.floor(limit)) : [];
   }
 
   /**
@@ -1506,17 +1519,20 @@ export class ThreadedOrderedEventEmitter<
   /**
    * Own the rejection of a promise that nothing awaits.
    *
-   * Only a real promise is watched. A promise is already running and, left
-   * alone, its rejection ends the process. A thenable that is not a promise
-   * (a lazy query builder, say) does nothing until its `then` is called, and
-   * cannot become an unhandled rejection: calling `then` on it here would
-   * start work the emit never started.
+   * Only a native promise is watched. It is already running and, left alone,
+   * its rejection is the runtime's unhandled rejection. Any other thenable is
+   * left untouched, as it always was: for a lazy one (a query builder, say)
+   * calling `then` would start work the emit never started. A promise from a
+   * library that is not a native promise is therefore not watched either;
+   * such libraries report their own unhandled rejections.
    *
    * @private
    */
   private watch(result: unknown, onRejection: (err: unknown) => void): void {
     // the tag, not `instanceof`: a promise from another realm counts too
     if (Object.prototype.toString.call(result) !== "[object Promise]") return;
+    // an object can carry the tag without being a promise
+    if (typeof (result as Promise<unknown>).then !== "function") return;
 
     (result as Promise<unknown>).then(undefined, (err: unknown) => {
       // the handler reports through the consumer's hook; nothing it does may
