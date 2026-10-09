@@ -375,7 +375,7 @@ Options:
 - `maxHistoryLength`: How many emitted events to keep for `getEventHistory()` (default: 0, the history is off). The history holds each emit's arguments by reference. Anything that is not a positive finite number means off
 - `broadcast`: Whether events travel between threads (default: true). With `false` the emitter is local in both directions: no `BroadcastChannel` is opened, the parent port is not listened to, nothing is serialised or posted (not to a connected port or worker either), and an event arriving from another thread is ignored. `connectPort` and `connectWorker` still attach their listener, and what it receives is dropped
 
-`getInstance` and `createTypedEmitter` return the emitter that already exists for a channel name, as it is. Options apply when an emitter is created and only then; to change an existing emitter, use its own methods and properties (`setMaxHistoryLength`, `setDebugMode`, `onListenerError`).
+`getInstance` and `createTypedEmitter` return the emitter that already exists for a channel name, as it is. Options apply when an emitter is created and only then; to change an existing emitter, use its own methods and properties (`setMaxHistoryLength`, `setDebugMode`, `onListenerError`). A hook passed for a channel name that already has an emitter is therefore not installed, and nothing says so: whoever creates a channel's emitter first decides its hooks.
 
 #### Which listeners an emit waits for, and what happens when one fails
 
