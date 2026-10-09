@@ -1810,6 +1810,90 @@ describe("Failure containment: hooks, thenables and incoming messages", () => {
     });
   });
 
+  describe("a serialiser or deserialiser written as an async function", () => {
+    // neither can be asynchronous: the message is posted, and the event
+    // delivered, in the same tick. one that returns a promise is reported
+    // as a failure, and its rejection is contained like any other.
+    it("an async serialiser that rejects: nothing is broadcast, the listeners run, nothing is unhandled", async () => {
+      const onListenerError = vi.fn();
+      build({
+        onListenerError,
+        // eslint-disable-next-line @typescript-eslint/require-await
+        onSerializeThreadMessage: async () => {
+          throw new Error("async serialiser rejected");
+        },
+      });
+      const listener = vi.fn();
+      emitter.on("syncEvent", listener);
+
+      expect(() =>
+        emitter.emit({ event: "syncEvent" }, "payload"),
+      ).not.toThrow();
+      await nextMacrotask();
+
+      expect(onUnhandledRejection).not.toHaveBeenCalled();
+      expect(listener).toHaveBeenCalledWith("payload");
+      expect(mockGlobalBroadcastChannel.postMessage).not.toHaveBeenCalled();
+      const contexts = onListenerError.mock.calls.map(
+        ([, context]) => context as unknown,
+      );
+      expect(contexts).toEqual([
+        // that it returned a promise at all, then what the promise rejected with
+        { source: "serializer", event: "syncEvent", sync: true },
+        { source: "serializer", event: "syncEvent", sync: true },
+      ]);
+      expect(
+        (onListenerError.mock.calls[1]![0] as { message: string }).message,
+      ).toBe("async serialiser rejected");
+    });
+
+    it("an async serialiser that resolves is still not broadcast", async () => {
+      const onListenerError = vi.fn();
+      build({
+        onListenerError,
+        // eslint-disable-next-line @typescript-eslint/require-await
+        onSerializeThreadMessage: async (message: unknown) => message,
+      });
+
+      emitter.emit({ event: "syncEvent" }, "payload");
+      await nextMacrotask();
+
+      // a promise cannot be posted to another thread
+      expect(mockGlobalBroadcastChannel.postMessage).not.toHaveBeenCalled();
+      expect(onListenerError).toHaveBeenCalledTimes(1);
+      expect(onListenerError.mock.calls[0]![1]).toEqual({
+        source: "serializer",
+        event: "syncEvent",
+        sync: true,
+      });
+    });
+
+    it("an async deserialiser that rejects: the event is dropped, nothing is unhandled", async () => {
+      const onListenerError = vi.fn();
+      build({
+        onListenerError,
+        // eslint-disable-next-line @typescript-eslint/require-await
+        onDeserializeThreadMessage: async () => {
+          throw new Error("async deserialiser rejected");
+        },
+      });
+      const listener = vi.fn();
+      emitter.on("syncEvent", listener);
+
+      expect(() => receive(incoming("syncEvent", false))).not.toThrow();
+      await nextMacrotask();
+
+      expect(onUnhandledRejection).not.toHaveBeenCalled();
+      expect(listener).not.toHaveBeenCalled();
+      expect(
+        onListenerError.mock.calls.map(([, context]) => context as unknown),
+      ).toEqual([
+        { source: "deserializer", event: "syncEvent" },
+        { source: "deserializer", event: "syncEvent" },
+      ]);
+    });
+  });
+
   describe("a serialiser that throws under emitAsync", () => {
     it("reports it as asynchronous, posts nothing, and survives a hook that throws too", async () => {
       const failure = new Error("cannot serialise");

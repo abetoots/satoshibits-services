@@ -369,8 +369,8 @@ Options:
 - `defaultPriorityBehavior`: Default priority behavior (default: 'highestFirst')
 - `threadId`: Unique identifier for the thread (default: auto-generated)
 - `debug`: Enable debug logging (default: false)
-- `onSerializeThreadMessage`: Function to serialize thread messages
-- `onDeserializeThreadMessage`: Function to deserialize thread messages
+- `onSerializeThreadMessage`: Function to serialize thread messages. Must be synchronous: one that throws or returns a promise is reported and the event is not broadcast
+- `onDeserializeThreadMessage`: Function to deserialize thread messages. Must be synchronous and return the list of arguments: one that throws or returns anything else is reported and the event is dropped
 - `onListenerError`: `(error, context) => void | Promise<void>`. It is not awaited. Called when a listener throws or rejects, whatever its priority and whether or not the emit waits for it; when `onSerializeThreadMessage` or `onDeserializeThreadMessage` throws; and when a thread message handler throws or rejects. `context` says what failed and never carries the event's arguments: `{ source: "listener", event, key, priority, sync }`, `{ source: "serializer", event, sync }`, `{ source: "deserializer", event }` or `{ source: "messageHandler", event }`. A hook that throws, or an `async` hook that rejects, is contained: a hook cannot fail an emit
 - `maxHistoryLength`: How many emitted events to keep for `getEventHistory()` (default: 0, the history is off). The history holds each emit's arguments by reference. Anything that is not a positive finite number means off
 - `broadcast`: Whether events travel between threads (default: true). With `false` the emitter is local in both directions: no `BroadcastChannel` is opened, the parent port is not listened to, nothing is serialised or posted (not to a connected port or worker either), and an event arriving from another thread is ignored. `connectPort` and `connectWorker` still attach their listener, and what it receives is dropped
@@ -384,7 +384,7 @@ Options:
 | priority 0 (the default) | started, not awaited | started, not awaited |
 | a non-zero priority | started in priority order, not awaited | awaited one after another, in priority order |
 
-A listener that throws, or returns a promise that rejects, never makes `emit` throw or `emitAsync` reject, and never becomes an unhandled rejection: the error goes to `onListenerError`. For a listener the emit does not wait for, only a genuine promise is watched (one from another realm included); any other thenable is left untouched, so a lazy one is not started. The one thing that still throws to the caller of an emit is a custom `arrangeListeners` function passed to that emit. A listener the emit does not wait for may still be running when the emit returns. If the caller needs a listener's work to be finished, register it with a priority and use `emitAsync`, or call the function directly.
+A listener that throws, or returns a promise that rejects, never makes `emit` throw or `emitAsync` reject, and never becomes an unhandled rejection: the error goes to `onListenerError`. For a listener the emit does not wait for, only a genuine promise is watched (one from another realm included; one deliberately built to throw when its `constructor` is read cannot be); any other thenable is left untouched, so a lazy one is not started. The one thing that still throws to the caller of an emit is a custom `arrangeListeners` function passed to that emit. A listener the emit does not wait for may still be running when the emit returns. If the caller needs a listener's work to be finished, register it with a priority and use `emitAsync`, or call the function directly.
 
 #### Static Methods
 

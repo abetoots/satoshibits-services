@@ -94,13 +94,18 @@ export interface EmitterOptions {
   debug?: boolean;
 
   /**
-   * Serialization function for thread messages
+   * Serialization function for thread messages. It must be synchronous: the
+   * message is posted in the same tick. One that throws, or returns a
+   * promise, is reported to `onListenerError` and the event is not broadcast.
    * @returns Serialized message
    */
   onSerializeThreadMessage?: (message: unknown) => any;
   /**
-   * Deserialization function for thread messages
-   * @returns
+   * Deserialization function for thread messages. It must be synchronous and
+   * return the list of arguments. One that throws, or returns anything else
+   * (a promise included), is reported to `onListenerError` and the event is
+   * dropped.
+   * @returns The event's arguments
    */
   onDeserializeThreadMessage?: (message: unknown) => any;
 
@@ -448,15 +453,28 @@ export class ThreadedOrderedEventEmitter<
     // caller is a channel's message callback, where a throw would be an
     // uncaught exception: a message that cannot be read is dropped.
     if (this.onDeserializeThreadMessage) {
+      const context: ListenerErrorContext = {
+        source: "deserializer",
+        event: String(message.event),
+      };
       try {
-        message.args = this.onDeserializeThreadMessage(
+        const deserialized: unknown = this.onDeserializeThreadMessage(
           message.args,
-        ) as typeof message.args;
+        );
+        // the event is delivered in this tick, so it cannot wait for a
+        // promise: one is a failure, and its rejection is owned here
+        if (this.watch(deserialized, (err) => this.reportError(err, context))) {
+          this.reportError(
+            new TypeError(
+              "onDeserializeThreadMessage returned a promise: it must be synchronous",
+            ),
+            context,
+          );
+          return;
+        }
+        message.args = deserialized as typeof message.args;
       } catch (err) {
-        this.reportError(err, {
-          source: "deserializer",
-          event: String(message.event),
-        });
+        this.reportError(err, context);
         return;
       }
     }
@@ -1266,17 +1284,28 @@ export class ThreadedOrderedEventEmitter<
     // serialiser that throws must not fail the emit: the event is not
     // broadcast, and the local listeners still run.
     if (this.onSerializeThreadMessage) {
+      const context: ListenerErrorContext = {
+        source: "serializer",
+        // an event can be named by a symbol at run time
+        event: String(event),
+        sync: !options.isAsync,
+      };
       try {
-        message.args = this.onSerializeThreadMessage(
-          message.args,
-        ) as typeof message.args;
+        const serialized: unknown = this.onSerializeThreadMessage(message.args);
+        // the message is posted in this tick, and a promise cannot be
+        // posted: one is a failure, and its rejection is owned here
+        if (this.watch(serialized, (err) => this.reportError(err, context))) {
+          this.reportError(
+            new TypeError(
+              "onSerializeThreadMessage returned a promise: it must be synchronous",
+            ),
+            context,
+          );
+          return;
+        }
+        message.args = serialized as typeof message.args;
       } catch (err) {
-        this.reportError(err, {
-          source: "serializer",
-          // an event can be named by a symbol at run time
-          event: String(event),
-          sync: !options.isAsync,
-        });
+        this.reportError(err, context);
         return;
       }
     }
@@ -1522,7 +1551,8 @@ export class ThreadedOrderedEventEmitter<
   }
 
   /**
-   * Own the rejection of a promise that nothing awaits.
+   * Own the rejection of a promise that nothing awaits. Returns whether the
+   * value was a promise.
    *
    * Only a genuine promise is watched. It is already running and, left alone,
    * its rejection is the runtime's unhandled rejection. Any other thenable is
@@ -1536,10 +1566,15 @@ export class ThreadedOrderedEventEmitter<
    * prototype or `then` of its own the value carries, it never runs that
    * `then`, and it accepts a promise from another realm.
    *
+   * One value is out of reach: a promise that throws when its `constructor`
+   * is read. The intrinsic reads it before it attaches anything, and so does
+   * every other way of attaching a handler, so such a promise is treated as
+   * not a promise. Nothing produces one by accident.
+   *
    * @private
    */
-  private watch(result: unknown, onRejection: (err: unknown) => void): void {
-    if (result === null || typeof result !== "object") return;
+  private watch(result: unknown, onRejection: (err: unknown) => void): boolean {
+    if (result === null || typeof result !== "object") return false;
 
     try {
       void nativeThen.call(
@@ -1556,8 +1591,10 @@ export class ThreadedOrderedEventEmitter<
           }
         },
       );
+      return true;
     } catch {
       // not a promise: nothing to watch
+      return false;
     }
   }
 
