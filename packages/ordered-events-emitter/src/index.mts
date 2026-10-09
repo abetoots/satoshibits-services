@@ -97,8 +97,9 @@ export interface EmitterOptions {
    * Serialization function for thread messages. It must be synchronous: the
    * message is posted in the same tick. One that throws is reported to
    * `onListenerError` and the event is not broadcast. The library does not
-   * check for one written as an async function: its promise fails to post
-   * (reported as a transport failure) and its rejection is the consumer's.
+   * check for one written as an async function: its promise is posted as it
+   * is, which fails on any transport that clones (a transport failure, once
+   * per transport), and its rejection is the consumer's.
    * @returns Serialized message
    */
   onSerializeThreadMessage?: (message: unknown) => any;
@@ -123,7 +124,7 @@ export interface EmitterOptions {
    * the alternative is to drop it in silence.
    *
    * The hook is the consumer's code and is not awaited. If it throws, the
-   * emit still goes on, and the throw is raised again on a fresh task as an
+   * emit still goes on, and the throw is raised again in a microtask as an
    * uncaught error; if it returns a promise that rejects, that is an
    * unhandled rejection. Either way it is the consumer's process-level
    * handling that decides what a failing hook means, not the library.
@@ -193,8 +194,8 @@ export type ListenerErrorContext =
     }
   | {
       /**
-       * a message could not be posted to another thread (it could not be
-       * cloned, or the channel is closed). the local listeners still ran
+       * a transport's `postMessage` threw (typically: the message could not
+       * be cloned). the local listeners still ran
        */
       source: "transport";
       event: string;
@@ -1481,9 +1482,9 @@ export class ThreadedOrderedEventEmitter<
     isAsync: boolean,
   ): Promise<void> | void {
     // Process zero priority listeners first, in the order they were added.
-    // They are started and not awaited, whatever the emit: a promise one of
-    // them returns is watched, so that its rejection is reported and never
-    // reaches the process as an unhandled rejection.
+    // They are started and not awaited, whatever the emit. With an error
+    // hook installed, a promise one of them returns is watched and its
+    // rejection reported to the hook; with none, it is left to the runtime.
     for (const info of listeners.zeroPriority) {
       this.callDetached(info, args, event, !isAsync);
     }
@@ -1516,7 +1517,8 @@ export class ThreadedOrderedEventEmitter<
 
   /**
    * Call a listener that the emit does not wait for. A throw is reported; so
-   * is the rejection of a promise it returns, which nobody else would own.
+   * is the rejection of a promise it returns, when there is a hook to report
+   * it to (see `ownRejection`).
    *
    * @private
    */
@@ -1542,8 +1544,7 @@ export class ThreadedOrderedEventEmitter<
   }
 
   /**
-   * Own the rejection of a promise that nothing awaits. Returns whether the
-   * value was a promise.
+   * Attach a rejection handler to a promise that nothing awaits.
    *
    * Only a genuine promise is watched. It is already running and, left alone,
    * its rejection is the runtime's unhandled rejection. Any other thenable is
@@ -1564,28 +1565,16 @@ export class ThreadedOrderedEventEmitter<
    *
    * @private
    */
-  private watch(result: unknown, onRejection: (err: unknown) => void): boolean {
-    if (result === null || typeof result !== "object") return false;
+  private watch(result: unknown, onRejection: (err: unknown) => void): void {
+    if (result === null || typeof result !== "object") return;
 
     try {
-      void nativeThen.call(
-        result as Promise<unknown>,
-        undefined,
-        (err: unknown) => {
-          // the handler reports through the consumer's hook; nothing it does
-          // may escape, or this would be the unhandled rejection it exists to
-          // stop
-          try {
-            onRejection(err);
-          } catch {
-            // already as far as an error can be taken
-          }
-        },
-      );
-      return true;
+      // whatever `onRejection` lets out is not caught here: it would reject
+      // the promise `then` returns and reach the runtime, which is where an
+      // error with no other owner belongs
+      void nativeThen.call(result as Promise<unknown>, undefined, onRejection);
     } catch {
       // not a promise: nothing to watch
-      return false;
     }
   }
 
@@ -1595,12 +1584,25 @@ export class ThreadedOrderedEventEmitter<
    * library has nowhere to report the failure, so the promise is left alone
    * and its rejection goes to the runtime, whose handling the consumer owns.
    *
+   * The hook is a public property and can be taken away while the promise is
+   * still pending. If it is gone when the promise rejects, the rejection is
+   * handed back to the runtime: taking ownership must never be the reason an
+   * error is seen by nobody. (A hook installed after the listener returned
+   * does not adopt a promise that was already left alone.)
+   *
    * @private
    */
   private ownRejection(result: unknown, context: ListenerErrorContext): void {
     if (!this.onListenerError) return;
 
     this.watch(result, (err) => {
+      if (!this.onListenerError) {
+        // nobody to report to any more: an unhandled rejection again, with
+        // the reason exactly as the listener's promise rejected with it
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+        void Promise.reject(err);
+        return;
+      }
       this.reportError(err, context);
     });
   }
@@ -1610,8 +1612,9 @@ export class ThreadedOrderedEventEmitter<
    *
    * The hook is the consumer's code. If it throws, that does not become the
    * emit's failure, and it is not discarded either: the throw is raised again
-   * on a fresh task, where it is an uncaught error for the consumer's own
-   * process-level handling. A promise the hook returns is not touched: if it
+   * in a microtask, after the current call stack, where it is an uncaught
+   * error for the consumer's own handling (the process, a worker's `error`
+   * event, a browser's `error` event). A promise the hook returns is not touched: if it
    * rejects, that is the runtime's unhandled rejection, for the same reason.
    *
    * @private
@@ -1903,8 +1906,9 @@ export class ThreadedOrderedEventEmitter<
 
 /**
  * Configure and get a typed emitter that matches your event interface.
- * This is a convenience function that creates or retrieves an instance
- * from the registry and sets up serialization and error handling.
+ * This is a convenience function that creates an instance with these
+ * options, or returns the one that already exists for the channel name, as
+ * it is.
  *
  * @param options Configuration options for the emitter
  * @returns A properly configured ThreadedOrderedEventEmitter instance with the specified event types

@@ -1850,21 +1850,34 @@ describe("Errors that belong to the consumer are not swallowed", () => {
   const nextMacrotask = (): Promise<void> =>
     new Promise((resolve) => setImmediate(resolve));
 
-  // these tests cause uncaught errors on purpose. the test runner's own
-  // process handlers would fail the run on them, so they are set aside for
-  // the test and put back after it.
+  // these tests cause uncaught errors and unhandled rejections on purpose.
+  // the test runner's own process handlers would fail the run on them, so
+  // they are set aside for the test and put back after it. in exchange every
+  // test must say exactly what reached the process, on both channels:
+  // `reachedTheProcess` is called once per test, and a test that forgets
+  // fails in afterEach.
   type Listener = (...args: unknown[]) => void;
-  let uncaught: unknown[];
-  let unhandled: unknown[];
-  let saved: {
-    event: "uncaughtException" | "unhandledRejection";
-    fns: Listener[];
-  }[];
-  const onUncaught = (error: unknown): void => {
-    uncaught.push(error);
-  };
-  const onUnhandled = (reason: unknown): void => {
-    unhandled.push(reason);
+  const CHANNELS = ["uncaughtException", "unhandledRejection"] as const;
+  const processEvents = process as NodeJS.EventEmitter;
+  let saved: { event: (typeof CHANNELS)[number]; fns: Listener[] }[] = [];
+  let uncaught: unknown[] = [];
+  let unhandled: unknown[] = [];
+  let checked = false;
+
+  const reachedTheProcess = (expected: {
+    uncaught?: unknown[];
+    unhandled?: unknown[];
+  }): void => {
+    checked = true;
+    const same = (actual: unknown[], wanted: unknown[]): void => {
+      expect(actual).toHaveLength(wanted.length);
+      // by identity: the error itself, not one with the same message
+      wanted.forEach((error, index) => {
+        expect(actual[index]).toBe(error);
+      });
+    };
+    same(uncaught, expected.uncaught ?? []);
+    same(unhandled, expected.unhandled ?? []);
   };
 
   const build = (
@@ -1877,7 +1890,34 @@ describe("Errors that belong to the consumer are not swallowed", () => {
     return emitter;
   };
 
+  const receive = (event: keyof OwnEvents, args: unknown[] = ["x"]): void => {
+    //@ts-expect-error marked as private but still accessible in javascript
+    emitter.handleThreadMessage({
+      type: "event",
+      event,
+      args,
+      sourceThreadId: "another-thread",
+    });
+  };
+
   beforeEach(async () => {
+    // first, before anything that could throw: what is set aside here is
+    // what afterEach puts back
+    uncaught = [];
+    unhandled = [];
+    checked = false;
+    saved = CHANNELS.map((event) => ({
+      event,
+      fns: processEvents.rawListeners(event) as Listener[],
+    }));
+    for (const { event } of saved) processEvents.removeAllListeners(event);
+    processEvents.on("uncaughtException", (error: unknown) => {
+      uncaught.push(error);
+    });
+    processEvents.on("unhandledRejection", (reason: unknown) => {
+      unhandled.push(reason);
+    });
+
     vi.clearAllMocks();
     vi.stubGlobal(
       "BroadcastChannel",
@@ -1885,29 +1925,27 @@ describe("Errors that belong to the consumer are not swallowed", () => {
     );
     await asMainThread();
     ThreadedOrderedEventEmitter.clearRegistry();
-    uncaught = [];
-    unhandled = [];
-    saved = (["uncaughtException", "unhandledRejection"] as const).map(
-      (event) => ({
-        event,
-        fns: (process as NodeJS.EventEmitter).listeners(event) as Listener[],
-      }),
-    );
-    for (const { event } of saved) process.removeAllListeners(event);
-    process.on("uncaughtException", onUncaught);
-    process.on("unhandledRejection", onUnhandled);
   });
 
-  afterEach(() => {
-    process.removeAllListeners("uncaughtException");
-    process.removeAllListeners("unhandledRejection");
+  afterEach(async () => {
+    // anything still on its way arrives before the runner's handlers return
+    await nextMacrotask();
     for (const { event, fns } of saved) {
-      for (const fn of fns) (process as NodeJS.EventEmitter).on(event, fn);
+      processEvents.removeAllListeners(event);
+      for (const fn of fns) processEvents.on(event, fn);
     }
+    saved = [];
+    mockGlobalBroadcastChannel.postMessage.mockReset();
     emitter?.clear();
     ThreadedOrderedEventEmitter.clearRegistry();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    await asMainThread();
+
+    expect(
+      checked,
+      "every test in this block states what reached the process",
+    ).toBe(true);
   });
 
   describe("with no error hook installed", () => {
@@ -1925,8 +1963,7 @@ describe("Errors that belong to the consumer are not swallowed", () => {
       emitter.emit({ event: "asyncEvent" }, "payload");
       await nextMacrotask();
 
-      expect(unhandled).toEqual([failure, failure]);
-      expect(uncaught).toEqual([]);
+      reachedTheProcess({ unhandled: [failure, failure] });
     });
 
     it("leaves a thread message handler's rejection to the runtime", async () => {
@@ -1939,31 +1976,77 @@ describe("Errors that belong to the consumer are not swallowed", () => {
         },
       );
 
-      //@ts-expect-error marked as private but still accessible in javascript
-      emitter.handleThreadMessage({
-        type: "event",
-        event: "syncEvent",
-        args: ["x"],
-        sourceThreadId: "another-thread",
-      });
+      receive("syncEvent");
       await nextMacrotask();
 
-      expect(unhandled).toEqual([failure]);
+      reachedTheProcess({ unhandled: [failure] });
     });
 
-    it("owns the rejection again once a hook is installed", async () => {
+    it("leaves the rejection to the runtime when the hook is removed before the promise rejects", async () => {
+      // the hook is a public property. a rejection that arrives after it was
+      // taken away has nowhere to be reported, exactly as if it never existed
       const onListenerError = vi.fn();
       build({ onListenerError });
+      const failure = new Error("rejected after the hook was removed");
+      let reject!: (error: Error) => void;
+      emitter.on(
+        "asyncEvent",
+        () =>
+          new Promise<void>((_resolve, rejectLater) => {
+            reject = rejectLater;
+          }),
+      );
+
+      emitter.emit({ event: "asyncEvent" }, "payload");
+      emitter.onListenerError = undefined;
+      reject(failure);
+      await nextMacrotask();
+
+      expect(onListenerError).not.toHaveBeenCalled();
+      reachedTheProcess({ unhandled: [failure] });
+    });
+
+    it("does not adopt a promise that was already left to the runtime when a hook is installed later", async () => {
+      build();
+      const onListenerError = vi.fn();
+      const failure = new Error("rejected after a hook was installed");
+      let reject!: (error: Error) => void;
+      emitter.on(
+        "asyncEvent",
+        () =>
+          new Promise<void>((_resolve, rejectLater) => {
+            reject = rejectLater;
+          }),
+      );
+
+      emitter.emit({ event: "asyncEvent" }, "payload");
+      emitter.onListenerError = onListenerError;
+      reject(failure);
+      await nextMacrotask();
+
+      // whether the library owns a promise is decided when the listener
+      // returns it
+      expect(onListenerError).not.toHaveBeenCalled();
+      reachedTheProcess({ unhandled: [failure] });
+    });
+  });
+
+  describe("with an error hook installed", () => {
+    it("reports a detached rejection to the hook, and nothing reaches the process", async () => {
+      const onListenerError = vi.fn();
+      build({ onListenerError });
+      const failure = new Error("reported, not unhandled");
       // eslint-disable-next-line @typescript-eslint/require-await
       emitter.on("asyncEvent", async () => {
-        throw new Error("reported, not unhandled");
+        throw failure;
       });
 
       await emitter.emitAsync({ event: "asyncEvent" }, "payload");
       await nextMacrotask();
 
-      expect(unhandled).toEqual([]);
       expect(onListenerError).toHaveBeenCalledTimes(1);
+      expect(onListenerError.mock.calls[0]![0]).toBe(failure);
+      reachedTheProcess({});
     });
   });
 
@@ -1976,10 +2059,14 @@ describe("Errors that belong to the consumer are not swallowed", () => {
         },
       });
       const later = vi.fn();
+      // one listener the emit does not wait for, one it does
+      emitter.on("asyncEvent", () => {
+        throw new Error("zero-priority listener failed");
+      });
       emitter.on(
         "asyncEvent",
         () => {
-          throw new Error("listener failed");
+          throw new Error("prioritized listener failed");
         },
         10,
       );
@@ -1995,8 +2082,63 @@ describe("Errors that belong to the consumer are not swallowed", () => {
 
       // the emit went on...
       expect(later).toHaveBeenCalledTimes(2);
-      // ...and the consumer's bug was handed to the consumer's process handler
-      expect(uncaught).toEqual([hookFailure, hookFailure]);
+      // ...and the consumer's bug was handed to the consumer's process
+      // handler: two failing listeners, two emits
+      reachedTheProcess({
+        uncaught: [hookFailure, hookFailure, hookFailure, hookFailure],
+      });
+    });
+
+    it("reaches the process as an uncaught error when it fails while reporting a detached rejection", async () => {
+      // this report is made from inside the library's own rejection handler:
+      // a throw there must not be swallowed by it, nor turn into a rejection
+      const hookFailure = new Error("the hook failed on a detached rejection");
+      build({
+        onListenerError: () => {
+          throw hookFailure;
+        },
+      });
+      // eslint-disable-next-line @typescript-eslint/require-await
+      emitter.on("asyncEvent", async () => {
+        throw new Error("detached listener rejected");
+      });
+      emitter.registerThreadMessageHandler(
+        // eslint-disable-next-line @typescript-eslint/require-await
+        async () => {
+          throw new Error("handler rejected");
+        },
+      );
+
+      await emitter.emitAsync({ event: "asyncEvent" }, "payload");
+      emitter.emit({ event: "asyncEvent" }, "payload");
+      receive("syncEvent");
+      await nextMacrotask();
+
+      reachedTheProcess({
+        uncaught: [hookFailure, hookFailure, hookFailure],
+      });
+    });
+
+    it("reaches the process when it fails while reporting a serialiser", async () => {
+      const hookFailure = new Error("the hook failed on a serialiser report");
+      build({
+        onListenerError: () => {
+          throw hookFailure;
+        },
+        onSerializeThreadMessage: () => {
+          throw new Error("cannot serialise");
+        },
+      });
+      const listener = vi.fn();
+      emitter.on("asyncEvent", listener, 5);
+
+      await expect(
+        emitter.emitAsync({ event: "asyncEvent" }, "payload"),
+      ).resolves.toBe(true);
+      await nextMacrotask();
+
+      expect(listener).toHaveBeenCalledTimes(1);
+      reachedTheProcess({ uncaught: [hookFailure] });
     });
 
     it("leaves an async hook's rejection to the runtime", async () => {
@@ -2020,7 +2162,7 @@ describe("Errors that belong to the consumer are not swallowed", () => {
       ).not.toThrow();
       await nextMacrotask();
 
-      expect(unhandled).toEqual([hookFailure]);
+      reachedTheProcess({ unhandled: [hookFailure] });
     });
   });
 
@@ -2039,6 +2181,7 @@ describe("Errors that belong to the consumer are not swallowed", () => {
         emitter.emit({ event: "syncEvent" }, "payload"),
       ).not.toThrow();
       await emitter.emitAsync({ event: "syncEvent" }, "payload");
+      await nextMacrotask();
 
       expect(listener).toHaveBeenCalledTimes(2);
       expect(onListenerError.mock.calls).toEqual([
@@ -2061,23 +2204,60 @@ describe("Errors that belong to the consumer are not swallowed", () => {
           },
         ],
       ]);
-      mockGlobalBroadcastChannel.postMessage.mockReset();
+      expect(onListenerError.mock.calls[0]![0]).toBe(postFailure);
+      reachedTheProcess({});
     });
 
-    it("names a connected port and a connected worker as the transport", () => {
-      const onListenerError = vi.fn();
-      build({ onListenerError });
-      const failure = new Error("port closed");
-      const port: MessageChannel = {
+    it("names the parent port as the transport in a worker with no BroadcastChannel", async () => {
+      vi.stubGlobal("BroadcastChannel", undefined);
+      const wt = await vi.mocked(import("worker_threads"));
+      wt.isMainThread = false;
+      const failure = new Error("parent port failed");
+      //@ts-expect-error no need to mock other properties
+      wt.parentPort = {
+        on: vi.fn(),
         postMessage: vi.fn(() => {
           throw failure;
+        }),
+      };
+      const onListenerError = vi.fn();
+      build({ onListenerError });
+      const listener = vi.fn();
+      emitter.on("syncEvent", listener);
+
+      emitter.emit({ event: "syncEvent" }, "payload");
+      await nextMacrotask();
+
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(onListenerError.mock.calls).toEqual([
+        [
+          failure,
+          {
+            source: "transport",
+            event: "syncEvent",
+            sync: true,
+            transport: "parentPort",
+          },
+        ],
+      ]);
+      reachedTheProcess({});
+    });
+
+    it("names a connected port and a connected worker as the transport", async () => {
+      const onListenerError = vi.fn();
+      build({ onListenerError });
+      const portFailure = new Error("port failed");
+      const workerFailure = new Error("worker failed");
+      const port: MessageChannel = {
+        postMessage: vi.fn(() => {
+          throw portFailure;
         }),
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
       };
       const worker = {
         postMessage: vi.fn(() => {
-          throw failure;
+          throw workerFailure;
         }),
         on: vi.fn(),
         off: vi.fn(),
@@ -2085,21 +2265,41 @@ describe("Errors that belong to the consumer are not swallowed", () => {
       emitter.connectPort(port);
       //@ts-expect-error no need to mock other properties
       emitter.connectWorker(worker);
+      const listener = vi.fn();
+      emitter.on("syncEvent", listener);
 
-      emitter.emit({ event: "syncEvent" }, "payload");
+      await emitter.emitAsync({ event: "syncEvent" }, "payload");
+      await nextMacrotask();
 
-      expect(
-        onListenerError.mock.calls.map(
-          ([, context]) => (context as { transport?: string }).transport,
-        ),
-      ).toEqual(["port", "worker"]);
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(onListenerError.mock.calls).toEqual([
+        [
+          portFailure,
+          {
+            source: "transport",
+            event: "syncEvent",
+            sync: false,
+            transport: "port",
+          },
+        ],
+        [
+          workerFailure,
+          {
+            source: "transport",
+            event: "syncEvent",
+            sync: false,
+            transport: "worker",
+          },
+        ],
+      ]);
+      reachedTheProcess({});
     });
   });
 
   describe("a serialiser or deserialiser written as an async function", () => {
     // both must be synchronous, and the library no longer checks: the mistake
     // shows where it lands, and the promise's rejection is the consumer's
-    it("is not special-cased: no report of its own, and the rejection is left to the runtime", async () => {
+    it("fails to post on a transport that clones, with no report of the library's own", async () => {
       const onListenerError = vi.fn();
       const failure = new Error("async serialiser rejected");
       build({
@@ -2109,6 +2309,12 @@ describe("Errors that belong to the consumer are not swallowed", () => {
           throw failure;
         },
       });
+      // a real channel clones what it is given, and a promise cannot be cloned
+      mockGlobalBroadcastChannel.postMessage.mockImplementation(
+        (message: unknown) => {
+          structuredClone(message);
+        },
+      );
       const listener = vi.fn();
       emitter.on("syncEvent", listener);
 
@@ -2118,9 +2324,18 @@ describe("Errors that belong to the consumer are not swallowed", () => {
       await nextMacrotask();
 
       expect(listener).toHaveBeenCalledTimes(1);
-      // no "must be synchronous" report from the library
-      expect(onListenerError).not.toHaveBeenCalled();
-      expect(unhandled).toEqual([failure]);
+      // one report, from the post that failed; none saying "must be synchronous"
+      expect(onListenerError).toHaveBeenCalledTimes(1);
+      expect(onListenerError.mock.calls[0]![1]).toEqual({
+        source: "transport",
+        event: "syncEvent",
+        sync: true,
+        transport: "broadcastChannel",
+      });
+      expect((onListenerError.mock.calls[0]![0] as Error).name).toBe(
+        "DataCloneError",
+      );
+      reachedTheProcess({ unhandled: [failure] });
     });
 
     it("an async deserialiser's event is dropped as arguments that are not a list", async () => {
@@ -2136,32 +2351,34 @@ describe("Errors that belong to the consumer are not swallowed", () => {
       const listener = vi.fn();
       emitter.on("syncEvent", listener);
 
-      //@ts-expect-error marked as private but still accessible in javascript
-      emitter.handleThreadMessage({
-        type: "event",
-        event: "syncEvent",
-        args: ["x"],
-        sourceThreadId: "another-thread",
-      });
+      receive("syncEvent");
       await nextMacrotask();
 
       expect(listener).not.toHaveBeenCalled();
       expect(onListenerError).toHaveBeenCalledTimes(1);
+      expect(onListenerError.mock.calls[0]![0]).toBeInstanceOf(TypeError);
+      expect((onListenerError.mock.calls[0]![0] as Error).message).toContain(
+        "not a list",
+      );
       expect(onListenerError.mock.calls[0]![1]).toEqual({
         source: "deserializer",
         event: "syncEvent",
       });
-      expect(unhandled).toEqual([failure]);
+      reachedTheProcess({ unhandled: [failure] });
     });
   });
 
   describe("options apply when an emitter is created, and only then", () => {
-    it("asking again for the same channel changes nothing on the emitter that exists", () => {
-      const firstHook = vi.fn();
+    it("asking again for the same channel changes nothing on the emitter that exists", async () => {
+      const hook = vi.fn();
+      const serialise = vi.fn((message: unknown) => message);
+      const deserialise = vi.fn((message: unknown) => message);
       const first = createTypedEmitter<OwnEvents>({
         channelName: "created-once",
         maxHistoryLength: 5,
-        onListenerError: firstHook,
+        onListenerError: hook,
+        onSerializeThreadMessage: serialise,
+        onDeserializeThreadMessage: deserialise,
       });
       first.emit({ event: "syncEvent" }, "recorded");
 
@@ -2169,12 +2386,16 @@ describe("Errors that belong to the consumer are not swallowed", () => {
         channelName: "created-once",
         maxHistoryLength: 0,
       });
+      await nextMacrotask();
 
       expect(second).toBe(first);
-      // the hook was not wiped, and the history was not cleared
-      expect(second.onListenerError).toBe(firstHook);
+      // none of the three hooks was wiped, and the history was not cleared
+      expect(second.onListenerError).toBe(hook);
+      expect(second.onSerializeThreadMessage).toBe(serialise);
+      expect(second.onDeserializeThreadMessage).toBe(deserialise);
       expect(second.getEventHistory()).toHaveLength(1);
       first.clear();
+      reachedTheProcess({});
     });
   });
 });
