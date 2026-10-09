@@ -1337,3 +1337,383 @@ describe("Broadcasting can be switched off", () => {
     expect(mockGlobalBroadcastChannel.postMessage).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * Review of the containment change: the paths the first tests did not reach.
+ */
+describe("Failure containment: hooks, thenables and incoming messages", () => {
+  interface ReviewRecord {
+    asyncEvent: (arg: string) => Promise<void> | void;
+    syncEvent: (arg: string) => void;
+  }
+  type ReviewEvents = ListenerSignature<ReviewRecord>;
+
+  let emitter: ThreadedOrderedEventEmitter<ReviewEvents>;
+  const onUnhandledRejection = vi.fn();
+  const nextMacrotask = (): Promise<void> =>
+    new Promise((resolve) => setImmediate(resolve));
+
+  const build = (
+    options: EmitterOptions = {},
+  ): ThreadedOrderedEventEmitter<ReviewEvents> => {
+    emitter = new ThreadedOrderedEventEmitter<ReviewEvents>({
+      threadId: "review-test",
+      ...options,
+    });
+    return emitter;
+  };
+
+  // an event arriving from another thread
+  const incoming = (
+    event: keyof ReviewEvents,
+    isAsync: boolean,
+  ): ThreadMessage<keyof ReviewEvents, unknown[]> => ({
+    type: "event",
+    event,
+    args: ["from-another-thread"],
+    isAsync,
+    sourceThreadId: "another-thread",
+  });
+  const receive = (
+    message: ThreadMessage<keyof ReviewEvents, unknown[]>,
+  ): void => {
+    //@ts-expect-error marked as private but still accessible in javascript
+    emitter.handleThreadMessage(message);
+  };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    vi.stubGlobal(
+      "BroadcastChannel",
+      vi.fn(() => mockGlobalBroadcastChannel),
+    );
+    // earlier tests leave the thread mock as a worker: state it
+    const wt = await vi.mocked(import("worker_threads"));
+    wt.isMainThread = true;
+    wt.parentPort = null;
+    ThreadedOrderedEventEmitter.clearRegistry();
+    onUnhandledRejection.mockReset();
+    process.on("unhandledRejection", onUnhandledRejection);
+  });
+
+  afterEach(() => {
+    process.off("unhandledRejection", onUnhandledRejection);
+    emitter?.clear();
+    ThreadedOrderedEventEmitter.clearRegistry();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  describe("an async error hook that rejects", () => {
+    // an error hook that awaits a reporter is an ordinary thing to write.
+    // a plain function with a counter: a shared vi.fn would lose its
+    // implementation to restoreAllMocks between tests and reject nothing.
+    let hookCalls = 0;
+    // eslint-disable-next-line @typescript-eslint/require-await
+    const rejectingHook = async (): Promise<void> => {
+      hookCalls += 1;
+      throw new Error("the async hook failed");
+    };
+    beforeEach(() => {
+      hookCalls = 0;
+    });
+
+    it("raises no unhandled rejection under emitAsync", async () => {
+      build({ onListenerError: rejectingHook });
+      // eslint-disable-next-line @typescript-eslint/require-await
+      emitter.on("asyncEvent", async () => {
+        throw new Error("detached listener failed");
+      });
+      emitter.on(
+        "asyncEvent",
+        () => {
+          throw new Error("awaited listener failed");
+        },
+        5,
+      );
+
+      await expect(
+        emitter.emitAsync({ event: "asyncEvent" }, "payload"),
+      ).resolves.toBe(true);
+      await nextMacrotask();
+
+      expect(hookCalls).toBe(2);
+      expect(onUnhandledRejection).not.toHaveBeenCalled();
+    });
+
+    it("raises no unhandled rejection under emit", async () => {
+      build({ onListenerError: rejectingHook });
+      emitter.on("syncEvent", () => {
+        throw new Error("listener failed");
+      });
+
+      expect(() =>
+        emitter.emit({ event: "syncEvent" }, "payload"),
+      ).not.toThrow();
+      await nextMacrotask();
+
+      expect(hookCalls).toBe(1);
+      expect(onUnhandledRejection).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("what a listener the emit does not wait for returns", () => {
+    it("is not started when it is a lazy thenable and not a promise", async () => {
+      // a query builder runs only when something calls its `then`. the emit
+      // never did, and still does not: only a real promise can become an
+      // unhandled rejection, so only a real promise is watched.
+      const onListenerError = vi.fn();
+      build({ onListenerError });
+      const then = vi.fn();
+      emitter.on("asyncEvent", () => ({ then }) as never);
+      emitter.on("asyncEvent", () => ({ then }) as never, 5);
+
+      emitter.emit({ event: "asyncEvent" }, "payload");
+      await nextMacrotask();
+
+      expect(then).not.toHaveBeenCalled();
+      expect(onListenerError).not.toHaveBeenCalled();
+    });
+
+    it("is reported when it is a promise that rejects with something that is not an Error", async () => {
+      const onListenerError = vi.fn();
+      build({ onListenerError });
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+      emitter.on("asyncEvent", () => Promise.reject("not-an-error"));
+
+      emitter.emit({ event: "asyncEvent" }, "payload");
+      await nextMacrotask();
+
+      expect(onUnhandledRejection).not.toHaveBeenCalled();
+      expect(onListenerError).toHaveBeenCalledTimes(1);
+      expect(onListenerError).toHaveBeenCalledWith(
+        "not-an-error",
+        expect.objectContaining({
+          source: "listener",
+          priority: 0,
+          sync: true,
+        }),
+      );
+    });
+
+    it("is reported once, with the error itself, for a one-time listener", async () => {
+      const onListenerError = vi.fn();
+      build({ onListenerError });
+      const failure = new Error("once listener rejected");
+      // eslint-disable-next-line @typescript-eslint/require-await
+      emitter.once("asyncEvent", async () => {
+        throw failure;
+      });
+
+      await emitter.emitAsync({ event: "asyncEvent" }, "payload");
+      await nextMacrotask();
+
+      expect(onUnhandledRejection).not.toHaveBeenCalled();
+      expect(onListenerError).toHaveBeenCalledTimes(1);
+      expect(onListenerError.mock.calls[0]![0]).toBe(failure);
+    });
+  });
+
+  describe("an event that arrives from another thread", () => {
+    it("contains a rejecting listener on the async path", async () => {
+      const onListenerError = vi.fn();
+      build({ onListenerError });
+      const failure = new Error("listener rejected on an incoming event");
+      // eslint-disable-next-line @typescript-eslint/require-await
+      emitter.on("asyncEvent", async () => {
+        throw failure;
+      });
+
+      receive(incoming("asyncEvent", true));
+      await nextMacrotask();
+
+      expect(onUnhandledRejection).not.toHaveBeenCalled();
+      expect(onListenerError).toHaveBeenCalledTimes(1);
+      expect(onListenerError.mock.calls[0]![0]).toBe(failure);
+      expect(onListenerError.mock.calls[0]![1]).toEqual({
+        source: "listener",
+        event: "asyncEvent",
+        key: undefined,
+        priority: 0,
+        sync: false,
+      });
+    });
+
+    it("drops the message, and reports it, when the deserialiser throws", () => {
+      const onListenerError = vi.fn();
+      const failure = new Error("cannot deserialise");
+      build({
+        onListenerError,
+        onDeserializeThreadMessage: () => {
+          throw failure;
+        },
+      });
+      const listener = vi.fn();
+      emitter.on("syncEvent", listener);
+
+      // the caller here is a channel's message callback: a throw would be an
+      // uncaught exception
+      expect(() => receive(incoming("syncEvent", false))).not.toThrow();
+
+      expect(listener).not.toHaveBeenCalled();
+      expect(onListenerError).toHaveBeenCalledTimes(1);
+      expect(onListenerError).toHaveBeenCalledWith(failure, {
+        source: "deserializer",
+        event: "syncEvent",
+      });
+    });
+
+    it("reports a thread message handler that throws, and one that rejects", async () => {
+      const onListenerError = vi.fn();
+      build({ onListenerError });
+      const thrown = new Error("handler threw");
+      const rejected = new Error("handler rejected");
+      emitter.registerThreadMessageHandler(() => {
+        throw thrown;
+      });
+      emitter.registerThreadMessageHandler(
+        // eslint-disable-next-line @typescript-eslint/require-await
+        (async () => {
+          throw rejected;
+        }) as never,
+      );
+      const listener = vi.fn();
+      emitter.on("syncEvent", listener);
+
+      receive(incoming("syncEvent", false));
+      await nextMacrotask();
+
+      expect(onUnhandledRejection).not.toHaveBeenCalled();
+      // a failing handler does not stop the event
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(
+        onListenerError.mock.calls.map(([error]) => error as unknown),
+      ).toEqual([thrown, rejected]);
+      expect(onListenerError.mock.calls[0]![1]).toEqual({
+        source: "messageHandler",
+        event: "syncEvent",
+      });
+    });
+  });
+
+  describe("a serialiser that throws under emitAsync", () => {
+    it("reports it as asynchronous, posts nothing, and survives a hook that throws too", async () => {
+      const failure = new Error("cannot serialise");
+      const onListenerError = vi.fn(() => {
+        throw new Error("the hook failed as well");
+      });
+      build({
+        onListenerError,
+        onSerializeThreadMessage: () => {
+          throw failure;
+        },
+      });
+      const listener = vi.fn();
+      emitter.on("asyncEvent", listener, 5);
+
+      await expect(
+        emitter.emitAsync({ event: "asyncEvent" }, "payload"),
+      ).resolves.toBe(true);
+
+      expect(listener).toHaveBeenCalledWith("payload");
+      expect(mockGlobalBroadcastChannel.postMessage).not.toHaveBeenCalled();
+      expect(onListenerError).toHaveBeenCalledTimes(1);
+      expect(onListenerError).toHaveBeenCalledWith(failure, {
+        source: "serializer",
+        event: "asyncEvent",
+        sync: false,
+      });
+    });
+  });
+
+  describe("event history limits", () => {
+    it("getEventHistory(0), or a negative limit, returns none of a history that has entries", () => {
+      build({ maxHistoryLength: 5 });
+      emitter.emit({ event: "syncEvent" }, "kept");
+
+      expect(emitter.getEventHistory()).toHaveLength(1);
+      expect(emitter.getEventHistory(0)).toEqual([]);
+      expect(emitter.getEventHistory(-1)).toEqual([]);
+    });
+
+    it.each([Number.NaN, -3, Number.POSITIVE_INFINITY])(
+      "a maxHistoryLength of %s keeps no history",
+      (length) => {
+        build({ maxHistoryLength: length });
+        for (let i = 0; i < 3; i++) {
+          emitter.emit({ event: "syncEvent" }, `event ${i}`);
+        }
+        expect(emitter.getEventHistory(10)).toEqual([]);
+
+        emitter.setMaxHistoryLength(2);
+        emitter.emit({ event: "syncEvent" }, "recorded");
+        expect(emitter.getEventHistory()).toHaveLength(1);
+        emitter.setMaxHistoryLength(length);
+        expect(emitter.getEventHistory(10)).toEqual([]);
+      },
+    );
+
+    it("a fractional length is rounded down", () => {
+      build({ maxHistoryLength: 2.9 });
+      for (let i = 0; i < 4; i++) {
+        emitter.emit({ event: "syncEvent" }, `event ${i}`);
+      }
+      expect(emitter.getEventHistory(10)).toHaveLength(2);
+    });
+
+    it("createTypedEmitter applies maxHistoryLength to an emitter that already exists", () => {
+      const first = createTypedEmitter<ReviewEvents>({
+        channelName: "history-reuse",
+        maxHistoryLength: 5,
+      });
+      first.emit({ event: "syncEvent" }, "recorded");
+      expect(first.getEventHistory()).toHaveLength(1);
+
+      const second = createTypedEmitter<ReviewEvents>({
+        channelName: "history-reuse",
+        maxHistoryLength: 0,
+      });
+
+      expect(second).toBe(first);
+      expect(second.getEventHistory(10)).toEqual([]);
+      first.clear();
+    });
+  });
+
+  describe("broadcast: false, in a worker with a connected port", () => {
+    it("neither listens to nor posts on the parent port, a connected port or a connected worker, and ignores what arrives", async () => {
+      const wt = await vi.mocked(import("worker_threads"));
+      wt.isMainThread = false;
+      const parentPort = { postMessage: vi.fn(), on: vi.fn() };
+      //@ts-expect-error no need to mock other properties
+      wt.parentPort = parentPort;
+      const port: MessageChannel = {
+        postMessage: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      };
+      const worker = { postMessage: vi.fn(), on: vi.fn(), off: vi.fn() };
+
+      build({ broadcast: false });
+      emitter.connectPort(port);
+      //@ts-expect-error no need to mock other properties
+      emitter.connectWorker(worker);
+      const listener = vi.fn();
+      emitter.on("syncEvent", listener);
+
+      emitter.emit({ event: "syncEvent" }, "local");
+      await emitter.emitAsync({ event: "syncEvent" }, "local");
+
+      expect(listener).toHaveBeenCalledTimes(2);
+      expect(parentPort.on).not.toHaveBeenCalled();
+      expect(parentPort.postMessage).not.toHaveBeenCalled();
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(port.postMessage).not.toHaveBeenCalled();
+      expect(worker.postMessage).not.toHaveBeenCalled();
+
+      // and an event sent to it from elsewhere is not delivered
+      receive(incoming("syncEvent", false));
+      expect(listener).toHaveBeenCalledTimes(2);
+    });
+  });
+});

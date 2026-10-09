@@ -109,27 +109,37 @@ export interface EmitterOptions {
    *
    * It is told what failed, never the event's arguments. It is called for a
    * listener that throws or rejects, whatever its priority and whether or not
-   * the emit waits for it. A hook that throws is contained: it cannot make
-   * `emit` throw or `emitAsync` reject.
+   * the emit waits for it. A hook that throws, or an async one that rejects,
+   * is contained: it cannot make `emit` throw or `emitAsync` reject. The hook
+   * is not awaited.
    *
    * @param error The error that occurred
    * @param context What failed
    */
-  onListenerError?: (error: unknown, context: ListenerErrorContext) => void;
+  onListenerError?: (
+    error: unknown,
+    context: ListenerErrorContext,
+  ) => void | Promise<void>;
 
   /**
    * How many emitted events to keep for `getEventHistory()`.
    *
    * The history holds the arguments of every emit by reference, so it is off
-   * unless asked for.
+   * unless asked for. Anything that is not a positive finite number means
+   * off; a fraction is rounded down.
    * @default 0
    */
   maxHistoryLength?: number;
 
   /**
-   * Whether events are broadcast to other threads. With `false` no
-   * `BroadcastChannel` is opened, nothing is serialised and nothing is
-   * posted: the emitter is local to its thread.
+   * Whether events travel between threads. With `false` the emitter is local
+   * to its thread in both directions: no `BroadcastChannel` is opened, the
+   * parent port is not listened to, nothing is serialised or posted (not to a
+   * connected port or worker either), and an event that arrives from another
+   * thread is ignored.
+   *
+   * Fixed when the emitter is created: `getInstance` and `createTypedEmitter`
+   * return the existing emitter of a channel name and do not change it.
    * @default true
    */
   broadcast?: boolean;
@@ -155,7 +165,33 @@ export type ListenerErrorContext =
       source: "serializer";
       event: string;
       sync: boolean;
+    }
+  | {
+      /**
+       * `onDeserializeThreadMessage` threw on an event from another thread:
+       * the event was dropped
+       */
+      source: "deserializer";
+      event: string;
+    }
+  | {
+      /**
+       * a handler registered with `registerThreadMessageHandler` threw or
+       * rejected: the event is still delivered to its listeners
+       */
+      source: "messageHandler";
+      event: string;
     };
+
+/**
+ * A usable history length: a positive finite number, rounded down. Anything
+ * else is 0, "keep nothing". (`NaN` would never trim, and `slice(-0)` is the
+ * whole array, so neither may reach the history as it is.)
+ */
+const toHistoryLength = (length: number | undefined): number =>
+  typeof length === "number" && Number.isFinite(length) && length > 0
+    ? Math.floor(length)
+    : 0;
 
 /**
  * Information about a registered listener
@@ -230,7 +266,7 @@ export class ThreadedOrderedEventEmitter<
       options?.threadId ??
       `thread-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     this.debug = options?.debug ?? false;
-    this.maxHistoryLength = Math.max(0, options?.maxHistoryLength ?? 0);
+    this.maxHistoryLength = toHistoryLength(options?.maxHistoryLength);
     this.eventHistory = [];
     this.broadcast = options?.broadcast ?? true;
     this.onSerializeThreadMessage = options?.onSerializeThreadMessage;
@@ -371,6 +407,9 @@ export class ThreadedOrderedEventEmitter<
   private handleThreadMessage(message: ThreadMessage<keyof L, any[]>): void {
     if (message.type !== "event") return;
 
+    // A local emitter takes nothing from other threads, however it arrives
+    if (!this.broadcast) return;
+
     // Skip messages from self (prevent infinite loops)
     if (message.sourceThreadId === this.threadId) {
       return;
@@ -382,25 +421,38 @@ export class ThreadedOrderedEventEmitter<
       );
     }
 
-    // Notify any registered message handlers
+    // Notify any registered message handlers. One that throws or rejects is
+    // reported and does not stop the event.
     for (const handler of this.messageHandlers) {
+      const context: ListenerErrorContext = {
+        source: "messageHandler",
+        event: String(message.event),
+      };
       try {
-        handler(message);
+        const result: unknown = handler(message);
+        this.watch(result, (err) => {
+          this.reportError(err, context);
+        });
       } catch (err) {
-        if (this.debug) {
-          console.error(
-            "[ThreadedOrderedEventEmitter] Error in message handler:",
-            err,
-          );
-        }
+        this.reportError(err, context);
       }
     }
 
-    // Deserialize the message if a deserialization function is provided
+    // Deserialize the message if a deserialization function is provided. The
+    // caller is a channel's message callback, where a throw would be an
+    // uncaught exception: a message that cannot be read is dropped.
     if (this.onDeserializeThreadMessage) {
-      message.args = this.onDeserializeThreadMessage(
-        message.args,
-      ) as typeof message.args;
+      try {
+        message.args = this.onDeserializeThreadMessage(
+          message.args,
+        ) as typeof message.args;
+      } catch (err) {
+        this.reportError(err, {
+          source: "deserializer",
+          event: String(message.event),
+        });
+        return;
+      }
     }
 
     // Process the event locally, but with localOnly=true to prevent rebroadcasting
@@ -766,7 +818,7 @@ export class ThreadedOrderedEventEmitter<
     threadId: string | number;
   }[] {
     // `slice(-0)` is the whole array: a limit of 0 is "none", not "all"
-    return limit > 0 ? this.eventHistory.slice(-limit) : [];
+    return limit > 0 ? this.eventHistory.slice(-Math.floor(limit)) : [];
   }
 
   /**
@@ -786,7 +838,7 @@ export class ThreadedOrderedEventEmitter<
    * ```
    */
   public setMaxHistoryLength(length: number): void {
-    this.maxHistoryLength = Math.max(0, length);
+    this.maxHistoryLength = toHistoryLength(length);
 
     // Trim history if needed. `slice(-0)` would keep everything, so a length
     // of 0 clears it.
@@ -1443,18 +1495,38 @@ export class ThreadedOrderedEventEmitter<
     };
     try {
       const result: unknown = listener(...args);
-      if (
-        result !== null &&
-        typeof result === "object" &&
-        typeof (result as PromiseLike<unknown>).then === "function"
-      ) {
-        (result as PromiseLike<unknown>).then(undefined, (err: unknown) => {
-          this.reportError(err, context);
-        });
-      }
+      this.watch(result, (err) => {
+        this.reportError(err, context);
+      });
     } catch (err) {
       this.reportError(err, context);
     }
+  }
+
+  /**
+   * Own the rejection of a promise that nothing awaits.
+   *
+   * Only a real promise is watched. A promise is already running and, left
+   * alone, its rejection ends the process. A thenable that is not a promise
+   * (a lazy query builder, say) does nothing until its `then` is called, and
+   * cannot become an unhandled rejection: calling `then` on it here would
+   * start work the emit never started.
+   *
+   * @private
+   */
+  private watch(result: unknown, onRejection: (err: unknown) => void): void {
+    // the tag, not `instanceof`: a promise from another realm counts too
+    if (Object.prototype.toString.call(result) !== "[object Promise]") return;
+
+    (result as Promise<unknown>).then(undefined, (err: unknown) => {
+      // the handler reports through the consumer's hook; nothing it does may
+      // escape, or this would be the unhandled rejection it exists to stop
+      try {
+        onRejection(err);
+      } catch {
+        // already as far as an error can be taken
+      }
+    });
   }
 
   /**
@@ -1471,15 +1543,20 @@ export class ThreadedOrderedEventEmitter<
       );
     }
 
-    try {
-      this.onListenerError?.(err, context);
-    } catch (hookErr) {
+    const hookFailed = (hookErr: unknown): void => {
       if (this.debug) {
         console.error(
-          "[ThreadedOrderedEventEmitter] onListenerError threw:",
+          "[ThreadedOrderedEventEmitter] onListenerError failed:",
           hookErr,
         );
       }
+    };
+    try {
+      // an async hook returns a promise: its rejection is contained as well
+      const result: unknown = this.onListenerError?.(err, context);
+      this.watch(result, hookFailed);
+    } catch (hookErr) {
+      hookFailed(hookErr);
     }
   }
 
@@ -1824,6 +1901,12 @@ export function createTypedEmitter<T extends ListenerSignature<T>>(
   instance.onSerializeThreadMessage = options?.onSerializeThreadMessage;
   instance.onDeserializeThreadMessage = options?.onDeserializeThreadMessage;
   instance.onListenerError = options?.onListenerError;
+  // the instance may already exist for this channel name: a history length
+  // that was asked for applies to it too. (`broadcast` cannot be changed
+  // after an emitter is created.)
+  if (options?.maxHistoryLength !== undefined) {
+    instance.setMaxHistoryLength(options.maxHistoryLength);
+  }
   return instance;
 }
 
