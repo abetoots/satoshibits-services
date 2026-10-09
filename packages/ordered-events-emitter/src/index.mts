@@ -95,28 +95,38 @@ export interface EmitterOptions {
 
   /**
    * Serialization function for thread messages. It must be synchronous: the
-   * message is posted in the same tick. One that throws, or returns a
-   * promise, is reported to `onListenerError` and the event is not broadcast.
+   * message is posted in the same tick. One that throws is reported to
+   * `onListenerError` and the event is not broadcast. The library does not
+   * check for one written as an async function: its promise fails to post
+   * (reported as a transport failure) and its rejection is the consumer's.
    * @returns Serialized message
    */
   onSerializeThreadMessage?: (message: unknown) => any;
   /**
    * Deserialization function for thread messages. It must be synchronous and
-   * return the list of arguments. One that throws, or returns anything else
-   * (a promise included), is reported to `onListenerError` and the event is
-   * dropped.
+   * return the list of arguments. One that throws, or returns anything that
+   * is not a list, is reported to `onListenerError` and the event is dropped.
    * @returns The event's arguments
    */
   onDeserializeThreadMessage?: (message: unknown) => any;
 
   /**
-   * Callback for handling errors in listeners, and in the serialiser.
+   * Where the library reports a failure it has taken ownership of: a listener
+   * that throws or rejects (whatever its priority, and whether or not the
+   * emit waits for it), a serialiser or deserialiser that throws, a thread
+   * message handler that throws or rejects, a message that could not be
+   * posted. It is told what failed, never the event's arguments.
    *
-   * It is told what failed, never the event's arguments. It is called for a
-   * listener that throws or rejects, whatever its priority and whether or not
-   * the emit waits for it. A hook that throws, or an async one that rejects,
-   * is contained: it cannot make `emit` throw or `emitAsync` reject. The hook
-   * is not awaited.
+   * The library owns a failure only when it has this hook to hand it to.
+   * **With no hook installed**, the rejection of a listener or handler that
+   * nothing awaits is left to the runtime (an unhandled rejection), because
+   * the alternative is to drop it in silence.
+   *
+   * The hook is the consumer's code and is not awaited. If it throws, the
+   * emit still goes on, and the throw is raised again on a fresh task as an
+   * uncaught error; if it returns a promise that rejects, that is an
+   * unhandled rejection. Either way it is the consumer's process-level
+   * handling that decides what a failing hook means, not the library.
    *
    * @param error The error that occurred
    * @param context What failed
@@ -143,8 +153,9 @@ export interface EmitterOptions {
    * connected port or worker either), and an event that arrives from another
    * thread is ignored.
    *
-   * Fixed when the emitter is created: `getInstance` and `createTypedEmitter`
-   * return the existing emitter of a channel name and do not change it.
+   * Like every option, it applies when the emitter is created: `getInstance`
+   * and `createTypedEmitter` return the existing emitter of a channel name
+   * as it is.
    * @default true
    */
   broadcast?: boolean;
@@ -166,10 +177,7 @@ export type ListenerErrorContext =
       sync: boolean;
     }
   | {
-      /**
-       * `onSerializeThreadMessage` threw, or returned a promise (reported once
-       * for the promise and again if it rejects): the event was not broadcast
-       */
+      /** `onSerializeThreadMessage` threw: the event was not broadcast */
       source: "serializer";
       event: string;
       sync: boolean;
@@ -177,11 +185,21 @@ export type ListenerErrorContext =
   | {
       /**
        * an event from another thread could not be read: its
-       * `onDeserializeThreadMessage` threw or returned a promise, or its
-       * arguments were not a list. the event was dropped
+       * `onDeserializeThreadMessage` threw, or its arguments were not a list.
+       * the event was dropped
        */
       source: "deserializer";
       event: string;
+    }
+  | {
+      /**
+       * a message could not be posted to another thread (it could not be
+       * cloned, or the channel is closed). the local listeners still ran
+       */
+      source: "transport";
+      event: string;
+      sync: boolean;
+      transport: "broadcastChannel" | "parentPort" | "port" | "worker";
     }
   | {
       /**
@@ -447,9 +465,7 @@ export class ThreadedOrderedEventEmitter<
       };
       try {
         const result: unknown = handler(message);
-        this.watch(result, (err) => {
-          this.reportError(err, context);
-        });
+        this.ownRejection(result, context);
       } catch (err) {
         this.reportError(err, context);
       }
@@ -464,21 +480,9 @@ export class ThreadedOrderedEventEmitter<
         event: String(message.event),
       };
       try {
-        const deserialized: unknown = this.onDeserializeThreadMessage(
+        message.args = this.onDeserializeThreadMessage(
           message.args,
-        );
-        // the event is delivered in this tick, so it cannot wait for a
-        // promise: one is a failure, and its rejection is owned here
-        if (this.watch(deserialized, (err) => this.reportError(err, context))) {
-          this.reportError(
-            new TypeError(
-              "onDeserializeThreadMessage returned a promise: it must be synchronous",
-            ),
-            context,
-          );
-          return;
-        }
-        message.args = deserialized as typeof message.args;
+        ) as typeof message.args;
       } catch (err) {
         this.reportError(err, context);
         return;
@@ -1297,24 +1301,20 @@ export class ThreadedOrderedEventEmitter<
         sync: !options.isAsync,
       };
       try {
-        const serialized: unknown = this.onSerializeThreadMessage(message.args);
-        // the message is posted in this tick, and a promise cannot be
-        // posted: one is a failure, and its rejection is owned here
-        if (this.watch(serialized, (err) => this.reportError(err, context))) {
-          this.reportError(
-            new TypeError(
-              "onSerializeThreadMessage returned a promise: it must be synchronous",
-            ),
-            context,
-          );
-          return;
-        }
-        message.args = serialized as typeof message.args;
+        message.args = this.onSerializeThreadMessage(
+          message.args,
+        ) as typeof message.args;
       } catch (err) {
         this.reportError(err, context);
         return;
       }
     }
+
+    const transportContext = {
+      source: "transport" as const,
+      event: String(event),
+      sync: !options.isAsync,
+    };
 
     // Try BroadcastChannel first
     if (this.channel) {
@@ -1327,12 +1327,11 @@ export class ThreadedOrderedEventEmitter<
           );
         }
       } catch (err) {
-        if (this.debug) {
-          console.error(
-            "[ThreadedOrderedEventEmitter] Error broadcasting via BroadcastChannel:",
-            err,
-          );
-        }
+        // only the library can see that a post failed: it is reported
+        this.reportError(err, {
+          ...transportContext,
+          transport: "broadcastChannel",
+        });
       }
     }
     // Fall back to parentPort for worker threads
@@ -1346,12 +1345,8 @@ export class ThreadedOrderedEventEmitter<
           );
         }
       } catch (err) {
-        if (this.debug) {
-          console.error(
-            "[ThreadedOrderedEventEmitter] Error sending to parent thread:",
-            err,
-          );
-        }
+        // only the library can see that a post failed: it is reported
+        this.reportError(err, { ...transportContext, transport: "parentPort" });
       }
     }
 
@@ -1366,12 +1361,8 @@ export class ThreadedOrderedEventEmitter<
           );
         }
       } catch (err) {
-        if (this.debug) {
-          console.error(
-            "[ThreadedOrderedEventEmitter] Error sending to connected port:",
-            err,
-          );
-        }
+        // only the library can see that a post failed: it is reported
+        this.reportError(err, { ...transportContext, transport: "port" });
       }
     }
 
@@ -1386,12 +1377,8 @@ export class ThreadedOrderedEventEmitter<
           );
         }
       } catch (err) {
-        if (this.debug) {
-          console.error(
-            "[ThreadedOrderedEventEmitter] Error sending to worker thread:",
-            err,
-          );
-        }
+        // only the library can see that a post failed: it is reported
+        this.reportError(err, { ...transportContext, transport: "worker" });
       }
     }
   }
@@ -1548,9 +1535,7 @@ export class ThreadedOrderedEventEmitter<
     };
     try {
       const result: unknown = listener(...args);
-      this.watch(result, (err) => {
-        this.reportError(err, context);
-      });
+      this.ownRejection(result, context);
     } catch (err) {
       this.reportError(err, context);
     }
@@ -1605,8 +1590,29 @@ export class ThreadedOrderedEventEmitter<
   }
 
   /**
-   * Hand an error to `onListenerError`. The hook is the consumer's code: if it
-   * throws, that must not become the emit's failure.
+   * Take ownership of the rejection of a promise that nothing awaits, but
+   * only when there is a hook to hand it to. With no hook installed the
+   * library has nowhere to report the failure, so the promise is left alone
+   * and its rejection goes to the runtime, whose handling the consumer owns.
+   *
+   * @private
+   */
+  private ownRejection(result: unknown, context: ListenerErrorContext): void {
+    if (!this.onListenerError) return;
+
+    this.watch(result, (err) => {
+      this.reportError(err, context);
+    });
+  }
+
+  /**
+   * Hand an error to `onListenerError`.
+   *
+   * The hook is the consumer's code. If it throws, that does not become the
+   * emit's failure, and it is not discarded either: the throw is raised again
+   * on a fresh task, where it is an uncaught error for the consumer's own
+   * process-level handling. A promise the hook returns is not touched: if it
+   * rejects, that is the runtime's unhandled rejection, for the same reason.
    *
    * @private
    */
@@ -1618,20 +1624,12 @@ export class ThreadedOrderedEventEmitter<
       );
     }
 
-    const hookFailed = (hookErr: unknown): void => {
-      if (this.debug) {
-        console.error(
-          "[ThreadedOrderedEventEmitter] onListenerError failed:",
-          hookErr,
-        );
-      }
-    };
     try {
-      // an async hook returns a promise: its rejection is contained as well
-      const result: unknown = this.onListenerError?.(err, context);
-      this.watch(result, hookFailed);
+      void this.onListenerError?.(err, context);
     } catch (hookErr) {
-      hookFailed(hookErr);
+      queueMicrotask(() => {
+        throw hookErr;
+      });
     }
   }
 
@@ -1971,18 +1969,10 @@ export class ThreadedOrderedEventEmitter<
 export function createTypedEmitter<T extends ListenerSignature<T>>(
   options?: EmitterOptions,
 ): ThreadedOrderedEventEmitter<T> {
-  const instance = ThreadedOrderedEventEmitter.getInstance<T>(options);
-
-  instance.onSerializeThreadMessage = options?.onSerializeThreadMessage;
-  instance.onDeserializeThreadMessage = options?.onDeserializeThreadMessage;
-  instance.onListenerError = options?.onListenerError;
-  // the instance may already exist for this channel name: a history length
-  // that was asked for applies to it too. (`broadcast` cannot be changed
-  // after an emitter is created.)
-  if (options?.maxHistoryLength !== undefined) {
-    instance.setMaxHistoryLength(options.maxHistoryLength);
-  }
-  return instance;
+  // options apply when an emitter is created, and only then: for a channel
+  // name that already has one, this returns it as it is. its hooks and its
+  // history length are changed through the instance, by whoever owns it.
+  return ThreadedOrderedEventEmitter.getInstance<T>(options);
 }
 
 /**

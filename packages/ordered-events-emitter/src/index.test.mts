@@ -1053,19 +1053,6 @@ describe("Failure containment", () => {
       await nextMacrotask();
       expect(settled).toBe(true);
     });
-
-    it("raises no unhandled rejection when no error hook is configured", async () => {
-      build();
-      // eslint-disable-next-line @typescript-eslint/require-await
-      emitter.on("asyncEvent", async () => {
-        throw new Error("nobody is listening for errors");
-      });
-
-      await emitter.emitAsync({ event: "asyncEvent" }, "payload");
-      await nextMacrotask();
-
-      expect(onUnhandledRejection).not.toHaveBeenCalled();
-    });
   });
 
   describe("a prioritized async listener that rejects under emit", () => {
@@ -1135,64 +1122,6 @@ describe("Failure containment", () => {
       expect(JSON.stringify(onListenerError.mock.calls)).not.toContain(
         "secret-payload",
       );
-    });
-  });
-
-  describe("an error hook that throws", () => {
-    const throwingHook = (): never => {
-      throw new Error("the hook itself failed");
-    };
-
-    it("does not make emitAsync reject, and later listeners still run", async () => {
-      build({ onListenerError: throwingHook });
-      const later = vi.fn();
-      emitter.on(
-        "asyncEvent",
-        () => {
-          throw new Error("listener failed");
-        },
-        10,
-      );
-      emitter.on("asyncEvent", later, 5);
-
-      await expect(
-        emitter.emitAsync({ event: "asyncEvent" }, "payload"),
-      ).resolves.toBe(true);
-      expect(later).toHaveBeenCalledTimes(1);
-    });
-
-    it("does not make emit throw, for a zero-priority or a prioritized listener", () => {
-      build({ onListenerError: throwingHook });
-      const later = vi.fn();
-      emitter.on("syncEvent", () => {
-        throw new Error("zero-priority listener failed");
-      });
-      emitter.on(
-        "syncEvent",
-        () => {
-          throw new Error("prioritized listener failed");
-        },
-        10,
-      );
-      emitter.on("syncEvent", later, 5);
-
-      expect(() =>
-        emitter.emit({ event: "syncEvent" }, "payload"),
-      ).not.toThrow();
-      expect(later).toHaveBeenCalledTimes(1);
-    });
-
-    it("raises no unhandled rejection when it throws for a detached listener", async () => {
-      build({ onListenerError: throwingHook });
-      // eslint-disable-next-line @typescript-eslint/require-await
-      emitter.on("asyncEvent", async () => {
-        throw new Error("detached listener failed");
-      });
-
-      await emitter.emitAsync({ event: "asyncEvent" }, "payload");
-      await nextMacrotask();
-
-      expect(onUnhandledRejection).not.toHaveBeenCalled();
     });
   });
 
@@ -1411,59 +1340,6 @@ describe("Failure containment: hooks, thenables and incoming messages", () => {
     ThreadedOrderedEventEmitter.clearRegistry();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
-  });
-
-  describe("an async error hook that rejects", () => {
-    // an error hook that awaits a reporter is an ordinary thing to write.
-    // a plain function with a counter: a shared vi.fn would lose its
-    // implementation to restoreAllMocks between tests and reject nothing.
-    let hookCalls = 0;
-    // eslint-disable-next-line @typescript-eslint/require-await
-    const rejectingHook = async (): Promise<void> => {
-      hookCalls += 1;
-      throw new Error("the async hook failed");
-    };
-    beforeEach(() => {
-      hookCalls = 0;
-    });
-
-    it("raises no unhandled rejection under emitAsync", async () => {
-      build({ onListenerError: rejectingHook });
-      // eslint-disable-next-line @typescript-eslint/require-await
-      emitter.on("asyncEvent", async () => {
-        throw new Error("detached listener failed");
-      });
-      emitter.on(
-        "asyncEvent",
-        () => {
-          throw new Error("awaited listener failed");
-        },
-        5,
-      );
-
-      await expect(
-        emitter.emitAsync({ event: "asyncEvent" }, "payload"),
-      ).resolves.toBe(true);
-      await nextMacrotask();
-
-      expect(hookCalls).toBe(2);
-      expect(onUnhandledRejection).not.toHaveBeenCalled();
-    });
-
-    it("raises no unhandled rejection under emit", async () => {
-      build({ onListenerError: rejectingHook });
-      emitter.on("syncEvent", () => {
-        throw new Error("listener failed");
-      });
-
-      expect(() =>
-        emitter.emit({ event: "syncEvent" }, "payload"),
-      ).not.toThrow();
-      await nextMacrotask();
-
-      expect(hookCalls).toBe(1);
-      expect(onUnhandledRejection).not.toHaveBeenCalled();
-    });
   });
 
   describe("what a listener the emit does not wait for returns", () => {
@@ -1839,96 +1715,10 @@ describe("Failure containment: hooks, thenables and incoming messages", () => {
     });
   });
 
-  describe("a serialiser or deserialiser written as an async function", () => {
-    // neither can be asynchronous: the message is posted, and the event
-    // delivered, in the same tick. one that returns a promise is reported
-    // as a failure, and its rejection is contained like any other.
-    it("an async serialiser that rejects: nothing is broadcast, the listeners run, nothing is unhandled", async () => {
-      const onListenerError = vi.fn();
-      build({
-        onListenerError,
-        // eslint-disable-next-line @typescript-eslint/require-await
-        onSerializeThreadMessage: async () => {
-          throw new Error("async serialiser rejected");
-        },
-      });
-      const listener = vi.fn();
-      emitter.on("syncEvent", listener);
-
-      expect(() =>
-        emitter.emit({ event: "syncEvent" }, "payload"),
-      ).not.toThrow();
-      await nextMacrotask();
-
-      expect(onUnhandledRejection).not.toHaveBeenCalled();
-      expect(listener).toHaveBeenCalledWith("payload");
-      expect(mockGlobalBroadcastChannel.postMessage).not.toHaveBeenCalled();
-      const contexts = onListenerError.mock.calls.map(
-        ([, context]) => context as unknown,
-      );
-      expect(contexts).toEqual([
-        // that it returned a promise at all, then what the promise rejected with
-        { source: "serializer", event: "syncEvent", sync: true },
-        { source: "serializer", event: "syncEvent", sync: true },
-      ]);
-      expect(
-        (onListenerError.mock.calls[1]![0] as { message: string }).message,
-      ).toBe("async serialiser rejected");
-    });
-
-    it("an async serialiser that resolves is still not broadcast", async () => {
-      const onListenerError = vi.fn();
-      build({
-        onListenerError,
-        // eslint-disable-next-line @typescript-eslint/require-await
-        onSerializeThreadMessage: async (message: unknown) => message,
-      });
-
-      emitter.emit({ event: "syncEvent" }, "payload");
-      await nextMacrotask();
-
-      // a promise cannot be posted to another thread
-      expect(mockGlobalBroadcastChannel.postMessage).not.toHaveBeenCalled();
-      expect(onListenerError).toHaveBeenCalledTimes(1);
-      expect(onListenerError.mock.calls[0]![1]).toEqual({
-        source: "serializer",
-        event: "syncEvent",
-        sync: true,
-      });
-    });
-
-    it("an async deserialiser that rejects: the event is dropped, nothing is unhandled", async () => {
-      const onListenerError = vi.fn();
-      build({
-        onListenerError,
-        // eslint-disable-next-line @typescript-eslint/require-await
-        onDeserializeThreadMessage: async () => {
-          throw new Error("async deserialiser rejected");
-        },
-      });
-      const listener = vi.fn();
-      emitter.on("syncEvent", listener);
-
-      expect(() => receive(incoming("syncEvent", false))).not.toThrow();
-      await nextMacrotask();
-
-      expect(onUnhandledRejection).not.toHaveBeenCalled();
-      expect(listener).not.toHaveBeenCalled();
-      expect(
-        onListenerError.mock.calls.map(([, context]) => context as unknown),
-      ).toEqual([
-        { source: "deserializer", event: "syncEvent" },
-        { source: "deserializer", event: "syncEvent" },
-      ]);
-    });
-  });
-
   describe("a serialiser that throws under emitAsync", () => {
-    it("reports it as asynchronous, posts nothing, and survives a hook that throws too", async () => {
+    it("reports it as asynchronous and posts nothing", async () => {
       const failure = new Error("cannot serialise");
-      const onListenerError = vi.fn(() => {
-        throw new Error("the hook failed as well");
-      });
+      const onListenerError = vi.fn();
       build({
         onListenerError,
         onSerializeThreadMessage: () => {
@@ -2004,24 +1794,6 @@ describe("Failure containment: hooks, thenables and incoming messages", () => {
       }
       expect(emitter.getEventHistory(10)).toHaveLength(2);
     });
-
-    it("createTypedEmitter applies maxHistoryLength to an emitter that already exists", () => {
-      const first = createTypedEmitter<ReviewEvents>({
-        channelName: "history-reuse",
-        maxHistoryLength: 5,
-      });
-      first.emit({ event: "syncEvent" }, "recorded");
-      expect(first.getEventHistory()).toHaveLength(1);
-
-      const second = createTypedEmitter<ReviewEvents>({
-        channelName: "history-reuse",
-        maxHistoryLength: 0,
-      });
-
-      expect(second).toBe(first);
-      expect(second.getEventHistory(10)).toEqual([]);
-      first.clear();
-    });
   });
 
   describe("broadcast: false, in a worker with a connected port", () => {
@@ -2058,6 +1830,351 @@ describe("Failure containment: hooks, thenables and incoming messages", () => {
       // and an event sent to it from elsewhere is not delivered
       receive(incoming("syncEvent", false));
       expect(listener).toHaveBeenCalledTimes(2);
+    });
+  });
+});
+
+/**
+ * Whose error it is. The library owns the promises it drops and the calls it
+ * makes; it does not own the consumer's errors. Where it has nowhere to
+ * report one, it leaves it to the runtime, which the consumer configures.
+ */
+describe("Errors that belong to the consumer are not swallowed", () => {
+  interface OwnRecord {
+    asyncEvent: (arg: string) => Promise<void> | void;
+    syncEvent: (arg: string) => void;
+  }
+  type OwnEvents = ListenerSignature<OwnRecord>;
+
+  let emitter: ThreadedOrderedEventEmitter<OwnEvents>;
+  const nextMacrotask = (): Promise<void> =>
+    new Promise((resolve) => setImmediate(resolve));
+
+  // these tests cause uncaught errors on purpose. the test runner's own
+  // process handlers would fail the run on them, so they are set aside for
+  // the test and put back after it.
+  type Listener = (...args: unknown[]) => void;
+  let uncaught: unknown[];
+  let unhandled: unknown[];
+  let saved: {
+    event: "uncaughtException" | "unhandledRejection";
+    fns: Listener[];
+  }[];
+  const onUncaught = (error: unknown): void => {
+    uncaught.push(error);
+  };
+  const onUnhandled = (reason: unknown): void => {
+    unhandled.push(reason);
+  };
+
+  const build = (
+    options: EmitterOptions = {},
+  ): ThreadedOrderedEventEmitter<OwnEvents> => {
+    emitter = new ThreadedOrderedEventEmitter<OwnEvents>({
+      threadId: "own-test",
+      ...options,
+    });
+    return emitter;
+  };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    vi.stubGlobal(
+      "BroadcastChannel",
+      vi.fn(() => mockGlobalBroadcastChannel),
+    );
+    await asMainThread();
+    ThreadedOrderedEventEmitter.clearRegistry();
+    uncaught = [];
+    unhandled = [];
+    saved = (["uncaughtException", "unhandledRejection"] as const).map(
+      (event) => ({
+        event,
+        fns: (process as NodeJS.EventEmitter).listeners(event) as Listener[],
+      }),
+    );
+    for (const { event } of saved) process.removeAllListeners(event);
+    process.on("uncaughtException", onUncaught);
+    process.on("unhandledRejection", onUnhandled);
+  });
+
+  afterEach(() => {
+    process.removeAllListeners("uncaughtException");
+    process.removeAllListeners("unhandledRejection");
+    for (const { event, fns } of saved) {
+      for (const fn of fns) (process as NodeJS.EventEmitter).on(event, fn);
+    }
+    emitter?.clear();
+    ThreadedOrderedEventEmitter.clearRegistry();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  describe("with no error hook installed", () => {
+    it("leaves a detached listener's rejection to the runtime", async () => {
+      // nobody was told about the failure, so the library must not be the
+      // one to make it disappear
+      build();
+      const failure = new Error("nobody is listening for errors");
+      // eslint-disable-next-line @typescript-eslint/require-await
+      emitter.on("asyncEvent", async () => {
+        throw failure;
+      });
+
+      await emitter.emitAsync({ event: "asyncEvent" }, "payload");
+      emitter.emit({ event: "asyncEvent" }, "payload");
+      await nextMacrotask();
+
+      expect(unhandled).toEqual([failure, failure]);
+      expect(uncaught).toEqual([]);
+    });
+
+    it("leaves a thread message handler's rejection to the runtime", async () => {
+      build();
+      const failure = new Error("handler rejected");
+      emitter.registerThreadMessageHandler(
+        // eslint-disable-next-line @typescript-eslint/require-await
+        async () => {
+          throw failure;
+        },
+      );
+
+      //@ts-expect-error marked as private but still accessible in javascript
+      emitter.handleThreadMessage({
+        type: "event",
+        event: "syncEvent",
+        args: ["x"],
+        sourceThreadId: "another-thread",
+      });
+      await nextMacrotask();
+
+      expect(unhandled).toEqual([failure]);
+    });
+
+    it("owns the rejection again once a hook is installed", async () => {
+      const onListenerError = vi.fn();
+      build({ onListenerError });
+      // eslint-disable-next-line @typescript-eslint/require-await
+      emitter.on("asyncEvent", async () => {
+        throw new Error("reported, not unhandled");
+      });
+
+      await emitter.emitAsync({ event: "asyncEvent" }, "payload");
+      await nextMacrotask();
+
+      expect(unhandled).toEqual([]);
+      expect(onListenerError).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("an error hook that fails", () => {
+    it("cannot fail the emit, and its throw reaches the process as an uncaught error", async () => {
+      const hookFailure = new Error("the hook itself failed");
+      build({
+        onListenerError: () => {
+          throw hookFailure;
+        },
+      });
+      const later = vi.fn();
+      emitter.on(
+        "asyncEvent",
+        () => {
+          throw new Error("listener failed");
+        },
+        10,
+      );
+      emitter.on("asyncEvent", later, 5);
+
+      await expect(
+        emitter.emitAsync({ event: "asyncEvent" }, "payload"),
+      ).resolves.toBe(true);
+      expect(() =>
+        emitter.emit({ event: "asyncEvent" }, "payload"),
+      ).not.toThrow();
+      await nextMacrotask();
+
+      // the emit went on...
+      expect(later).toHaveBeenCalledTimes(2);
+      // ...and the consumer's bug was handed to the consumer's process handler
+      expect(uncaught).toEqual([hookFailure, hookFailure]);
+    });
+
+    it("leaves an async hook's rejection to the runtime", async () => {
+      const hookFailure = new Error("the async hook failed");
+      build({
+        // eslint-disable-next-line @typescript-eslint/require-await
+        onListenerError: async () => {
+          throw hookFailure;
+        },
+      });
+      emitter.on(
+        "syncEvent",
+        () => {
+          throw new Error("listener failed");
+        },
+        5,
+      );
+
+      expect(() =>
+        emitter.emit({ event: "syncEvent" }, "payload"),
+      ).not.toThrow();
+      await nextMacrotask();
+
+      expect(unhandled).toEqual([hookFailure]);
+    });
+  });
+
+  describe("a message that cannot be posted", () => {
+    it("is reported through the hook as a transport failure, and the listeners still run", async () => {
+      const onListenerError = vi.fn();
+      build({ onListenerError });
+      const postFailure = new Error("could not be cloned");
+      mockGlobalBroadcastChannel.postMessage.mockImplementation(() => {
+        throw postFailure;
+      });
+      const listener = vi.fn();
+      emitter.on("syncEvent", listener);
+
+      expect(() =>
+        emitter.emit({ event: "syncEvent" }, "payload"),
+      ).not.toThrow();
+      await emitter.emitAsync({ event: "syncEvent" }, "payload");
+
+      expect(listener).toHaveBeenCalledTimes(2);
+      expect(onListenerError.mock.calls).toEqual([
+        [
+          postFailure,
+          {
+            source: "transport",
+            event: "syncEvent",
+            sync: true,
+            transport: "broadcastChannel",
+          },
+        ],
+        [
+          postFailure,
+          {
+            source: "transport",
+            event: "syncEvent",
+            sync: false,
+            transport: "broadcastChannel",
+          },
+        ],
+      ]);
+      mockGlobalBroadcastChannel.postMessage.mockReset();
+    });
+
+    it("names a connected port and a connected worker as the transport", () => {
+      const onListenerError = vi.fn();
+      build({ onListenerError });
+      const failure = new Error("port closed");
+      const port: MessageChannel = {
+        postMessage: vi.fn(() => {
+          throw failure;
+        }),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      };
+      const worker = {
+        postMessage: vi.fn(() => {
+          throw failure;
+        }),
+        on: vi.fn(),
+        off: vi.fn(),
+      };
+      emitter.connectPort(port);
+      //@ts-expect-error no need to mock other properties
+      emitter.connectWorker(worker);
+
+      emitter.emit({ event: "syncEvent" }, "payload");
+
+      expect(
+        onListenerError.mock.calls.map(
+          ([, context]) => (context as { transport?: string }).transport,
+        ),
+      ).toEqual(["port", "worker"]);
+    });
+  });
+
+  describe("a serialiser or deserialiser written as an async function", () => {
+    // both must be synchronous, and the library no longer checks: the mistake
+    // shows where it lands, and the promise's rejection is the consumer's
+    it("is not special-cased: no report of its own, and the rejection is left to the runtime", async () => {
+      const onListenerError = vi.fn();
+      const failure = new Error("async serialiser rejected");
+      build({
+        onListenerError,
+        // eslint-disable-next-line @typescript-eslint/require-await
+        onSerializeThreadMessage: async () => {
+          throw failure;
+        },
+      });
+      const listener = vi.fn();
+      emitter.on("syncEvent", listener);
+
+      expect(() =>
+        emitter.emit({ event: "syncEvent" }, "payload"),
+      ).not.toThrow();
+      await nextMacrotask();
+
+      expect(listener).toHaveBeenCalledTimes(1);
+      // no "must be synchronous" report from the library
+      expect(onListenerError).not.toHaveBeenCalled();
+      expect(unhandled).toEqual([failure]);
+    });
+
+    it("an async deserialiser's event is dropped as arguments that are not a list", async () => {
+      const onListenerError = vi.fn();
+      const failure = new Error("async deserialiser rejected");
+      build({
+        onListenerError,
+        // eslint-disable-next-line @typescript-eslint/require-await
+        onDeserializeThreadMessage: async () => {
+          throw failure;
+        },
+      });
+      const listener = vi.fn();
+      emitter.on("syncEvent", listener);
+
+      //@ts-expect-error marked as private but still accessible in javascript
+      emitter.handleThreadMessage({
+        type: "event",
+        event: "syncEvent",
+        args: ["x"],
+        sourceThreadId: "another-thread",
+      });
+      await nextMacrotask();
+
+      expect(listener).not.toHaveBeenCalled();
+      expect(onListenerError).toHaveBeenCalledTimes(1);
+      expect(onListenerError.mock.calls[0]![1]).toEqual({
+        source: "deserializer",
+        event: "syncEvent",
+      });
+      expect(unhandled).toEqual([failure]);
+    });
+  });
+
+  describe("options apply when an emitter is created, and only then", () => {
+    it("asking again for the same channel changes nothing on the emitter that exists", () => {
+      const firstHook = vi.fn();
+      const first = createTypedEmitter<OwnEvents>({
+        channelName: "created-once",
+        maxHistoryLength: 5,
+        onListenerError: firstHook,
+      });
+      first.emit({ event: "syncEvent" }, "recorded");
+
+      const second = createTypedEmitter<OwnEvents>({
+        channelName: "created-once",
+        maxHistoryLength: 0,
+      });
+
+      expect(second).toBe(first);
+      // the hook was not wiped, and the history was not cleared
+      expect(second.onListenerError).toBe(firstHook);
+      expect(second.getEventHistory()).toHaveLength(1);
+      first.clear();
     });
   });
 });
