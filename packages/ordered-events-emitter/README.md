@@ -416,7 +416,7 @@ A listener that throws, or returns a promise that rejects, never makes `emit` th
 
 #### Thread Communication
 
-- `registerThreadMessageHandler(handler: (message: ThreadMessage<keyof L, any[]>) => void): () => void`: Register a handler for thread messages.
+- `registerThreadMessageHandler(handler: (message: ThreadMessage<keyof L, any[]>) => void | Promise<void>): () => void`: Register a handler for thread messages. A handler that throws or rejects is reported to `onListenerError` and does not stop the event; it is not awaited.
 
 #### Utility Methods
 
@@ -442,7 +442,7 @@ Configures and retrieves a typed `ThreadedOrderedEventEmitter` instance. This fu
 - `options`: Optional `EmitterOptions` to configure the emitter.
 - **Returns**: A `ThreadedOrderedEventEmitter<T>` instance.
 
-#### `setupMainThreadHandlers<T extends ListenerSignature<T>>(handlers: { [K in keyof T]?: (message: ThreadMessage<K, Parameters<T[K]>>) => void; }, emitter?: ThreadedOrderedEventEmitter<T>): () => void`
+#### `setupMainThreadHandlers<T extends ListenerSignature<T>>(handlers: { [K in keyof T]?: (message: ThreadMessage<K, Parameters<T[K]>>) => void | Promise<void>; }, emitter?: ThreadedOrderedEventEmitter<T>): () => void`
 
 Registers event handlers on the main thread, typically for messages received from worker threads. This simplifies setting up listeners for specific event types originating from workers.
 
