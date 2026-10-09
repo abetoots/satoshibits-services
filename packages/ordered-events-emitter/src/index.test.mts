@@ -934,8 +934,10 @@ const asMainThread = async (): Promise<void> => {
 };
 
 /**
- * A listener, a hook or a serialiser that fails must not reach the caller of
- * `emit`, and must not reach the process as an unhandled rejection.
+ * A failing listener or serialiser must not reach the caller of `emit`, and,
+ * with an error hook installed, a listener's rejection must not reach the
+ * process as an unhandled rejection. (What a failing hook does, and what
+ * happens with no hook, is in the last block of this file.)
  */
 describe("Failure containment", () => {
   interface SafetyRecord {
@@ -1862,22 +1864,27 @@ describe("Errors that belong to the consumer are not swallowed", () => {
   let saved: { event: (typeof CHANNELS)[number]; fns: Listener[] }[] = [];
   let uncaught: unknown[] = [];
   let unhandled: unknown[] = [];
-  let checked = false;
+  let stated: { uncaught: unknown[]; unhandled: unknown[] } | undefined;
 
+  const same = (actual: unknown[], wanted: unknown[]): void => {
+    expect(actual).toHaveLength(wanted.length);
+    // by identity: the error itself, not one with the same message
+    wanted.forEach((error, index) => {
+      expect(actual[index]).toBe(error);
+    });
+  };
+
+  // checked here, and again in afterEach once nothing more can arrive
   const reachedTheProcess = (expected: {
     uncaught?: unknown[];
     unhandled?: unknown[];
   }): void => {
-    checked = true;
-    const same = (actual: unknown[], wanted: unknown[]): void => {
-      expect(actual).toHaveLength(wanted.length);
-      // by identity: the error itself, not one with the same message
-      wanted.forEach((error, index) => {
-        expect(actual[index]).toBe(error);
-      });
+    stated = {
+      uncaught: expected.uncaught ?? [],
+      unhandled: expected.unhandled ?? [],
     };
-    same(uncaught, expected.uncaught ?? []);
-    same(unhandled, expected.unhandled ?? []);
+    same(uncaught, stated.uncaught);
+    same(unhandled, stated.unhandled);
   };
 
   const build = (
@@ -1905,7 +1912,7 @@ describe("Errors that belong to the consumer are not swallowed", () => {
     // what afterEach puts back
     uncaught = [];
     unhandled = [];
-    checked = false;
+    stated = undefined;
     saved = CHANNELS.map((event) => ({
       event,
       fns: processEvents.rawListeners(event) as Listener[],
@@ -1928,8 +1935,12 @@ describe("Errors that belong to the consumer are not swallowed", () => {
   });
 
   afterEach(async () => {
-    // anything still on its way arrives before the runner's handlers return
+    // let anything still on its way arrive while it is still being
+    // collected, then take what was collected and hand the process back to
+    // the runner before any assertion here can throw
     await nextMacrotask();
+    const finalUncaught = [...uncaught];
+    const finalUnhandled = [...unhandled];
     for (const { event, fns } of saved) {
       processEvents.removeAllListeners(event);
       for (const fn of fns) processEvents.on(event, fn);
@@ -1943,9 +1954,12 @@ describe("Errors that belong to the consumer are not swallowed", () => {
     await asMainThread();
 
     expect(
-      checked,
+      stated,
       "every test in this block states what reached the process",
-    ).toBe(true);
+    ).toBeDefined();
+    // nothing arrived after the test made its statement
+    same(finalUncaught, stated!.uncaught);
+    same(finalUnhandled, stated!.unhandled);
   });
 
   describe("with no error hook installed", () => {
