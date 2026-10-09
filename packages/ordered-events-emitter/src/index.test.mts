@@ -489,7 +489,13 @@ describe("ThreadedOrderedEventEmitter", () => {
 
       expect(failingListener).toHaveBeenCalled();
       expect(succeedingListener).toHaveBeenCalled(); // Should still run
-      expect(errorCallback).toHaveBeenCalledWith(expect.any(Error));
+      expect(errorCallback).toHaveBeenCalledWith(expect.any(Error), {
+        source: "listener",
+        event: "asyncEvent",
+        key: undefined,
+        priority: 10,
+        sync: false,
+      });
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       expect(errorCallback.mock.calls[0]![0].message).toBe("AsyncFail");
     });
@@ -510,7 +516,13 @@ describe("ThreadedOrderedEventEmitter", () => {
 
       expect(failingListener).toHaveBeenCalled();
       expect(succeedingListener).toHaveBeenCalled(); // Should still run
-      expect(errorCallback).toHaveBeenCalledWith(expect.any(Error));
+      expect(errorCallback).toHaveBeenCalledWith(expect.any(Error), {
+        source: "listener",
+        event: "testEvent",
+        key: undefined,
+        priority: 10,
+        sync: true,
+      });
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       expect(errorCallback.mock.calls[0]![0].message).toBe("SyncFail");
     });
@@ -742,6 +754,7 @@ describe("ThreadedOrderedEventEmitter", () => {
     it("clear should remove all listeners, handlers, history and close channels", () => {
       emitter.on("testEvent", vi.fn());
       emitter.registerThreadMessageHandler(vi.fn());
+      emitter.setMaxHistoryLength(10); // the history is opt-in
       emitter.emitSimple("testEvent", "hist", 1); // Add to history
 
       const mockPort: MessageChannel = {
@@ -899,14 +912,428 @@ describe("ThreadedOrderedEventEmitter", () => {
       expect(worker).toBe(mockWorkerInstance);
       expect(wtMock.Worker).toHaveBeenCalledWith("./fake-worker.js", {});
       //@ts-expect-error marked as private but still accessible in javascript
-       
+
       expect(testEmitter.workers.has(mockWorkerInstance)).toBe(true);
 
       cleanup();
       //@ts-expect-error marked as private but still accessible in javascript
-       
+
       expect(testEmitter.workers.has(mockWorkerInstance)).toBe(false);
       testEmitter.clear();
     });
+  });
+});
+
+/**
+ * A listener, a hook or a serialiser that fails must not reach the caller of
+ * `emit`, and must not reach the process as an unhandled rejection.
+ */
+describe("Failure containment", () => {
+  interface SafetyRecord {
+    asyncEvent: (arg: string) => Promise<void> | void;
+    syncEvent: (arg: string) => void;
+  }
+  type SafetyEvents = ListenerSignature<SafetyRecord>;
+
+  let emitter: ThreadedOrderedEventEmitter<SafetyEvents>;
+  const onUnhandledRejection = vi.fn();
+
+  // node raises `unhandledRejection` only once the microtask queue has
+  // drained: one macrotask later it has been raised, if it is going to be
+  const nextMacrotask = (): Promise<void> =>
+    new Promise((resolve) => setImmediate(resolve));
+
+  const build = (
+    options: EmitterOptions = {},
+  ): ThreadedOrderedEventEmitter<SafetyEvents> => {
+    emitter = new ThreadedOrderedEventEmitter<SafetyEvents>({
+      threadId: "safety-test",
+      ...options,
+    });
+    return emitter;
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal(
+      "BroadcastChannel",
+      vi.fn(() => mockGlobalBroadcastChannel),
+    );
+    ThreadedOrderedEventEmitter.clearRegistry();
+    onUnhandledRejection.mockReset();
+    process.on("unhandledRejection", onUnhandledRejection);
+  });
+
+  afterEach(() => {
+    process.off("unhandledRejection", onUnhandledRejection);
+    emitter?.clear();
+    ThreadedOrderedEventEmitter.clearRegistry();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  describe("a zero-priority async listener that rejects", () => {
+    it("raises no unhandled rejection under emitAsync, and reports the error with its context", async () => {
+      const onListenerError = vi.fn();
+      build({ onListenerError });
+      const failure = new Error("zero-priority rejected");
+      emitter.on(
+        "asyncEvent",
+        async () => {
+          await Promise.resolve();
+          throw failure;
+        },
+        0,
+        "pointer-writer",
+      );
+
+      await emitter.emitAsync({ event: "asyncEvent" }, "payload");
+      await nextMacrotask();
+
+      expect(onUnhandledRejection).not.toHaveBeenCalled();
+      expect(onListenerError).toHaveBeenCalledTimes(1);
+      expect(onListenerError).toHaveBeenCalledWith(failure, {
+        source: "listener",
+        event: "asyncEvent",
+        key: "pointer-writer",
+        priority: 0,
+        sync: false,
+      });
+    });
+
+    it("raises no unhandled rejection under emit", async () => {
+      const onListenerError = vi.fn();
+      build({ onListenerError });
+      const failure = new Error("zero-priority rejected (sync emit)");
+      // eslint-disable-next-line @typescript-eslint/require-await
+      emitter.on("asyncEvent", async () => {
+        throw failure;
+      });
+
+      emitter.emit({ event: "asyncEvent" }, "payload");
+      await nextMacrotask();
+
+      expect(onUnhandledRejection).not.toHaveBeenCalled();
+      expect(onListenerError).toHaveBeenCalledWith(failure, {
+        source: "listener",
+        event: "asyncEvent",
+        key: undefined,
+        priority: 0,
+        sync: true,
+      });
+    });
+
+    it("is still not awaited: emitAsync resolves before the listener settles", async () => {
+      build();
+      let settled = false;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      emitter.on("asyncEvent", async () => {
+        await gate;
+        settled = true;
+      });
+
+      await emitter.emitAsync({ event: "asyncEvent" }, "payload");
+
+      // awaiting zero-priority listeners would change timing for every consumer
+      expect(settled).toBe(false);
+      release();
+      await nextMacrotask();
+      expect(settled).toBe(true);
+    });
+
+    it("raises no unhandled rejection when no error hook is configured", async () => {
+      build();
+      // eslint-disable-next-line @typescript-eslint/require-await
+      emitter.on("asyncEvent", async () => {
+        throw new Error("nobody is listening for errors");
+      });
+
+      await emitter.emitAsync({ event: "asyncEvent" }, "payload");
+      await nextMacrotask();
+
+      expect(onUnhandledRejection).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("a prioritized async listener that rejects under emit", () => {
+    it("raises no unhandled rejection, and reports the error with its context", async () => {
+      const onListenerError = vi.fn();
+      build({ onListenerError });
+      const failure = new Error("prioritized rejected (sync emit)");
+      emitter.on(
+        "asyncEvent",
+        // eslint-disable-next-line @typescript-eslint/require-await
+        async () => {
+          throw failure;
+        },
+        5,
+        "provisioner",
+      );
+
+      emitter.emit({ event: "asyncEvent" }, "payload");
+      await nextMacrotask();
+
+      expect(onUnhandledRejection).not.toHaveBeenCalled();
+      expect(onListenerError).toHaveBeenCalledWith(failure, {
+        source: "listener",
+        event: "asyncEvent",
+        key: "provisioner",
+        priority: 5,
+        sync: true,
+      });
+    });
+
+    it("prints nothing while processing prioritized listeners", () => {
+      build();
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      emitter.on("syncEvent", () => {}, 5, "quiet");
+
+      emitter.emit({ event: "syncEvent" }, "payload");
+
+      expect(log).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("an awaited prioritized listener that rejects under emitAsync", () => {
+    it("reports the error with its context and never the payload", async () => {
+      const onListenerError = vi.fn();
+      build({ onListenerError });
+      const failure = new Error("awaited listener rejected");
+      emitter.on(
+        "asyncEvent",
+        // eslint-disable-next-line @typescript-eslint/require-await
+        async () => {
+          throw failure;
+        },
+        10,
+        "engine",
+      );
+
+      await emitter.emitAsync({ event: "asyncEvent" }, "secret-payload");
+
+      expect(onListenerError).toHaveBeenCalledTimes(1);
+      expect(onListenerError).toHaveBeenCalledWith(failure, {
+        source: "listener",
+        event: "asyncEvent",
+        key: "engine",
+        priority: 10,
+        sync: false,
+      });
+      expect(JSON.stringify(onListenerError.mock.calls)).not.toContain(
+        "secret-payload",
+      );
+    });
+  });
+
+  describe("an error hook that throws", () => {
+    const throwingHook = (): never => {
+      throw new Error("the hook itself failed");
+    };
+
+    it("does not make emitAsync reject, and later listeners still run", async () => {
+      build({ onListenerError: throwingHook });
+      const later = vi.fn();
+      emitter.on(
+        "asyncEvent",
+        () => {
+          throw new Error("listener failed");
+        },
+        10,
+      );
+      emitter.on("asyncEvent", later, 5);
+
+      await expect(
+        emitter.emitAsync({ event: "asyncEvent" }, "payload"),
+      ).resolves.toBe(true);
+      expect(later).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not make emit throw, for a zero-priority or a prioritized listener", () => {
+      build({ onListenerError: throwingHook });
+      const later = vi.fn();
+      emitter.on("syncEvent", () => {
+        throw new Error("zero-priority listener failed");
+      });
+      emitter.on(
+        "syncEvent",
+        () => {
+          throw new Error("prioritized listener failed");
+        },
+        10,
+      );
+      emitter.on("syncEvent", later, 5);
+
+      expect(() =>
+        emitter.emit({ event: "syncEvent" }, "payload"),
+      ).not.toThrow();
+      expect(later).toHaveBeenCalledTimes(1);
+    });
+
+    it("raises no unhandled rejection when it throws for a detached listener", async () => {
+      build({ onListenerError: throwingHook });
+      // eslint-disable-next-line @typescript-eslint/require-await
+      emitter.on("asyncEvent", async () => {
+        throw new Error("detached listener failed");
+      });
+
+      await emitter.emitAsync({ event: "asyncEvent" }, "payload");
+      await nextMacrotask();
+
+      expect(onUnhandledRejection).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("a serialiser that throws", () => {
+    const failure = new Error("cannot serialise");
+    const throwingSerialiser = (): never => {
+      throw failure;
+    };
+
+    it("does not make emit throw: the listeners run and nothing is broadcast", () => {
+      const onListenerError = vi.fn();
+      build({ onSerializeThreadMessage: throwingSerialiser, onListenerError });
+      const listener = vi.fn();
+      emitter.on("syncEvent", listener);
+
+      expect(() =>
+        emitter.emit({ event: "syncEvent" }, "payload"),
+      ).not.toThrow();
+
+      expect(listener).toHaveBeenCalledWith("payload");
+      expect(mockGlobalBroadcastChannel.postMessage).not.toHaveBeenCalled();
+      expect(onListenerError).toHaveBeenCalledWith(failure, {
+        source: "serializer",
+        event: "syncEvent",
+        sync: true,
+      });
+    });
+
+    it("does not make emitAsync reject", async () => {
+      build({ onSerializeThreadMessage: throwingSerialiser });
+      const listener = vi.fn();
+      emitter.on("asyncEvent", listener, 5);
+
+      await expect(
+        emitter.emitAsync({ event: "asyncEvent" }, "payload"),
+      ).resolves.toBe(true);
+      expect(listener).toHaveBeenCalledWith("payload");
+    });
+  });
+});
+
+describe("Event history is opt-in", () => {
+  interface HistoryRecord {
+    anEvent: (data: { secret: string }) => void;
+  }
+  type HistoryEvents = ListenerSignature<HistoryRecord>;
+  let emitter: ThreadedOrderedEventEmitter<HistoryEvents>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal(
+      "BroadcastChannel",
+      vi.fn(() => mockGlobalBroadcastChannel),
+    );
+    ThreadedOrderedEventEmitter.clearRegistry();
+  });
+
+  afterEach(() => {
+    emitter?.clear();
+    ThreadedOrderedEventEmitter.clearRegistry();
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps no payload by default", () => {
+    emitter = new ThreadedOrderedEventEmitter<HistoryEvents>();
+    const listener = vi.fn();
+    emitter.on("anEvent", listener);
+
+    emitter.emit({ event: "anEvent" }, { secret: "s3cret" });
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(emitter.getEventHistory()).toEqual([]);
+    // not even with an explicit limit: nothing was recorded
+    expect(emitter.getEventHistory(10)).toEqual([]);
+  });
+
+  it("records when maxHistoryLength is given as an option", () => {
+    emitter = new ThreadedOrderedEventEmitter<HistoryEvents>({
+      maxHistoryLength: 2,
+    });
+
+    emitter.emit({ event: "anEvent" }, { secret: "one" });
+    emitter.emit({ event: "anEvent" }, { secret: "two" });
+    emitter.emit({ event: "anEvent" }, { secret: "three" });
+
+    expect(
+      emitter.getEventHistory().map((entry): unknown => entry.args[0]),
+    ).toEqual([{ secret: "two" }, { secret: "three" }]);
+  });
+
+  it("setMaxHistoryLength(0) drops what was already recorded", () => {
+    emitter = new ThreadedOrderedEventEmitter<HistoryEvents>({
+      maxHistoryLength: 5,
+    });
+    emitter.emit({ event: "anEvent" }, { secret: "recorded" });
+    expect(emitter.getEventHistory()).toHaveLength(1);
+
+    emitter.setMaxHistoryLength(0);
+
+    expect(emitter.getEventHistory()).toEqual([]);
+    expect(emitter.getEventHistory(10)).toEqual([]);
+    emitter.emit({ event: "anEvent" }, { secret: "after" });
+    expect(emitter.getEventHistory(10)).toEqual([]);
+  });
+});
+
+describe("Broadcasting can be switched off", () => {
+  interface LocalRecord {
+    anEvent: (data: string) => void;
+  }
+  type LocalEvents = ListenerSignature<LocalRecord>;
+  let emitter: ThreadedOrderedEventEmitter<LocalEvents>;
+  let BroadcastChannelMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    BroadcastChannelMock = vi.fn(() => mockGlobalBroadcastChannel);
+    vi.stubGlobal("BroadcastChannel", BroadcastChannelMock);
+    ThreadedOrderedEventEmitter.clearRegistry();
+  });
+
+  afterEach(() => {
+    emitter?.clear();
+    ThreadedOrderedEventEmitter.clearRegistry();
+    vi.unstubAllGlobals();
+  });
+
+  it("opens no channel, serialises nothing and posts nothing with broadcast: false", async () => {
+    const onSerializeThreadMessage = vi.fn((message: unknown) => message);
+    emitter = new ThreadedOrderedEventEmitter<LocalEvents>({
+      broadcast: false,
+      onSerializeThreadMessage,
+    });
+    const listener = vi.fn();
+    emitter.on("anEvent", listener, 1);
+
+    emitter.emit({ event: "anEvent" }, "sync");
+    await emitter.emitAsync({ event: "anEvent" }, "async");
+
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(BroadcastChannelMock).not.toHaveBeenCalled();
+    expect(onSerializeThreadMessage).not.toHaveBeenCalled();
+    expect(mockGlobalBroadcastChannel.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("still broadcasts by default", () => {
+    emitter = new ThreadedOrderedEventEmitter<LocalEvents>();
+
+    emitter.emit({ event: "anEvent" }, "payload");
+
+    expect(BroadcastChannelMock).toHaveBeenCalledTimes(1);
+    expect(mockGlobalBroadcastChannel.postMessage).toHaveBeenCalledTimes(1);
   });
 });

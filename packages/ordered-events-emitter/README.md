@@ -9,7 +9,7 @@ An advanced event emitter that works seamlessly across threads with priority-bas
 - **Synchronous and Asynchronous Support**: Handle both synchronous and asynchronous event processing
 - **Singleton Pattern**: Maintains a registry of instances by channel name
 - **Type-Safe Events**: Provides type-safe event definitions with TypeScript generics
-- **Event History**: Track and retrieve recent events
+- **Event History**: Track and retrieve recent events (opt-in, see `maxHistoryLength`)
 - **Custom Serialization**: Customize serialization/deserialization of messages across threads
 - **Error Handling**: Configurable error handling for listeners
 
@@ -371,7 +371,18 @@ Options:
 - `debug`: Enable debug logging (default: false)
 - `onSerializeThreadMessage`: Function to serialize thread messages
 - `onDeserializeThreadMessage`: Function to deserialize thread messages
-- `onListenerError`: Error handler for listener errors
+- `onListenerError`: `(error, context) => void`. Called when a listener throws or rejects, whatever its priority and whether or not the emit waits for it, and when `onSerializeThreadMessage` throws. `context` says what failed and never carries the event's arguments: `{ source: "listener", event, key, priority, sync }` or `{ source: "serializer", event, sync }`. A hook that throws is contained
+- `maxHistoryLength`: How many emitted events to keep for `getEventHistory()` (default: 0, the history is off). The history holds each emit's arguments by reference
+- `broadcast`: Whether events are broadcast to other threads (default: true). With `false` no `BroadcastChannel` is opened, nothing is serialised and nothing is posted
+
+#### Which listeners an emit waits for, and what happens when one fails
+
+| Registered with | `emit` | `emitAsync` |
+| --- | --- | --- |
+| priority 0 (the default) | started, not awaited | started, not awaited |
+| a non-zero priority | started in priority order, not awaited | awaited one after another, in priority order |
+
+A listener that throws, or returns a promise that rejects, never makes `emit` throw or `emitAsync` reject, and never becomes an unhandled rejection: the error goes to `onListenerError`. A listener the emit does not wait for may still be running when the emit returns. If the caller needs a listener's work to be finished, register it with a priority and use `emitAsync`, or call the function directly.
 
 #### Static Methods
 
@@ -415,7 +426,7 @@ Options:
 - `getListeners<U>(event: U): ListenerInfo<L[U]>[]`: Get all listeners for an event
 - `eventNames(): (keyof L)[]`: Get all registered event names
 - `getEventHistory(limit?: number): { event: keyof L; args: any[]; timestamp: number; threadId: string | number; }[]`: Get recent event history.
-- `setMaxHistoryLength(length: number): void`: Set the maximum event history length
+- `setMaxHistoryLength(length: number): void`: Set the maximum event history length. `0` switches the history off and drops what was recorded
 - `clear(): void`: Clear all resources
 
 ### Helper Functions
