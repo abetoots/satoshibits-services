@@ -2020,8 +2020,9 @@ export function setupMainThreadHandlers<T extends ListenerSignature<T>>(
 
   const handler = (message: ThreadMessage<keyof T, any[]>) => {
     const eventHandler = handlers[message.event];
-    // the result is handed back: the emitter watches a promise a handler
-    // returns, and one dropped here would reject with nobody owning it
+    // the result is handed back: with an error hook installed the emitter
+    // watches a promise a handler returns, and with none the runtime sees its
+    // rejection. dropped here, it would be neither
     return eventHandler?.(
       message as ThreadMessage<
         typeof message.event,
