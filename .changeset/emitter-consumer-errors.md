@@ -8,12 +8,13 @@ Breaking:
 
 - **With no `onListenerError` installed, the rejection of a listener or thread message handler that nothing awaits is an unhandled rejection again**, as it was before 3.0.0. 3.0.0 caught it and, with no hook to report to, dropped it. With a hook installed nothing changes: the rejection is reported to the hook.
 - **A hook that throws is no longer discarded.** It still cannot fail the emit; the throw is raised again in a microtask as an uncaught error. A promise the hook returns is no longer watched: if it rejects, that is an unhandled rejection. What a failing hook means is for the consumer's process-level handling to decide.
-- **`createTypedEmitter` returns an existing emitter as it is.** It used to overwrite the instance's three hooks (with `undefined` when none were passed) and re-apply `maxHistoryLength`. Options apply when an emitter is created and only then.
+- **`createTypedEmitter` returns an existing emitter as it is.** It used to overwrite the instance's three hooks (with `undefined` when none were passed) and re-apply `maxHistoryLength`. Options apply when an emitter is created and only then. The consequence to know: a hook passed for a channel name that already has an emitter is not installed, and nothing says so. Whoever creates a channel's emitter first decides its hooks (`getInstance()` and `setupMainThreadHandlers(handlers)` with no emitter create the default one with none). Pass the hook at first creation, or set `instance.onListenerError`.
+- **`ListenerErrorContext` has a new member**, `{ source: "transport", event, sync, transport }`. A consumer with an exhaustive `switch` on `context.source` has a compile error to resolve.
 - **An `async` serialiser or deserialiser is no longer special-cased.** Both must be synchronous, as before. The library stops checking for a returned promise: it fails where it lands (a `transport` report on a transport that clones, or a `deserializer` report) and its rejection is the consumer's.
 
 New:
 
-- **A message that could not be posted is reported** to the hook with `source: "transport"` and the transport whose `postMessage` threw (`broadcastChannel`, `parentPort`, `port` or `worker`). These failures were swallowed unless `debug` was on, and only the library can see them. The local listeners still run. `ListenerErrorContext` gains this member: a consumer with an exhaustive `switch` on `context.source` has a compile error to resolve.
+- **A message that could not be posted is reported** to the hook with `source: "transport"` and the transport whose `postMessage` threw (`broadcastChannel`, `parentPort`, `port` or `worker`). These failures were swallowed unless `debug` was on, and only the library can see them. The local listeners still run.
 - If the hook is removed while a promise it had taken on is still pending, the rejection is handed back to the runtime rather than dropped.
 
 Documentation: the hook's context is described as what it is ("identifies what failed; arguments are not passed") and not as a privacy guarantee, since the error itself can carry a payload; and the statement about promises is "native promises are watched; other thenables are not".
