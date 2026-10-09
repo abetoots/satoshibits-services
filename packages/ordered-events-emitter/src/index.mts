@@ -246,7 +246,9 @@ export class ThreadedOrderedEventEmitter<
   private listenersMap: Map<keyof L, ListenerInfo<L[keyof L]>[]>;
   private channel?: BroadcastChannel;
   private defaultPriorityBehavior: "highestFirst" | "lowestFirst";
-  private messageHandlers: Set<(message: ThreadMessage<any, any[]>) => void>;
+  private messageHandlers: Set<
+    (message: ThreadMessage<any, any[]>) => void | Promise<void>
+  >;
   private connectedPorts: Set<MessageChannel>;
   private workers: Set<Worker>;
   private threadId: string | number;
@@ -569,7 +571,7 @@ export class ThreadedOrderedEventEmitter<
    * ```
    */
   public registerThreadMessageHandler(
-    handler: (message: ThreadMessage<keyof L, any[]>) => void,
+    handler: (message: ThreadMessage<keyof L, any[]>) => void | Promise<void>,
   ): () => void {
     this.messageHandlers.add(handler);
 
@@ -2010,7 +2012,9 @@ export function createTypedEmitter<T extends ListenerSignature<T>>(
  */
 export function setupMainThreadHandlers<T extends ListenerSignature<T>>(
   handlers: {
-    [K in keyof T]?: (message: ThreadMessage<K, Parameters<T[K]>>) => void;
+    [K in keyof T]?: (
+      message: ThreadMessage<K, Parameters<T[K]>>,
+    ) => void | Promise<void>;
   },
   emitter?: ThreadedOrderedEventEmitter<T>,
 ): () => void {
@@ -2018,14 +2022,14 @@ export function setupMainThreadHandlers<T extends ListenerSignature<T>>(
 
   const handler = (message: ThreadMessage<keyof T, any[]>) => {
     const eventHandler = handlers[message.event];
-    if (eventHandler) {
-      eventHandler(
-        message as ThreadMessage<
-          typeof message.event,
-          Parameters<T[typeof message.event]>
-        >,
-      );
-    }
+    // the result is handed back: the emitter watches a promise a handler
+    // returns, and one dropped here would reject with nobody owning it
+    return eventHandler?.(
+      message as ThreadMessage<
+        typeof message.event,
+        Parameters<T[typeof message.event]>
+      >,
+    );
   };
 
   return eventEmitter.registerThreadMessageHandler(handler);
