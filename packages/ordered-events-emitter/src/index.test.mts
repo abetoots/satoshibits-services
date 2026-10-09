@@ -924,6 +924,14 @@ describe("ThreadedOrderedEventEmitter", () => {
   });
 });
 
+// earlier tests leave the shared worker_threads mock as a worker with a parent
+// port and never put it back: the blocks below state the thread they assume
+const asMainThread = async (): Promise<void> => {
+  const wt = await vi.mocked(import("worker_threads"));
+  wt.isMainThread = true;
+  wt.parentPort = null;
+};
+
 /**
  * A listener, a hook or a serialiser that fails must not reach the caller of
  * `emit`, and must not reach the process as an unhandled rejection.
@@ -953,12 +961,13 @@ describe("Failure containment", () => {
     return emitter;
   };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     vi.stubGlobal(
       "BroadcastChannel",
       vi.fn(() => mockGlobalBroadcastChannel),
     );
+    await asMainThread();
     ThreadedOrderedEventEmitter.clearRegistry();
     onUnhandledRejection.mockReset();
     process.on("unhandledRejection", onUnhandledRejection);
@@ -1231,12 +1240,13 @@ describe("Event history is opt-in", () => {
   type HistoryEvents = ListenerSignature<HistoryRecord>;
   let emitter: ThreadedOrderedEventEmitter<HistoryEvents>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     vi.stubGlobal(
       "BroadcastChannel",
       vi.fn(() => mockGlobalBroadcastChannel),
     );
+    await asMainThread();
     ThreadedOrderedEventEmitter.clearRegistry();
   });
 
@@ -1297,10 +1307,11 @@ describe("Broadcasting can be switched off", () => {
   let emitter: ThreadedOrderedEventEmitter<LocalEvents>;
   let BroadcastChannelMock: ReturnType<typeof vi.fn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     BroadcastChannelMock = vi.fn(() => mockGlobalBroadcastChannel);
     vi.stubGlobal("BroadcastChannel", BroadcastChannelMock);
+    await asMainThread();
     ThreadedOrderedEventEmitter.clearRegistry();
   });
 
@@ -1387,10 +1398,7 @@ describe("Failure containment: hooks, thenables and incoming messages", () => {
       "BroadcastChannel",
       vi.fn(() => mockGlobalBroadcastChannel),
     );
-    // earlier tests leave the thread mock as a worker: state it
-    const wt = await vi.mocked(import("worker_threads"));
-    wt.isMainThread = true;
-    wt.parentPort = null;
+    await asMainThread();
     ThreadedOrderedEventEmitter.clearRegistry();
     onUnhandledRejection.mockReset();
     process.on("unhandledRejection", onUnhandledRejection);
@@ -1472,6 +1480,21 @@ describe("Failure containment: hooks, thenables and incoming messages", () => {
       await nextMacrotask();
 
       expect(then).not.toHaveBeenCalled();
+      expect(onListenerError).not.toHaveBeenCalled();
+    });
+
+    it("reports nothing for an object that only carries the Promise tag", async () => {
+      const onListenerError = vi.fn();
+      build({ onListenerError });
+      emitter.on(
+        "asyncEvent",
+        () => ({ [Symbol.toStringTag]: "Promise" }) as never,
+      );
+
+      emitter.emit({ event: "asyncEvent" }, "payload");
+      await nextMacrotask();
+
+      // the listener did not fail: no error may be invented for it
       expect(onListenerError).not.toHaveBeenCalled();
     });
 
@@ -1563,6 +1586,32 @@ describe("Failure containment: hooks, thenables and incoming messages", () => {
       });
     });
 
+    it("ignores a message that is not a message at all", () => {
+      build();
+      for (const junk of [null, undefined, "text", 42]) {
+        expect(() => receive(junk as never)).not.toThrow();
+      }
+    });
+
+    it("drops the message, and reports it, when the deserialiser returns no argument list", () => {
+      const onListenerError = vi.fn();
+      build({
+        onListenerError,
+        onDeserializeThreadMessage: () => undefined,
+      });
+      const listener = vi.fn();
+      emitter.on("syncEvent", listener);
+
+      expect(() => receive(incoming("syncEvent", false))).not.toThrow();
+
+      expect(listener).not.toHaveBeenCalled();
+      expect(onListenerError).toHaveBeenCalledTimes(1);
+      expect(onListenerError.mock.calls[0]![1]).toEqual({
+        source: "deserializer",
+        event: "syncEvent",
+      });
+    });
+
     it("reports a thread message handler that throws, and one that rejects", async () => {
       const onListenerError = vi.fn();
       build({ onListenerError });
@@ -1589,10 +1638,72 @@ describe("Failure containment: hooks, thenables and incoming messages", () => {
       expect(
         onListenerError.mock.calls.map(([error]) => error as unknown),
       ).toEqual([thrown, rejected]);
-      expect(onListenerError.mock.calls[0]![1]).toEqual({
-        source: "messageHandler",
-        event: "syncEvent",
+      expect(
+        onListenerError.mock.calls.map(([, context]) => context as unknown),
+      ).toEqual([
+        { source: "messageHandler", event: "syncEvent" },
+        { source: "messageHandler", event: "syncEvent" },
+      ]);
+    });
+  });
+
+  describe("what is stated and stays as it was", () => {
+    it("a custom arrangeListeners that throws still throws to the caller of the emit", async () => {
+      build();
+      emitter.on("syncEvent", vi.fn(), 5);
+      const arrangeListeners = (): never => {
+        throw new Error("arrange failed");
+      };
+
+      expect(() =>
+        emitter.emit({ event: "syncEvent", arrangeListeners }, "payload"),
+      ).toThrow("arrange failed");
+      await expect(
+        emitter.emitAsync({ event: "syncEvent", arrangeListeners }, "payload"),
+      ).rejects.toThrow("arrange failed");
+    });
+
+    it("the error hook is not awaited: emitAsync resolves before a slow hook settles", async () => {
+      let hookSettled = false;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
       });
+      build({
+        onListenerError: async () => {
+          await gate;
+          hookSettled = true;
+        },
+      });
+      emitter.on(
+        "asyncEvent",
+        () => {
+          throw new Error("listener failed");
+        },
+        5,
+      );
+
+      await emitter.emitAsync({ event: "asyncEvent" }, "payload");
+
+      expect(hookSettled).toBe(false);
+      release();
+      await nextMacrotask();
+      expect(hookSettled).toBe(true);
+    });
+
+    it("broadcast is fixed at creation: asking again for the same channel does not change it", () => {
+      const first = createTypedEmitter<ReviewEvents>({
+        channelName: "broadcast-reuse",
+      });
+      const second = createTypedEmitter<ReviewEvents>({
+        channelName: "broadcast-reuse",
+        broadcast: false,
+      });
+
+      expect(second).toBe(first);
+      second.emit({ event: "syncEvent" }, "payload");
+      expect(mockGlobalBroadcastChannel.postMessage).toHaveBeenCalledTimes(1);
+      first.clear();
     });
   });
 
@@ -1627,13 +1738,30 @@ describe("Failure containment: hooks, thenables and incoming messages", () => {
   });
 
   describe("event history limits", () => {
-    it("getEventHistory(0), or a negative limit, returns none of a history that has entries", () => {
+    it("a limit below 1 returns none of a history that has entries", () => {
       build({ maxHistoryLength: 5 });
-      emitter.emit({ event: "syncEvent" }, "kept");
+      // three entries: the old `slice(-limit)` returned two of them for -1,
+      // and all three for 0 and for a fraction that rounds down to 0
+      for (let i = 0; i < 3; i++) {
+        emitter.emit({ event: "syncEvent" }, `event ${i}`);
+      }
 
-      expect(emitter.getEventHistory()).toHaveLength(1);
+      expect(emitter.getEventHistory()).toHaveLength(3);
       expect(emitter.getEventHistory(0)).toEqual([]);
       expect(emitter.getEventHistory(-1)).toEqual([]);
+      expect(emitter.getEventHistory(0.5)).toEqual([]);
+      expect(emitter.getEventHistory(Number.NaN)).toEqual([]);
+    });
+
+    it("a limit above the history's size, infinity included, returns all of it", () => {
+      build({ maxHistoryLength: 5 });
+      for (let i = 0; i < 3; i++) {
+        emitter.emit({ event: "syncEvent" }, `event ${i}`);
+      }
+
+      expect(emitter.getEventHistory(2.9)).toHaveLength(2);
+      expect(emitter.getEventHistory(10)).toHaveLength(3);
+      expect(emitter.getEventHistory(Number.POSITIVE_INFINITY)).toHaveLength(3);
     });
 
     it.each([Number.NaN, -3, Number.POSITIVE_INFINITY])(

@@ -375,7 +375,7 @@ Options:
 - `maxHistoryLength`: How many emitted events to keep for `getEventHistory()` (default: 0, the history is off). The history holds each emit's arguments by reference. Anything that is not a positive finite number means off
 - `broadcast`: Whether events travel between threads (default: true). With `false` the emitter is local in both directions: no `BroadcastChannel` is opened, the parent port is not listened to, nothing is serialised or posted (not to a connected port or worker either), and an event arriving from another thread is ignored
 
-`getInstance` and `createTypedEmitter` return the emitter that already exists for a channel name. `createTypedEmitter` then applies the three hooks and `maxHistoryLength` from its options to it; `broadcast`, `debug`, `threadId` and `defaultPriorityBehavior` are fixed when the emitter is first created.
+`getInstance` and `createTypedEmitter` return the emitter that already exists for a channel name. `createTypedEmitter` then applies the three hooks and `maxHistoryLength` from its options to it; the other options are not re-applied to an emitter that already exists (`broadcast` cannot be changed after creation; `debug` can, with `setDebugMode`).
 
 #### Which listeners an emit waits for, and what happens when one fails
 
@@ -384,7 +384,7 @@ Options:
 | priority 0 (the default) | started, not awaited | started, not awaited |
 | a non-zero priority | started in priority order, not awaited | awaited one after another, in priority order |
 
-A listener that throws, or returns a promise that rejects, never makes `emit` throw or `emitAsync` reject, and never becomes an unhandled rejection: the error goes to `onListenerError`. For a listener the emit does not wait for, only a real promise is watched; a thenable that is not a promise is not started. The one thing that still throws to the caller of an emit is a custom `arrangeListeners` function passed to that emit. A listener the emit does not wait for may still be running when the emit returns. If the caller needs a listener's work to be finished, register it with a priority and use `emitAsync`, or call the function directly.
+A listener that throws, or returns a promise that rejects, never makes `emit` throw or `emitAsync` reject, and never becomes an unhandled rejection: the error goes to `onListenerError`. For a listener the emit does not wait for, only a native promise is watched; any other thenable is left untouched, so a lazy one is not started. The one thing that still throws to the caller of an emit is a custom `arrangeListeners` function passed to that emit. A listener the emit does not wait for may still be running when the emit returns. If the caller needs a listener's work to be finished, register it with a priority and use `emitAsync`, or call the function directly.
 
 #### Static Methods
 
@@ -427,7 +427,7 @@ A listener that throws, or returns a promise that rejects, never makes `emit` th
 - `listenerCount<U>(event: U): number`: Get listener count for an event
 - `getListeners<U>(event: U): ListenerInfo<L[U]>[]`: Get all listeners for an event
 - `eventNames(): (keyof L)[]`: Get all registered event names
-- `getEventHistory(limit?: number): { event: keyof L; args: any[]; timestamp: number; threadId: string | number; }[]`: Get recent event history. Empty unless the history is switched on with `maxHistoryLength`; a limit of 0 or less returns none.
+- `getEventHistory(limit?: number): { event: keyof L; args: any[]; timestamp: number; threadId: string | number; }[]`: Get recent event history. Empty unless the history is switched on with `maxHistoryLength`; a limit below 1 returns none.
 - `setMaxHistoryLength(length: number): void`: Set the maximum event history length. `0` switches the history off and drops what was recorded
 - `clear(): void`: Clear all resources
 
