@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-empty-function */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { runInNewContext } from "node:vm";
 import { isMainThread } from "worker_threads";
 
 import type {
@@ -1483,6 +1484,52 @@ describe("Failure containment: hooks, thenables and incoming messages", () => {
       expect(onListenerError).not.toHaveBeenCalled();
     });
 
+    it("is not started when it is a thenable dressed up as a promise", async () => {
+      // the tag, the prototype and a `then` of its own: everything a check
+      // from outside could look at. it is still not a promise, and its `then`
+      // must not be called.
+      const onListenerError = vi.fn();
+      build({ onListenerError });
+      const then = vi.fn(() => Promise.reject(new Error("lazy work failed")));
+      // the prototype brings the Promise tag and `instanceof` with it
+      const dressedUp = Object.create(Promise.prototype, {
+        then: { value: then },
+      }) as never;
+      expect(Object.prototype.toString.call(dressedUp)).toBe(
+        "[object Promise]",
+      );
+      expect((dressedUp as unknown) instanceof Promise).toBe(true);
+      emitter.on("asyncEvent", () => dressedUp);
+      emitter.on("asyncEvent", () => dressedUp, 5);
+
+      emitter.emit({ event: "asyncEvent" }, "payload");
+      await nextMacrotask();
+
+      expect(then).not.toHaveBeenCalled();
+      expect(onListenerError).not.toHaveBeenCalled();
+      expect(onUnhandledRejection).not.toHaveBeenCalled();
+    });
+
+    it("is watched when it is a promise from another realm", async () => {
+      const onListenerError = vi.fn();
+      build({ onListenerError });
+      const foreign = runInNewContext(
+        'Promise.reject(new Error("rejected in another realm"))',
+      ) as Promise<void>;
+      // not an instance of this realm's Promise, and a promise all the same
+      expect(foreign instanceof Promise).toBe(false);
+      emitter.on("asyncEvent", () => foreign);
+
+      emitter.emit({ event: "asyncEvent" }, "payload");
+      await nextMacrotask();
+
+      expect(onUnhandledRejection).not.toHaveBeenCalled();
+      expect(onListenerError).toHaveBeenCalledTimes(1);
+      expect(
+        (onListenerError.mock.calls[0]![0] as { message: string }).message,
+      ).toBe("rejected in another realm");
+    });
+
     it("reports nothing for an object that only carries the Promise tag", async () => {
       const onListenerError = vi.fn();
       build({ onListenerError });
@@ -1591,6 +1638,29 @@ describe("Failure containment: hooks, thenables and incoming messages", () => {
       for (const junk of [null, undefined, "text", 42]) {
         expect(() => receive(junk as never)).not.toThrow();
       }
+    });
+
+    it("drops an event whose arguments are not a list, with no deserialiser set", () => {
+      const onListenerError = vi.fn();
+      build({ onListenerError });
+      const listener = vi.fn();
+      emitter.on("syncEvent", listener);
+
+      for (const args of [undefined, null, "text", { length: 1 }]) {
+        expect(() =>
+          receive({ ...incoming("syncEvent", false), args } as never),
+        ).not.toThrow();
+        expect(() =>
+          receive({ ...incoming("syncEvent", true), args } as never),
+        ).not.toThrow();
+      }
+
+      expect(listener).not.toHaveBeenCalled();
+      expect(onListenerError).toHaveBeenCalledTimes(8);
+      expect(onListenerError.mock.calls[0]![1]).toEqual({
+        source: "deserializer",
+        event: "syncEvent",
+      });
     });
 
     it("drops the message, and reports it, when the deserialiser returns no argument list", () => {
@@ -1707,6 +1777,39 @@ describe("Failure containment: hooks, thenables and incoming messages", () => {
     });
   });
 
+  describe("an event named by a symbol, in debug mode", () => {
+    it("a serialiser that throws still does not fail the emit", () => {
+      // the debug line names the event: a symbol in a template string throws
+      const named = Symbol("named");
+      const onListenerError = vi.fn();
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.spyOn(console, "debug").mockImplementation(() => {});
+      build({
+        debug: true,
+        onListenerError,
+        onSerializeThreadMessage: () => {
+          throw new Error("cannot serialise");
+        },
+      });
+      const listener = vi.fn();
+      emitter.on(named as never, listener as never);
+
+      // a symbol is outside the typed event names: call past the types
+      const emit = emitter.emit.bind(emitter) as unknown as (
+        options: { event: symbol },
+        payload: string,
+      ) => boolean;
+      expect(() => emit({ event: named }, "payload")).not.toThrow();
+
+      expect(listener).toHaveBeenCalledWith("payload");
+      expect(onListenerError.mock.calls[0]![1]).toEqual({
+        source: "serializer",
+        event: "Symbol(named)",
+        sync: true,
+      });
+    });
+  });
+
   describe("a serialiser that throws under emitAsync", () => {
     it("reports it as asynchronous, posts nothing, and survives a hook that throws too", async () => {
       const failure = new Error("cannot serialise");
@@ -1809,7 +1912,7 @@ describe("Failure containment: hooks, thenables and incoming messages", () => {
   });
 
   describe("broadcast: false, in a worker with a connected port", () => {
-    it("neither listens to nor posts on the parent port, a connected port or a connected worker, and ignores what arrives", async () => {
+    it("does not listen to the parent port, posts nothing to it or to a connected port or worker, and ignores what arrives", async () => {
       const wt = await vi.mocked(import("worker_threads"));
       wt.isMainThread = false;
       const parentPort = { postMessage: vi.fn(), on: vi.fn() };

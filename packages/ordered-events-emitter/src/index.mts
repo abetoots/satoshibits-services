@@ -183,6 +183,11 @@ export type ListenerErrorContext =
       event: string;
     };
 
+// the intrinsic, taken once: it tells a genuine promise from anything that
+// only looks like one, and cannot be replaced by a value's own `then`
+// eslint-disable-next-line @typescript-eslint/unbound-method
+const nativeThen = Promise.prototype.then;
+
 /**
  * A usable history length: a positive finite number, rounded down. Anything
  * else is 0, "keep nothing". (`NaN` would never trim, and `slice(-0)` is the
@@ -406,7 +411,6 @@ export class ThreadedOrderedEventEmitter<
    */
   private handleThreadMessage(message: ThreadMessage<keyof L, any[]>): void {
     // whatever a channel delivers ends up here: it may not be a message
-     
     if (message?.type !== "event") return;
 
     // A local emitter takes nothing from other threads, however it arrives
@@ -455,16 +459,16 @@ export class ThreadedOrderedEventEmitter<
         });
         return;
       }
-      // the arguments are spread below: anything but a list would throw there
-      if (!Array.isArray(message.args)) {
-        this.reportError(
-          new TypeError(
-            "onDeserializeThreadMessage did not return the list of arguments",
-          ),
-          { source: "deserializer", event: String(message.event) },
-        );
-        return;
-      }
+    }
+
+    // the arguments are spread below: anything but a list would throw there,
+    // whether a deserialiser returned it or the message arrived that way
+    if (!Array.isArray(message.args)) {
+      this.reportError(
+        new TypeError("the arguments of an incoming event are not a list"),
+        { source: "deserializer", event: String(message.event) },
+      );
+      return;
     }
 
     // Process the event locally, but with localOnly=true to prevent rebroadcasting
@@ -1269,7 +1273,8 @@ export class ThreadedOrderedEventEmitter<
       } catch (err) {
         this.reportError(err, {
           source: "serializer",
-          event,
+          // an event can be named by a symbol at run time
+          event: String(event),
           sync: !options.isAsync,
         });
         return;
@@ -1519,30 +1524,41 @@ export class ThreadedOrderedEventEmitter<
   /**
    * Own the rejection of a promise that nothing awaits.
    *
-   * Only a native promise is watched. It is already running and, left alone,
+   * Only a genuine promise is watched. It is already running and, left alone,
    * its rejection is the runtime's unhandled rejection. Any other thenable is
    * left untouched, as it always was: for a lazy one (a query builder, say)
    * calling `then` would start work the emit never started. A promise from a
    * library that is not a native promise is therefore not watched either;
    * such libraries report their own unhandled rejections.
    *
+   * The test is the engine's own. The intrinsic `then` is called on the
+   * value: it throws for anything that is not a promise, whatever tag,
+   * prototype or `then` of its own the value carries, it never runs that
+   * `then`, and it accepts a promise from another realm.
+   *
    * @private
    */
   private watch(result: unknown, onRejection: (err: unknown) => void): void {
-    // the tag, not `instanceof`: a promise from another realm counts too
-    if (Object.prototype.toString.call(result) !== "[object Promise]") return;
-    // an object can carry the tag without being a promise
-    if (typeof (result as Promise<unknown>).then !== "function") return;
+    if (result === null || typeof result !== "object") return;
 
-    (result as Promise<unknown>).then(undefined, (err: unknown) => {
-      // the handler reports through the consumer's hook; nothing it does may
-      // escape, or this would be the unhandled rejection it exists to stop
-      try {
-        onRejection(err);
-      } catch {
-        // already as far as an error can be taken
-      }
-    });
+    try {
+      void nativeThen.call(
+        result as Promise<unknown>,
+        undefined,
+        (err: unknown) => {
+          // the handler reports through the consumer's hook; nothing it does
+          // may escape, or this would be the unhandled rejection it exists to
+          // stop
+          try {
+            onRejection(err);
+          } catch {
+            // already as far as an error can be taken
+          }
+        },
+      );
+    } catch {
+      // not a promise: nothing to watch
+    }
   }
 
   /**
@@ -1554,7 +1570,7 @@ export class ThreadedOrderedEventEmitter<
   private reportError(err: unknown, context: ListenerErrorContext): void {
     if (this.debug) {
       console.error(
-        `[ThreadedOrderedEventEmitter] Error in ${context.source} for event '${context.event}':`,
+        `[ThreadedOrderedEventEmitter] Error in ${context.source} for event '${String(context.event)}':`,
         err,
       );
     }
