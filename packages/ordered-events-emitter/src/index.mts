@@ -166,15 +166,19 @@ export type ListenerErrorContext =
       sync: boolean;
     }
   | {
-      /** `onSerializeThreadMessage` threw: the event was not broadcast */
+      /**
+       * `onSerializeThreadMessage` threw, or returned a promise (reported once
+       * for the promise and again if it rejects): the event was not broadcast
+       */
       source: "serializer";
       event: string;
       sync: boolean;
     }
   | {
       /**
-       * `onDeserializeThreadMessage` threw on an event from another thread:
-       * the event was dropped
+       * an event from another thread could not be read: its
+       * `onDeserializeThreadMessage` threw or returned a promise, or its
+       * arguments were not a list. the event was dropped
        */
       source: "deserializer";
       event: string;
