@@ -10,6 +10,11 @@ import {
   AggregationTemporality,
   InMemoryMetricExporter,
 } from "@opentelemetry/sdk-metrics";
+import { OTLPLogExporter as JsonLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
+import { OTLPLogExporter as ProtoLogExporter } from "@opentelemetry/exporter-logs-otlp-proto";
+import { OTLPMetricExporter as JsonMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
+import { OTLPMetricExporter as ProtoMetricExporter } from "@opentelemetry/exporter-metrics-otlp-proto";
+import { OTLPTraceExporter as JsonTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { OTLPTraceExporter as ProtoTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -692,19 +697,33 @@ describe("building the SDK's own exporters", () => {
 
   it.each(CASES)("%s over %s: the variables are back when the SDK refuses to build", (_signal, protocol, create) => {
     for (const [name, value] of Object.entries(VARIABLES)) vi.stubEnv(name, value);
-    listening();
+    const said = listening();
 
-    expect(() => create({ enabled: true, url: "not a url", protocol }, undefined)).toThrow();
+    // the SDK's own refusal, from inside the construction the variables are hidden for
+    expect(() => create({ enabled: true, url: "not a url", protocol }, undefined)).toThrow(
+      /user-provided export URL/,
+    );
+    expect(said).toEqual([]);
     expect(now()).toEqual(VARIABLES);
   });
 
-  it("the SDK does quote such a value when the variables are left in its sight", () => {
-    // the control for the cases above: without it they would pass on an SDK that had stopped warning
-    for (const [name, value] of Object.entries(VARIABLES)) vi.stubEnv(name, value);
-    const said = listening();
-    new ProtoTraceExporter({ url: "http://collector.example/v1/x" });
-    expect(said.join("\n")).toContain("SENTINEL");
-  });
+  it.each([
+    ["traces", "http/protobuf", ProtoTraceExporter],
+    ["traces", "http/json", JsonTraceExporter],
+    ["metrics", "http/protobuf", ProtoMetricExporter],
+    ["metrics", "http/json", JsonMetricExporter],
+    ["logs", "http/protobuf", ProtoLogExporter],
+    ["logs", "http/json", JsonLogExporter],
+  ] as const)(
+    "%s over %s: the SDK does quote such a value when the variables are left in its sight",
+    (_signal, _protocol, Exporter) => {
+      // the control for the cases above: without it they would pass on an SDK that had stopped warning
+      for (const [name, value] of Object.entries(VARIABLES)) vi.stubEnv(name, value);
+      const said = listening();
+      new Exporter({ url: "http://collector.example/v1/x" });
+      expect(said.join("\n")).toContain("SENTINEL");
+    },
+  );
 });
 
 describe("the SDK's global error handler", () => {

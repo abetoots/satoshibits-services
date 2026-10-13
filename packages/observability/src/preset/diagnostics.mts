@@ -19,6 +19,11 @@
  * The preset's own configuration messages never quote such a value
  * ({@link shown}).
  *
+ * The same holds for what the far end says: when a collector answers an
+ * export with a body the SDK's JSON exporter cannot parse, the SDK's warning
+ * quotes the start of that body. It is the collector's text, and free text
+ * here.
+ *
  * A project can supply its own sink through a factory. The factory is called
  * lazily, on the first event after {@link Diagnostics.activate}, so a logger
  * library is never imported before instrumentation is in place. Events
@@ -192,7 +197,10 @@ const truncate = (text: string): string =>
  * and leave its credentials looking like a host.
  */
 function describeArgument(argument: unknown): string {
-  if (argument instanceof Error) return `${argument.name}: ${argument.message}`;
+  // native (from any realm), or one by its prototype
+  if (types.isNativeError(argument) || argument instanceof Error) {
+    return `${argument.name}: ${argument.message}`;
+  }
   if (typeof argument === "string") return argument;
   if (
     typeof argument === "number" ||

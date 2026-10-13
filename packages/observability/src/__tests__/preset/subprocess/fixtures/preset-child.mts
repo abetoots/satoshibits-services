@@ -56,10 +56,15 @@ net.Socket.prototype.connect = function (
 } as typeof net.Socket.prototype.connect;
 
 // ===== start =====
+// sorted by name: a variable that is removed and set again moves to the end of the environment
 const endpointVariables = (): [string, string][] =>
-  Object.entries(process.env).flatMap(([name, value]): [string, string][] =>
-    value !== undefined && /^OTEL_EXPORTER_OTLP_(\w+_)?ENDPOINT$/.test(name) ? [[name, value]] : [],
-  );
+  Object.entries(process.env)
+    .flatMap(([name, value]): [string, string][] =>
+      value !== undefined && /^OTEL_EXPORTER_OTLP_(\w+_)?ENDPOINT$/.test(name)
+        ? [[name, value]]
+        : [],
+    )
+    .sort(([a], [b]) => a.localeCompare(b));
 const endpointVariablesBeforeStart = JSON.stringify(endpointVariables());
 const diagnostics: DiagnosticsEvent[] = [];
 let sinkFactoryCalledAfterSdkStarted: boolean | null = null;
