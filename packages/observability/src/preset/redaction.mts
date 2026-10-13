@@ -57,7 +57,10 @@ export interface PolicyLogRecord {
 
 /**
  * What an application names as `redaction`. Each function returns what is to
- * be exported in place of what it was given; it must not change its argument.
+ * be exported in place of what it was given; it must not change its argument,
+ * and must answer at once (not with a promise) and the same way each time for
+ * the same input: what it returns for an instrumentation scope is kept for
+ * the life of the process.
  */
 export interface RedactionPolicy {
   text: (surface: TextSurface, value: string) => string;
@@ -108,11 +111,37 @@ export interface Redactor {
   scope: (scope: InstrumentationScope) => InstrumentationScope;
 }
 
-/** an object literal or one without a prototype: not an array, a promise or a class instance */
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+/**
+ * An object literal or one without a prototype: not an array, a promise or a
+ * class instance. Told by the shape of the prototype chain, not by identity
+ * with this realm's `Object`, so a plain object from another realm (a
+ * `structuredClone` under a test runner's sandbox) is one too.
+ */
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null) return false;
   const prototype: unknown = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
+  return prototype === null || Object.getPrototypeOf(prototype) === null;
+}
+
+/** whether a value would be awaited if it were treated as a result */
+export const isThenable = (value: unknown): boolean =>
+  (typeof value === "object" || typeof value === "function") &&
+  value !== null &&
+  typeof (value as { then?: unknown }).then === "function";
+
+/**
+ * A policy written as an async function returns a promise where a value
+ * belongs. That is refused like any wrong kind, but the promise itself must
+ * not be left to reject with nobody listening: Node ends the process for
+ * that, and prints the policy's own error on the way.
+ */
+function abandon(result: unknown): void {
+  if (!isThenable(result)) return;
+  try {
+    (result as PromiseLike<unknown>).then(undefined, () => undefined);
+  } catch {
+    // a then() that throws has nothing left to reject
+  }
 }
 
 const AS_GIVEN: Redactor = {
@@ -132,6 +161,7 @@ export function createRedactor(option: RedactionOption): Redactor {
   const text: Redactor["text"] = (surface, value) => {
     const result: unknown = policy.text(surface, value);
     if (typeof result !== "string") {
+      abandon(result);
       throw new TypeError(`the redaction policy's text() did not return a string for ${surface}`);
     }
     return result;
@@ -145,6 +175,7 @@ export function createRedactor(option: RedactionOption): Redactor {
     // a copy: the policy must not change what it is given, and this makes a slip harmless
     const result: unknown = policy.attributes(surface, { ...input });
     if (!isPlainObject(result)) {
+      abandon(result);
       throw new TypeError(
         `the redaction policy's attributes() did not return an attribute set for ${surface}`,
       );

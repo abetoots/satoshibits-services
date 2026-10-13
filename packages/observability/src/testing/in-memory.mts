@@ -86,7 +86,9 @@ export function startTestTelemetry(
     ...options,
     serviceName: options.serviceName ?? "test",
     // exported as given unless the test names a policy: what a test asserts on is what its code emitted
-    redaction: options.redaction ?? false,
+    // only when left out: anything else, `null` included, is start()'s to accept or refuse
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- `??` would read null as "left out"
+    redaction: options.redaction === undefined ? false : options.redaction,
     testExporters: { spanExporter, metricExporter, logRecordExporter },
   });
 
