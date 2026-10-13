@@ -17,8 +17,6 @@
  * raised earlier are held (bounded) and delivered then.
  */
 
-import { inspect } from "node:util";
-
 import { DiagLogLevel } from "@opentelemetry/api";
 
 import type { DiagLogger } from "@opentelemetry/api";
@@ -66,32 +64,6 @@ export const shown = (value: unknown): string =>
       ? `"${value}"`
       : NOT_SHOWN;
 
-/**
- * The values of the telemetry variables that must not appear in any text.
- * The SDK quotes a variable's value when it cannot use it (`Unknown value
- * '…' for OTEL_…`), in messages this module does not write, so the values
- * themselves are taken out of every text instead.
- */
-function unshowableValues(environment: NodeJS.ProcessEnv): string[] {
-  const values = new Set<string>();
-  for (const [name, raw] of Object.entries(environment)) {
-    if (raw === undefined || !/^(OTEL|OBS)_/.test(name)) continue;
-    // as set, as trimmed, and as each way of printing a string literal escapes it
-    const forms = [
-      raw,
-      raw.trim(),
-      JSON.stringify(raw).slice(1, -1),
-      inspect(raw).slice(1, -1),
-    ];
-    for (const form of forms) {
-      // a few characters are no credential, and would be found in ordinary words
-      if (form.length >= 4 && !isPlainShortToken(form)) values.add(form);
-    }
-  }
-  // longest first, so a value that contains another is taken out whole
-  return [...values].sort((a, b) => b.length - a.length);
-}
-
 const API_LEVELS: Record<string, DiagLogLevel> = {
   NONE: DiagLogLevel.NONE,
   ERROR: DiagLogLevel.ERROR,
@@ -122,25 +94,40 @@ export const stderrSink: DiagnosticsSink = (event) => {
   );
 };
 
+const URL_TOKEN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>]+/gi;
+/** the scheme, any user-info and a bracketed (IPv6) host: its brackets and colons are not punctuation */
+const BRACKETED_AUTHORITY = /^[a-z][a-z0-9+.-]*:\/\/(?:[^/?#[\]]*@)?\[[^\]]*\]/i;
+
 /**
  * Cut every URL in a text down to scheme and host. An endpoint URL can carry
  * credentials in its user-info, path or query, and error messages quote URLs.
+ *
+ * A URL runs to the next whitespace. A quote inside it is part of it (a
+ * password or a path may hold one), unless the URL itself was quoted: then it
+ * ends at the last such quote. Erring long loses text after the URL; erring
+ * short would print part of the URL.
  */
 export function scrubUrls(text: string): string {
-  return text.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, (match) => {
-    // punctuation that ends the sentence or closes a bracket is not part of the URL
-    let trailing = /[.,;:!?)\]}]+$/.exec(match)?.[0] ?? "";
-    let candidate = match.slice(0, match.length - trailing.length);
-    // except the bracket that closes an IPv6 host
-    if (trailing.startsWith("]") && /:\/\/[^/?#]*\[[^\]]*$/.test(candidate)) {
-      candidate += "]";
-      trailing = trailing.slice(1);
+  return text.replace(URL_TOKEN, (match: string, offset: number) => {
+    let token = match;
+    let after = "";
+    const opener = text[offset - 1];
+    if (opener === '"' || opener === "'" || opener === "`") {
+      const close = token.lastIndexOf(opener);
+      if (close !== -1) {
+        after = token.slice(close);
+        token = token.slice(0, close);
+      }
     }
+    // punctuation that ends the sentence or closes a bracket is not part of the URL
+    const authority = BRACKETED_AUTHORITY.exec(token)?.[0].length ?? 0;
+    const trailing = /[.,;:!?)\]}'"`]+$/.exec(token.slice(authority))?.[0] ?? "";
+    const candidate = token.slice(0, token.length - trailing.length);
     try {
       const url = new URL(candidate);
-      return `${url.protocol}//${url.host}${trailing}`;
+      return `${url.protocol}//${url.host}${trailing}${after}`;
     } catch {
-      return `[url]${trailing}`;
+      return `[url]${trailing}${after}`;
     }
   });
 }
@@ -180,8 +167,6 @@ export interface CreateDiagnosticsOptions {
   sinkFactory?: () => DiagnosticsSink;
   /** redacts free text (the same redaction exported data gets); URLs are always scrubbed */
   redactText?: (text: string) => string;
-  /** the environment whose `OTEL_*` and `OBS_*` values are kept out of every text */
-  environment?: NodeJS.ProcessEnv;
 }
 
 export function createDiagnostics(
@@ -194,15 +179,10 @@ export function createDiagnostics(
   let sink: DiagnosticsSink | undefined;
   let held: DiagnosticsEvent[] = [];
 
-  const unshowable = unshowableValues(options.environment ?? {});
-
   // the whole text is sanitized, and only then cut to length
   const clean = (text: string): string => {
-    let cleaned = text;
-    for (const value of unshowable) cleaned = cleaned.replaceAll(value, NOT_SHOWN);
-    cleaned = scrubUrls(cleaned);
-    if (options.redactText) cleaned = options.redactText(cleaned);
-    return truncate(cleaned);
+    const scrubbed = scrubUrls(text);
+    return truncate(options.redactText ? options.redactText(scrubbed) : scrubbed);
   };
   const sanitized = (event: DiagnosticsEvent): DiagnosticsEvent => ({
     level: event.level,
