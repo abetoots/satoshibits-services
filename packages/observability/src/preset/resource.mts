@@ -24,6 +24,7 @@ import type { Redactor } from "./redaction.mjs";
 import type { Attributes } from "@opentelemetry/api";
 import type { Resource } from "@opentelemetry/resources";
 
+import { quotedKey } from "./diagnostics.mjs";
 import { abandon, isThenable } from "./redaction.mjs";
 
 // not yet in the stable semantic-conventions export
@@ -94,7 +95,7 @@ export function deferredAttributes(attributes: unknown): string[] {
 function refuseDeferred(attributes: Attributes, what: string): void {
   const [first] = deferredAttributes(attributes);
   if (first !== undefined) {
-    throw new TypeError(`${what} is a promise, not a value: ${first}`);
+    throw new TypeError(`${what} is a promise, not a value: ${quotedKey(first)}`);
   }
 }
 

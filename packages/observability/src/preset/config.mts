@@ -14,7 +14,7 @@ import type { Attributes } from "@opentelemetry/api";
 
 import type { RedactionOption } from "./redaction.mjs";
 
-import { shown } from "./diagnostics.mjs";
+import { quotedKey, shown } from "./diagnostics.mjs";
 import { isPlainObject, redactionProblem } from "./redaction.mjs";
 
 export type Signal = "traces" | "metrics" | "logs";
@@ -47,8 +47,9 @@ export interface PresetConfigOptions {
   /** exported as `deployment.environment.name` */
   deploymentEnvironment?: string;
   /**
-   * Further resource attributes, as values (a promise for one is refused);
-   * `OTEL_RESOURCE_ATTRIBUTES` wins over these.
+   * Further resource attributes: a plain object (an object literal) of
+   * values. A promise for a value, or anything else in place of the object,
+   * is refused. `OTEL_RESOURCE_ATTRIBUTES` wins over these.
    */
   resourceAttributes?: Attributes;
   /** overrides `OTEL_EXPORTER_OTLP_ENDPOINT` */
@@ -466,12 +467,15 @@ export function resolveConfig(
   // a resource attribute is a value. The SDK would wait for a promise and export what it
   // settled to, which no policy would have seen
   for (const key of context.deferredResourceAttributes ?? []) {
-    // the key is one the caller wrote in code, not a value from the environment: named as it is
-    problems.push(`a resource attribute is a promise, not a value: "${key.slice(0, 80)}"`);
+    // the key is one the caller wrote in code, not a value from the environment: it is named
+    problems.push(`a resource attribute is a promise, not a value: ${quotedKey(key)}`);
   }
   if (options.resourceAttributes !== undefined && !isPlainObject(options.resourceAttributes)) {
-    // anything else (a promise for the set, an array, a Map) would be read as no attributes, or as keys "0", "1"
-    problems.push("resourceAttributes must be an object of attribute values");
+    // anything else would be read as no attributes (a promise for the set, a Map), as keys
+    // "0", "1" (an array, a string), or in part (a class instance: its inherited members are not read)
+    problems.push(
+      "resourceAttributes must be a plain object of attribute values, such as an object literal",
+    );
   }
 
   // no policy, no export: checked here, with everything else, so nothing has been registered
