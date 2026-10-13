@@ -78,12 +78,13 @@ function failureReporter(signal: Signal, context: ExporterContext) {
     if (typeof error === "object" && error !== null) reported.add(error);
     // read before the limit is consulted: an error that cannot be read must
     // not use up the interval's one line and then print nothing
-    let detail: { name?: unknown; code?: unknown; message?: unknown } = {};
-    try {
-      const { name, code, message } = (error ?? {}) as typeof detail;
-      detail = { name, code, message };
-    } catch {
-      // reported as a plain "Error", with no status, code or reason
+    const detail: { name?: unknown; code?: unknown; message?: unknown } = {};
+    for (const key of ["name", "code", "message"] as const) {
+      try {
+        detail[key] = (error as typeof detail | null | undefined)?.[key];
+      } catch {
+        // what cannot be read is left out; the rest is still reported
+      }
     }
     limit((suppressed) => {
       const reason = localReason(detail.message);
@@ -137,6 +138,13 @@ function nameOf(error: unknown): string {
 }
 
 /**
+ * What this guards against is an exporter that fails in the ways code fails:
+ * it throws, rejects, answers twice, late, with nothing or with something
+ * that is not a result, and the values involved are whatever they are. It is
+ * not a defence against an object built to subvert the language itself (a
+ * promise whose `constructor` throws when read, for which no handler can be
+ * attached at all).
+ *
  * Run one export. A throw from redaction or from the exporter itself is
  * reported like any failed export and answered with a failed result, so the
  * processor that called is never left waiting and never sees an exception.
@@ -201,11 +209,14 @@ function guarded(
     // `export` returns nothing, but an exporter written as an async function returns a
     // promise (or something like one, from another realm or a promise library)
     const returned = send(once) as { then?: unknown } | null | undefined;
-    if (typeof returned?.then === "function") {
-      // adopted through its then() alone (Promise.resolve would also read its constructor)
-      new Promise((resolve) => {
-        resolve(returned);
-      }).then(undefined, failed);
+    // read once: what is called is what was examined
+    const then: unknown = returned?.then;
+    if (typeof then === "function") {
+      (then as (this: unknown, onFulfilled: undefined, onRejected: typeof failed) => unknown).call(
+        returned,
+        undefined,
+        failed,
+      );
     }
   } catch (error) {
     failed(error);
@@ -324,14 +335,45 @@ const otlpOptions = (
   ...(headers !== undefined && { headers }),
 });
 
+const ENDPOINT_VARIABLES = [
+  "OTEL_EXPORTER_OTLP_ENDPOINT",
+  "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+  "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+  "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+] as const;
+
+/**
+ * The upstream exporters parse the endpoint variables themselves when they
+ * are constructed, although the URL is passed to them, and warn with the
+ * value quoted when their own parse fails where the preset's did not (an
+ * endpoint with a trailing space, say). An endpoint can carry credentials,
+ * so the variables are hidden for the duration of the (synchronous)
+ * constructor call; the URL the preset resolved is the only one there is.
+ */
+function withoutEndpointVariables<T>(construct: () => T): T {
+  const hidden = ENDPOINT_VARIABLES.flatMap((name) => {
+    const value = process.env[name];
+    if (value === undefined) return [];
+    delete process.env[name];
+    return [[name, value] as const];
+  });
+  try {
+    return construct();
+  } finally {
+    for (const [name, value] of hidden) process.env[name] = value;
+  }
+}
+
 export function createSpanExporter(
   signal: EnabledSignal,
   headers: Record<string, string> | undefined,
 ): SpanExporter {
   const options = otlpOptions(signal, headers);
-  return signal.protocol === "http/json"
-    ? new JsonTraceExporter(options)
-    : new ProtoTraceExporter(options);
+  return withoutEndpointVariables(() =>
+    signal.protocol === "http/json"
+      ? new JsonTraceExporter(options)
+      : new ProtoTraceExporter(options),
+  );
 }
 
 export function createMetricExporter(
@@ -339,9 +381,11 @@ export function createMetricExporter(
   headers: Record<string, string> | undefined,
 ): PushMetricExporter {
   const options = otlpOptions(signal, headers);
-  return signal.protocol === "http/json"
-    ? new JsonMetricExporter(options)
-    : new ProtoMetricExporter(options);
+  return withoutEndpointVariables(() =>
+    signal.protocol === "http/json"
+      ? new JsonMetricExporter(options)
+      : new ProtoMetricExporter(options),
+  );
 }
 
 export function createLogRecordExporter(
@@ -349,7 +393,9 @@ export function createLogRecordExporter(
   headers: Record<string, string> | undefined,
 ): LogRecordExporter {
   const options = otlpOptions(signal, headers);
-  return signal.protocol === "http/json"
-    ? new JsonLogExporter(options)
-    : new ProtoLogExporter(options);
+  return withoutEndpointVariables(() =>
+    signal.protocol === "http/json"
+      ? new JsonLogExporter(options)
+      : new ProtoLogExporter(options),
+  );
 }

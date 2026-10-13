@@ -171,6 +171,12 @@ describe("diagnostics", () => {
         error: { url: "http://u:SENTINEL@h.example/p", nested: ["SENTINEL"] },
         list: ["SENTINEL"],
         nothing: null,
+        // an error's message is content too: unlike a logger argument, it is not printed
+        thrown: new TypeError("SENTINEL at http://u:SENTINEL@h.example/p"),
+        missing: undefined,
+        big: 10n,
+        call: () => "SENTINEL",
+        hostile: new Proxy({}, { ownKeys: () => { throw new Error("SENTINEL"); } }),
       },
     });
     expect(events[0]!.fields).toEqual({
@@ -179,6 +185,11 @@ describe("diagnostics", () => {
       error: "{url, nested}",
       list: "[array of 1]",
       nothing: "null",
+      thrown: "[error]",
+      missing: "undefined",
+      big: "[bigint]",
+      call: "[function]",
+      hostile: "[unreadable]",
     });
   });
 

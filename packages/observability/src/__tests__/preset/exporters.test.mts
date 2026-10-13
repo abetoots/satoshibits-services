@@ -454,6 +454,61 @@ describe("exporter wrapper", () => {
       expect(answers.map((a) => [a.code, a.error?.name])).toEqual([
         [ExportResultCode.FAILED, "RangeError"],
       ]);
+      expect(wasReportedByExporter(answers[0]!.error)).toBe(true);
+    });
+
+    it("reports what it can read of an error, and reports it, when part of it cannot be read", () => {
+      const { reports, context } = collecting();
+      const answers: ExportResult[] = [];
+      const partly = Object.defineProperty(
+        Object.assign(new Error("m"), { code: 401 }),
+        "message",
+        {
+          get: (): never => {
+            throw new Error("SENTINEL");
+          },
+        },
+      );
+      wrap((_records, given) => given({ code: ExportResultCode.FAILED, error: partly }), context)(
+        (result) => answers.push(result),
+      );
+
+      expect(answers.map((a) => a.code)).toEqual([ExportResultCode.FAILED]);
+      // not silent, and the status that could be read is still there
+      expect(reports.map((r) => [r.message, r.fields])).toEqual([
+        [`${signal} export failed`, { signal, status: 401, error: "Error" }],
+      ]);
+    });
+
+    it("calls the then() it examined, once: a rejection is heard even if then cannot be read again", async () => {
+      const { reports, context } = collecting();
+      const answers: ExportResult[] = [];
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on("unhandledRejection", onUnhandled);
+      try {
+        const rejected = Promise.reject(new RangeError("rejected"));
+        let reads = 0;
+        // (the promise is handed to the wrapper below; defineProperty only returns it)
+        void Object.defineProperty(rejected, "then", {
+          get: () => {
+            if (reads++ > 0) throw new Error("then read a second time");
+            // eslint-disable-next-line @typescript-eslint/unbound-method -- handed back unbound, as a property read would
+            return Promise.prototype.then;
+          },
+        });
+        wrap((() => rejected) as unknown as InnerExport, context)((result) => answers.push(result));
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+      } finally {
+        process.off("unhandledRejection", onUnhandled);
+      }
+
+      expect(answers.map((a) => [a.code, a.error?.name])).toEqual([
+        [ExportResultCode.FAILED, "RangeError"],
+      ]);
+      expect(reports.map((r) => r.message)).toEqual([`${signal} export failed`]);
+      expect(unhandled).toEqual([]);
     });
 
     it("names a callback's error by a plain name only", () => {
