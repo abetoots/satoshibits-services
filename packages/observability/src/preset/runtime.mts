@@ -215,6 +215,8 @@ export function mergeInstrumentationConfig(
 ): InstrumentationConfigMap {
   const merged: Record<string, object> = { ...defaults };
   for (const [name, settings] of Object.entries(overrides) as [string, unknown][]) {
+    // an instrumentation named with no settings (`cond ? {…} : undefined`) is one not named
+    if (settings === undefined) continue;
     if (!isPlainObject(settings)) {
       // `false` for "off" is a natural guess, and would otherwise be ignored without a word
       throw new PresetConfigError([
@@ -248,6 +250,11 @@ function buildInstrumentations(
   test: TestExporters,
 ): Instrumentation[] {
   if (option === false) return [];
+  if (option !== undefined && !isPlainObject(option)) {
+    throw new PresetConfigError([
+      "instrumentations must be an object of settings by instrumentation name, or false for none",
+    ]);
+  }
   // loaded on demand: the bundle pulls in every instrumentation package, which
   // a disabled or instrumentation-free start should not pay for
   const { getNodeAutoInstrumentations } = createRequire(import.meta.url)(
@@ -286,7 +293,8 @@ function readTestExporters(given: TestExporters | undefined): TestExporters {
   });
 }
 
-function buildPipelines(
+/** exported for its test: the rule it asks a second time cannot be reached through start() */
+export function buildPipelines(
   config: ResolvedConfig,
   test: TestExporters,
   base: Omit<ExporterContext, "endpointHost">,

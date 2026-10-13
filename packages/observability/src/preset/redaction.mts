@@ -135,10 +135,14 @@ export const isThenable = (value: unknown): boolean =>
  * not be left to reject with nobody listening: Node ends the process for
  * that, and prints the policy's own error on the way.
  */
-function abandon(result: unknown): void {
+export function abandon(result: unknown): void {
   if (!isThenable(result)) return;
   try {
-    (result as PromiseLike<unknown>).then(undefined, () => undefined);
+    // both handlers are functions: a thenable written by hand may call either without checking
+    (result as PromiseLike<unknown>).then(
+      () => undefined,
+      () => undefined,
+    );
   } catch {
     // a then() that throws has nothing left to reject
   }
@@ -174,7 +178,8 @@ export function createRedactor(option: RedactionOption): Redactor {
     if (input === undefined) return input;
     // a copy: the policy must not change what it is given, and this makes a slip harmless
     const result: unknown = policy.attributes(surface, { ...input });
-    if (!isPlainObject(result)) {
+    // a thenable is refused whatever else it is: an object literal with a then() is one too
+    if (!isPlainObject(result) || isThenable(result)) {
       abandon(result);
       throw new TypeError(
         `the redaction policy's attributes() did not return an attribute set for ${surface}`,

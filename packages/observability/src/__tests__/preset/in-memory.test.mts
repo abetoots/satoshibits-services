@@ -16,12 +16,14 @@ import { InMemoryLogRecordExporter } from "@opentelemetry/sdk-logs";
 import { AggregationTemporality, InMemoryMetricExporter } from "@opentelemetry/sdk-metrics";
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { runInNewContext } from "node:vm";
 
 import type { TestTelemetry } from "../../testing/in-memory.mjs";
 
-import { getStatus, shutdown, start } from "../../preset.mjs";
+import { forceFlush, getStatus, PresetConfigError, shutdown, start } from "../../preset.mjs";
+import { createDiagnostics } from "../../preset/diagnostics.mjs";
 import { createRedactor } from "../../preset/redaction.mjs";
-import { instrumentationConfigFor, resetForTesting } from "../../preset/runtime.mjs";
+import { buildPipelines, instrumentationConfigFor, resetForTesting } from "../../preset/runtime.mjs";
 import { startTestTelemetry } from "../../testing/in-memory.mjs";
 import type { DiagnosticsEvent } from "../../preset/diagnostics.mjs";
 import type { ResolvedConfig } from "../../preset/config.mjs";
@@ -275,6 +277,16 @@ describe("startTestTelemetry", () => {
     };
 
     const WRONG_KIND = /did not return an attribute set for resource/;
+    /** what a promise library hands out: a plain object whose then() is another promise's */
+    const adapterOf = (promise: Promise<unknown>) => ({ then: promise.then.bind(promise) });
+    /** a thenable written by hand that calls its first argument, later, without checking it is one */
+    const laterUnchecked = () => ({
+      then: (resolve: () => void) => {
+        setImmediate(() => {
+          resolve();
+        });
+      },
+    });
     // a policy written `async` that then fails: the promise it returns rejects
     const rejecting = () => Promise.reject(new Error("the policy is broken SENTINEL"));
 
@@ -301,6 +313,9 @@ describe("startTestTelemetry", () => {
       ["returns a string", () => "abc", WRONG_KIND],
       ["returns an array", () => [], WRONG_KIND],
       ["returns a Map", () => new Map(), WRONG_KIND],
+      // a promise in all but name: an object literal with a then(), here one that passes a rejection on
+      ["returns an object with a then() that rejects", () => adapterOf(rejecting()), WRONG_KIND],
+      ["returns an object with a then() that settles later, calling back unchecked", laterUnchecked, WRONG_KIND],
     ])("on the resource (%s): start() fails and gives back what it had registered", async (_how, attributes, message) => {
       // an ignored setting, so that diagnostics hold something when the start fails
       vi.stubEnv("OTEL_BSP_SCHEDULE_DELAY", "not-a-number");
@@ -345,20 +360,43 @@ describe("startTestTelemetry", () => {
     });
 
     it("on the resource: a promise for an attribute's value is refused, from the caller or from the policy", async () => {
+      const failingLater = () => Promise.reject(new Error("SENTINEL"));
       const unhandled = await unhandledDuring(() => {
+        // several at once, one of them under a key the preset drops: each must be let go of safely
         expect(() =>
           startTestTelemetry({
-            resourceAttributes: { later: Promise.reject(new Error("SENTINEL")) as never },
+            resourceAttributes: {
+              first: failingLater() as never,
+              second: failingLater() as never,
+              "host.name": failingLater() as never,
+            },
           }),
-        ).toThrow("a resource attribute is a promise, not a value: later");
+        ).toThrow("a resource attribute is a promise, not a value: first");
         expect(() =>
           startTestTelemetry({
-            redaction: broken({ attributes: () => ({ later: Promise.resolve("SENTINEL") }) }),
+            redaction: broken({
+              attributes: () => ({ first: failingLater(), second: failingLater(), kept: "a value" }),
+            }),
           }),
-        ).toThrow("a resource attribute the redaction policy returned is a promise, not a value: later");
+        ).toThrow("a resource attribute the redaction policy returned is a promise, not a value: first");
       });
       expect(unhandled).toEqual([]);
       expect(getStatus().state).toBe("not-started");
+    });
+
+    it("on the resource: an attribute whose value merely has a `then` that is not a function is a value", async () => {
+      telemetry = startTestTelemetry({ resourceAttributes: { odd: { then: "not a function" } as never } });
+      trace.getTracer("t").startSpan("s").end();
+      expect((await telemetry.spans())[0]!.resource.attributes.odd).toEqual({ then: "not a function" });
+    });
+
+    it.each([
+      ["a null-prototype object", () => Object.assign(Object.create(null) as object, { kept: "v" })],
+      ["a plain object from another realm", () => runInNewContext('({ kept: "v" })') as object],
+      ["a frozen object", () => Object.freeze({ kept: "v" })],
+    ])("accepts %s as an attribute set", (_what, result) => {
+      const redactor = createRedactor({ ...createProbePolicy(), attributes: result as never });
+      expect({ ...redactor.attributes("resource", { given: "x" }) }).toEqual({ kept: "v" });
     });
 
     it("hands the policy a copy of an attribute set, so one that changes its argument changes nothing", () => {
@@ -406,6 +444,35 @@ describe("startTestTelemetry", () => {
         "traces export failed",
         "traces",
       ]);
+      expect(JSON.stringify(events)).not.toContain("SENTINEL");
+    });
+
+    it.each([
+      ["throws", failing],
+      ["returns nothing", () => undefined],
+      ["returns a promise that rejects", rejecting],
+    ])("on a scope name (%s): metrics and log records fail closed too, each reported for its signal", async (_how, text) => {
+      const events: DiagnosticsEvent[] = [];
+      telemetry = startTestTelemetry({
+        diagnostics: () => (event) => events.push(event),
+        redaction: {
+          ...createProbePolicy(),
+          text: (surface, value) =>
+            surface === "scope.name" ? (text() as unknown as string) : value,
+        },
+      });
+      const running = telemetry;
+      const unhandled = await unhandledDuring(async () => {
+        metrics.getMeter("a scope").createCounter("c").add(1);
+        logs.getLogger("a scope").emit({ body: "a line" });
+        // for these two signals the SDK swallows the failed export: the read resolves, with nothing in it
+        await expect(running.metrics()).resolves.toEqual([]);
+        await expect(running.logRecords()).resolves.toEqual([]);
+      });
+      expect(unhandled).toEqual([]);
+      expect(events.map((event) => event.message)).toEqual(
+        expect.arrayContaining(["metrics export failed", "logs export failed"]),
+      );
       expect(JSON.stringify(events)).not.toContain("SENTINEL");
     });
 
@@ -624,6 +691,9 @@ describe("startTestTelemetry", () => {
         "@opentelemetry/instrumentation-http": { enabled: false },
         // a setting given as undefined is one not given
         "@opentelemetry/instrumentation-winston": { disableLogSending: undefined },
+        // and so is an instrumentation named with no settings at all (`cond ? {…} : undefined`)
+        "@opentelemetry/instrumentation-bunyan": undefined,
+        "@opentelemetry/instrumentation-dns": undefined,
       });
       expect(of(settings, "pino")).toEqual({
         disableLogSending: true,
@@ -634,6 +704,8 @@ describe("startTestTelemetry", () => {
       expect(of(settings, "http")).toEqual({ enabled: false });
       expect(of(settings, "net")).toEqual({ enabled: false });
       expect(of(settings, "winston")).toEqual({ disableLogSending: true });
+      expect(of(settings, "bunyan")).toEqual({ disableLogSending: true });
+      expect(of(settings, "dns")).toEqual({ enabled: false });
     });
 
     it.each([
@@ -653,13 +725,30 @@ describe("startTestTelemetry", () => {
       ["an array", [1]],
       ["null", null],
     ])("refuse settings for an instrumentation that are %s, where they would otherwise be ignored", (_what, settings) => {
-      expect(() =>
+      const attempt = () =>
         instrumentationConfigFor(logsOff, {}, {
           "@opentelemetry/instrumentation-http": settings as never,
-        }),
-      ).toThrow(
+        });
+      expect(attempt).toThrow(PresetConfigError);
+      expect(attempt).toThrow(
         'instrumentations: the settings for "@opentelemetry/instrumentation-http" must be an object, such as { enabled: false }',
       );
+    });
+
+    it.each([
+      ["null", null],
+      ["true", true],
+      ["a string", "off"],
+      ["an array", []],
+    ])("start() refuses an instrumentations option that is %s, as a configuration error, and registers nothing", async (_what, instrumentations) => {
+      const attempt = () => startTestTelemetry({ instrumentations: instrumentations as never });
+      expect(attempt).toThrow(PresetConfigError);
+      expect(attempt).toThrow("instrumentations must be an object of settings by instrumentation name, or false for none");
+
+      expect(getStatus().state).toBe("not-started");
+      telemetry = startTestTelemetry();
+      trace.getTracer("t").startSpan("works").end();
+      expect((await telemetry.spans()).map((s) => s.name)).toEqual(["works"]);
     });
 
     // batch G4a, with the instrumentation fixture. Nothing in this batch observes the settings a real
@@ -668,6 +757,52 @@ describe("startTestTelemetry", () => {
     // line arrives at /v1/logs when logs are exported and does not when they are not; and a caller's
     // override of one pino setting leaves that unchanged.
     it.todo("a real start() hands these settings to the bundle: a pino line is sent over OTLP exactly when logs are exported");
+  });
+
+  describe("where exporters are made, the no-policy rule is asked a second time", () => {
+    const context = () => ({
+      diagnostics: createDiagnostics(),
+      redactor: createRedactor(false),
+    });
+    const NO_POLICY = "an exporter would be built with no redaction named";
+
+    it("refuses to build around a test exporter, or for an enabled signal, when none was named", () => {
+      const exporter = new InMemorySpanExporter();
+      expect(() => buildPipelines({ signals: OFF } as never, { spanExporter: exporter }, context(), false)).toThrow(NO_POLICY);
+      expect(() =>
+        buildPipelines(
+          { signals: { ...OFF, metrics: { enabled: true, url: "http://127.0.0.1:9/v1/metrics", protocol: "http/protobuf" } } } as never,
+          {},
+          context(),
+          false,
+        ),
+      ).toThrow(NO_POLICY);
+    });
+
+    it("builds when one was named, and when there is nothing to export", () => {
+      const built = buildPipelines({ signals: OFF } as never, { spanExporter: new InMemorySpanExporter() }, context(), true);
+      expect(built.signals.traces).toEqual({ enabled: true, destination: "test" });
+      expect(buildPipelines({ signals: OFF } as never, {}, context(), false).signals).toEqual(OFF);
+    });
+  });
+
+  it("uses the exporter it read from wherever the test held it, when a redaction is named", async () => {
+    const exporter = new InMemorySpanExporter();
+    class Kit {
+      get spanExporter() {
+        return exporter;
+      }
+    }
+    start({
+      serviceName: "held-on-a-class",
+      instrumentations: false,
+      loaderHook: false,
+      redaction: false,
+      testExporters: new Kit(),
+    });
+    trace.getTracer("t").startSpan("through the accessor").end();
+    await forceFlush();
+    expect(exporter.getFinishedSpans().map((span) => span.name)).toEqual(["through the accessor"]);
   });
 
   it("the kit refuses a redaction that is null, as start() does, and does not read it as false", () => {
