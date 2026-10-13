@@ -479,6 +479,9 @@ describe("startTestTelemetry", () => {
 
       it("names a refused key so that it cannot pass for another line, and marks one it had to cut", () => {
         const long = "k".repeat(81);
+        const exact = "e".repeat(80);
+        // the cut falls inside a pair: the half that is left is escaped, not printed as half a character
+        const split = `${"s".repeat(79)}\u{1f600}`;
         const problems = (() => {
           try {
             startTestTelemetry({
@@ -486,6 +489,9 @@ describe("startTestTelemetry", () => {
                 'line one\n  - forged: all is well "quoted"': Promise.resolve("a") as never,
                 "with space: and colon": Promise.resolve("b") as never,
                 [long]: Promise.resolve("c") as never,
+                [exact]: Promise.resolve("d") as never,
+                "back\\slash": Promise.resolve("e") as never,
+                [split]: Promise.resolve("f") as never,
               },
             });
           } catch (error) {
@@ -497,6 +503,9 @@ describe("startTestTelemetry", () => {
           'a resource attribute is a promise, not a value: "line one\\n  - forged: all is well \\"quoted\\""',
           'a resource attribute is a promise, not a value: "with space: and colon"',
           `a resource attribute is a promise, not a value: "${"k".repeat(80)}…"`,
+          `a resource attribute is a promise, not a value: "${exact}"`,
+          'a resource attribute is a promise, not a value: "back\\\\slash"',
+          `a resource attribute is a promise, not a value: "${"s".repeat(79)}\\ud83d…"`,
         ]);
         // each problem is one line of the message, whatever the key held
         expect(problems.every((problem) => !problem.includes("\n"))).toBe(true);
@@ -581,10 +590,15 @@ describe("startTestTelemetry", () => {
           expect(() =>
             startTestTelemetry({
               redaction: broken({
-                attributes: () => ({ first: failingLater(), second: failingLater(), kept: "a value" }),
+                // the first key has a line break and a quote in it: it is named escaped, as the caller's are
+                attributes: () => ({ 'first\n"key"': failingLater(), second: failingLater(), kept: "a value" }),
               }),
             }),
-          ).toThrow('a resource attribute the redaction policy returned is a promise, not a value: "first"');
+          ).toThrow(
+            new TypeError(
+              'a resource attribute the redaction policy returned is a promise, not a value: "first\\n\\"key\\""',
+            ),
+          );
         });
         expect(unhandled).toEqual([]);
         expect(getStatus().state).toBe("not-started");
