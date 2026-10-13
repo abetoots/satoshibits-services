@@ -87,7 +87,7 @@ export interface TestExporters {
 
 export interface StartOptions extends PresetConfigOptions {
   /**
-   * Per-instrumentation settings, merged over the preset's defaults (the Node
+   * Per-instrumentation settings, merged setting by setting over the preset's defaults (the Node
    * auto-instrumentation bundle with `fs`, `net` and `dns` off; pino, winston
    * and bunyan lines are sent over OTLP when the logs signal is on, and not
    * otherwise). `false` installs no instrumentation.
@@ -200,9 +200,39 @@ export function defaultInstrumentationConfig(
   };
 }
 
+/**
+ * The caller's settings over the preset's, per setting: overriding one
+ * setting of an instrumentation keeps the preset's others for it.
+ */
+export function mergeInstrumentationConfig(
+  defaults: InstrumentationConfigMap,
+  overrides: InstrumentationConfigMap,
+): InstrumentationConfigMap {
+  const merged: Record<string, object> = { ...defaults };
+  for (const [name, settings] of Object.entries(overrides)) {
+    merged[name] = { ...merged[name], ...settings };
+  }
+  return merged as InstrumentationConfigMap;
+}
+
+/** what the auto-instrumentation bundle is given: the preset's settings for this start, then the caller's */
+export function instrumentationConfigFor(
+  config: Pick<ResolvedConfig, "signals">,
+  test: TestExporters,
+  overrides: InstrumentationConfigMap = {},
+): InstrumentationConfigMap {
+  const logsExported =
+    config.signals.logs.enabled || test.logRecordExporter !== undefined;
+  return mergeInstrumentationConfig(
+    defaultInstrumentationConfig(logsExported),
+    overrides,
+  );
+}
+
 function buildInstrumentations(
   option: StartOptions["instrumentations"],
-  logsExported: boolean,
+  config: ResolvedConfig,
+  test: TestExporters,
 ): Instrumentation[] {
   if (option === false) return [];
   // loaded on demand: the bundle pulls in every instrumentation package, which
@@ -210,10 +240,9 @@ function buildInstrumentations(
   const { getNodeAutoInstrumentations } = createRequire(import.meta.url)(
     "@opentelemetry/auto-instrumentations-node",
   ) as typeof import("@opentelemetry/auto-instrumentations-node");
-  return getNodeAutoInstrumentations({
-    ...defaultInstrumentationConfig(logsExported),
-    ...option,
-  });
+  return getNodeAutoInstrumentations(
+    instrumentationConfigFor(config, test, option),
+  );
 }
 
 /** drop undefined members: the upstream constructors tell "unset" from "set to undefined" */
@@ -230,12 +259,25 @@ interface Pipelines {
   signals: Record<Signal, SignalStatus>;
 }
 
+/**
+ * The exporters a test supplied, each read once. Everything that asks
+ * "is there a test exporter" asks this object, so the answer that passed
+ * validation is the one the pipelines are built from, wherever on the
+ * caller's object (itself, its prototype, an accessor) the exporter was.
+ */
+function readTestExporters(given: TestExporters | undefined): TestExporters {
+  return defined({
+    spanExporter: given?.spanExporter,
+    metricExporter: given?.metricExporter,
+    logRecordExporter: given?.logRecordExporter,
+  });
+}
+
 function buildPipelines(
   config: ResolvedConfig,
-  options: StartOptions,
+  test: TestExporters,
   base: Omit<ExporterContext, "endpointHost">,
 ): Pipelines {
-  const test = options.testExporters ?? {};
   const signals = {} as Record<Signal, SignalStatus>;
   const spanProcessors: SpanProcessor[] = [];
   const metricReaders: MetricReader[] = [];
@@ -262,7 +304,7 @@ function buildPipelines(
 
   // traces
   signals.traces = statusOf("traces", test.spanExporter !== undefined);
-  if (test.spanExporter) {
+  if (test.spanExporter !== undefined) {
     spanProcessors.push(
       new SimpleSpanProcessor({
         exporter: wrapSpanExporter(test.spanExporter, base),
@@ -286,7 +328,7 @@ function buildPipelines(
 
   // metrics
   signals.metrics = statusOf("metrics", test.metricExporter !== undefined);
-  if (test.metricExporter) {
+  if (test.metricExporter !== undefined) {
     metricReaders.push(
       new PeriodicExportingMetricReader({
         exporter: wrapMetricExporter(test.metricExporter, base),
@@ -311,7 +353,7 @@ function buildPipelines(
 
   // logs
   signals.logs = statusOf("logs", test.logRecordExporter !== undefined);
-  if (test.logRecordExporter) {
+  if (test.logRecordExporter !== undefined) {
     logRecordProcessors.push(
       new SimpleLogRecordProcessor({
         exporter: wrapLogRecordExporter(test.logRecordExporter, base),
@@ -445,11 +487,9 @@ export function start(options: StartOptions = {}): PresetStatus {
     );
   }
 
+  const testExporters = readTestExporters(options.testExporters);
   const resolution = resolveConfig(options, process.env, {
-    // by its keys alone: the exporters themselves are first read when the pipelines are built
-    testExporters:
-      options.testExporters !== undefined &&
-      Object.keys(options.testExporters).length > 0,
+    testExporters: Object.keys(testExporters).length > 0,
   });
   if (resolution.disabled) {
     handle = {
@@ -499,10 +539,10 @@ export function start(options: StartOptions = {}): PresetStatus {
     const sampler = buildSampler(config.sampler);
     const instrumentations = buildInstrumentations(
       options.instrumentations,
-      config.signals.logs.enabled ||
-        options.testExporters?.logRecordExporter !== undefined,
+      config,
+      testExporters,
     );
-    pipelines = buildPipelines(config, options, { diagnostics, redactor });
+    pipelines = buildPipelines(config, testExporters, { diagnostics, redactor });
     if (options.loaderHook !== false) installLoaderHook();
     const built = pipelines;
     sdk = withoutLogLevelVariable(

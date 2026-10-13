@@ -52,8 +52,16 @@ function conventionalOsType(): string {
   return type === "windows_nt" ? "windows" : type;
 }
 
+/** never passed to a policy and never taken from one: a changed name or instance id would merge services and replicas */
+const IDENTITY_KEYS: ReadonlySet<string> = new Set([
+  ATTR_SERVICE_NAME,
+  ATTR_SERVICE_INSTANCE_ID,
+]);
+
 export function buildResource(config: ResolvedConfig, redactor: Redactor): Resource {
   const merged: Attributes = {
+    // the SDK's own description of itself (telemetry.sdk.*); ours wins on every shared key
+    ...defaultResource().attributes,
     // only the OS type: the detector's kernel version string identifies the machine image
     [ATTR_OS_TYPE]: conventionalOsType(),
     ...config.resourceAttributes,
@@ -66,25 +74,23 @@ export function buildResource(config: ResolvedConfig, redactor: Redactor): Resou
     ...(config.deploymentEnvironment !== undefined && {
       [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: config.deploymentEnvironment,
     }),
-    // the environment wins over options for everything but the two keys added last
+    // the environment wins over options for everything but the two identity keys
     ...config.environmentAttributes,
   };
 
+  // everything that will be exported goes to the policy, the two identity keys aside,
+  // wherever a value came from: the SDK, an option, or OTEL_RESOURCE_ATTRIBUTES
   const kept: Attributes = {};
   for (const [key, value] of Object.entries(merged)) {
-    if (!isDroppedResourceKey(key)) kept[key] = value;
+    if (!isDroppedResourceKey(key) && !IDENTITY_KEYS.has(key)) kept[key] = value;
   }
 
-  // defaultResource supplies telemetry.sdk.*; ours wins on every shared key
-  return defaultResource().merge(
-    resourceFromAttributes({
-      ...redactor.attributes("resource", kept),
-      // the two identity keys are added after the policy has run: a masked name or
-      // instance id would merge the series of different services and replicas.
-      // a name passed in code wins, so two processes sharing one environment stay distinct
-      [ATTR_SERVICE_NAME]: config.serviceName,
-      // one per process; the environment cannot pin it to a shared value
-      [ATTR_SERVICE_INSTANCE_ID]: randomUUID(),
-    }),
-  );
+  return resourceFromAttributes({
+    ...redactor.attributes("resource", kept),
+    // added after the policy has run, over whatever it returned.
+    // a name passed in code wins, so two processes sharing one environment stay distinct
+    [ATTR_SERVICE_NAME]: config.serviceName,
+    // one per process; the environment cannot pin it to a shared value
+    [ATTR_SERVICE_INSTANCE_ID]: randomUUID(),
+  });
 }

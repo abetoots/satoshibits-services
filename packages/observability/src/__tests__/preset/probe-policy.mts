@@ -24,10 +24,29 @@ const marked = (surface: string, attributes: PolicyAttributes): PolicyAttributes
     ]),
   );
 
-export function createProbePolicy(): RedactionPolicy {
+/** one call of the policy: which function, as which surface, and with what */
+export interface ProbeCall {
+  fn: keyof RedactionPolicy;
+  surface?: string;
+  /** the text handed over, or the keys of the attribute set */
+  given: string | string[];
+}
+
+/**
+ * @param calls when given, every call of `text` and `attributes` is recorded
+ *   here. The marks show what the policy did to what was exported; only this
+ *   shows what it was handed, including anything the preset replaced afterwards.
+ */
+export function createProbePolicy(calls?: ProbeCall[]): RedactionPolicy {
   return {
-    text: (surface, value) => probed(surface, value),
-    attributes: (surface, attributes) => marked(surface, attributes),
+    text: (surface, value) => {
+      calls?.push({ fn: "text", surface, given: value });
+      return probed(surface, value);
+    },
+    attributes: (surface, attributes) => {
+      calls?.push({ fn: "attributes", surface, given: Object.keys(attributes) });
+      return marked(surface, attributes);
+    },
     spanStatus: (message) => probed("span.status", message),
     spanEvent: (event) => ({
       name: probed("span.event", event.name),

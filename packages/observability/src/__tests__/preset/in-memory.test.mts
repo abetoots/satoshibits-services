@@ -11,14 +11,21 @@ import {
 } from "@opentelemetry/api";
 import { logs } from "@opentelemetry/api-logs";
 import { globalErrorHandler } from "@opentelemetry/core";
+import { InMemoryLogRecordExporter } from "@opentelemetry/sdk-logs";
+import { AggregationTemporality, InMemoryMetricExporter } from "@opentelemetry/sdk-metrics";
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TestTelemetry } from "../../testing/in-memory.mjs";
 
 import { getStatus, shutdown, start } from "../../preset.mjs";
-import { defaultInstrumentationConfig } from "../../preset/runtime.mjs";
+import { instrumentationConfigFor, resetForTesting } from "../../preset/runtime.mjs";
 import { startTestTelemetry } from "../../testing/in-memory.mjs";
+import type { DiagnosticsEvent } from "../../preset/diagnostics.mjs";
+import type { RedactionPolicy } from "../../preset/redaction.mjs";
+import type { ProbeCall } from "./probe-policy.mjs";
+import type { InstrumentationConfigMap } from "@opentelemetry/auto-instrumentations-node";
+
 import { createProbePolicy } from "./probe-policy.mjs";
 
 let telemetry: TestTelemetry | undefined;
@@ -27,6 +34,8 @@ afterEach(async () => {
   // first, so a failed assertion cannot leave the variable set for the next test
   vi.unstubAllEnvs();
   await telemetry?.stop();
+  // and whatever a test started without keeping hold of it (a start it expected to be refused)
+  await resetForTesting();
   telemetry = undefined;
 });
 
@@ -189,19 +198,130 @@ describe("startTestTelemetry", () => {
     expect(span!.resource.attributes["service.name"]).toBe("test");
   });
 
-  it("never passes the service name or the instance id to the policy", async () => {
+  it("hands the policy every resource attribute but the two identity keys, wherever they came from", async () => {
+    // the two keys set every way an operator can set them; the policy must be handed neither
+    vi.stubEnv("OTEL_RESOURCE_ATTRIBUTES", "service.name=from-env,service.instance.id=pinned,team=a");
+    const calls: ProbeCall[] = [];
     telemetry = startTestTelemetry({
       serviceName: "billing",
-      redaction: createProbePolicy(),
-      resourceAttributes: { "other.id": "0f8fad5b" },
+      redaction: createProbePolicy(calls),
+      resourceAttributes: {
+        "service.name": "from-option",
+        "service.instance.id": "from-option",
+        "other.id": "0f8fad5b",
+      },
     });
     trace.getTracer("kit").startSpan("s").end();
     const [span] = await telemetry.spans();
     const attributes = span!.resource.attributes;
+
+    const handed = calls.filter((call) => call.fn === "attributes" && call.surface === "resource");
+    expect(handed).toHaveLength(1);
+    expect(handed[0]!.given).not.toContain("service.name");
+    expect(handed[0]!.given).not.toContain("service.instance.id");
+    // what it was handed is everything else that is exported, the SDK's own attributes included
+    expect([...(handed[0]!.given as string[])].sort()).toEqual(
+      Object.keys(attributes)
+        .filter((key) => key !== "service.name" && key !== "service.instance.id")
+        .sort(),
+    );
+    expect(handed[0]!.given).toEqual(
+      expect.arrayContaining(["other.id", "team", "os.type", "telemetry.sdk.name"]),
+    );
+    expect(attributes["other.id"]).toBe("[probe:resource] 0f8fad5b");
+    expect(attributes["telemetry.sdk.language"]).toBe("[probe:resource] nodejs");
+
+    // and what is exported for the two is the preset's, not the operator's and not the policy's
     expect(attributes["service.name"]).toBe("billing");
     expect(attributes["service.instance.id"]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4/);
-    // the positive control: the policy did see the rest of the resource
-    expect(attributes["other.id"]).toBe("[probe:resource] 0f8fad5b");
+  });
+
+  it("does not let a policy set, or drop, the two identity keys", async () => {
+    telemetry = startTestTelemetry({
+      serviceName: "billing",
+      redaction: {
+        ...createProbePolicy(),
+        attributes: () => ({ "service.name": "MASKED", "service.instance.id": "MASKED" }),
+      },
+    });
+    trace.getTracer("kit").startSpan("s").end();
+    const attributes = (await telemetry.spans())[0]!.resource.attributes;
+    // the policy returned nothing else: nothing else is exported, the SDK's own attributes included
+    expect(Object.keys(attributes).sort()).toEqual(["service.instance.id", "service.name"]);
+    expect(attributes["service.name"]).toBe("billing");
+    expect(attributes["service.instance.id"]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4/);
+  });
+
+  describe("a policy that misbehaves", () => {
+    const broken = (
+      how: Partial<Record<"text" | "attributes", () => unknown>>,
+    ): RedactionPolicy => ({ ...createProbePolicy(), ...(how as Partial<RedactionPolicy>) });
+    const failing = (): never => {
+      throw new Error("the policy is broken SENTINEL");
+    };
+
+    it.each([
+      ["throws", failing],
+      ["returns nothing", () => undefined],
+      ["returns a promise", () => Promise.resolve({})],
+      ["returns a string", () => "abc"],
+      ["returns an array", () => []],
+    ])("on the resource (%s): start() fails and nothing is left registered", async (_how, attributes) => {
+      expect(() =>
+        startTestTelemetry({ redaction: broken({ attributes }) }),
+      ).toThrow(/the policy is broken|did not return an attribute set for resource/);
+
+      expect(getStatus().state).toBe("not-started");
+      expect(trace.getTracer("t").startSpan("s").isRecording()).toBe(false);
+      telemetry = startTestTelemetry();
+      trace.getTracer("t").startSpan("works").end();
+      expect((await telemetry.spans()).map((s) => s.name)).toEqual(["works"]);
+    });
+
+    it.each([
+      ["throws", failing],
+      ["returns nothing", () => undefined],
+      ["returns a promise", () => Promise.resolve("text")],
+      ["returns a number", () => 7],
+    ])("on a scope name (%s): the export fails closed and is reported", async (_how, text) => {
+      const events: DiagnosticsEvent[] = [];
+      telemetry = startTestTelemetry({
+        diagnostics: () => (event) => events.push(event),
+        // diagnostics text passes the same function: let that through, break only the scope name
+        redaction: {
+          ...createProbePolicy(),
+          text: (surface, value) =>
+            surface === "scope.name" ? (text() as unknown as string) : value,
+        },
+      });
+      trace.getTracer("a scope").startSpan("s").end();
+
+      // the flush that would have delivered the span rejects: the record did not go out as it was
+      await expect(telemetry.spans()).rejects.toThrow(/the policy is broken|did not return a string for scope.name/);
+      expect(events.map((event) => [event.message, event.fields?.signal])).toContainEqual([
+        "traces export failed",
+        "traces",
+      ]);
+      expect(JSON.stringify(events)).not.toContain("SENTINEL");
+    });
+
+    it.each([
+      ["throws", failing],
+      ["returns nothing", () => undefined],
+      ["returns a promise", () => Promise.resolve("text")],
+    ])("on a diagnostics text (%s): the text is withheld and diagnostics keep reporting", (_how, text) => {
+      const events: DiagnosticsEvent[] = [];
+      telemetry = startTestTelemetry({
+        diagnostics: () => (event) => events.push(event),
+        redaction: broken({ text }),
+      });
+      diag.warn("first SENTINEL");
+      diag.warn("second SENTINEL");
+      expect(events.map((event) => event.message)).toEqual([
+        "(text withheld: the redaction policy threw)",
+        "(text withheld: the redaction policy threw)",
+      ]);
+    });
   });
 
   it("honours parent-based sampling: an unsampled remote parent is followed, a sampled one too", async () => {
@@ -247,21 +367,6 @@ describe("startTestTelemetry", () => {
     ]);
   });
 
-  it("withholds a diagnostics text the policy threw on, and keeps reporting", () => {
-    const events: { message: string }[] = [];
-    telemetry = startTestTelemetry({
-      diagnostics: () => (event) => events.push(event),
-      redaction: {
-        ...createProbePolicy(),
-        text: () => {
-          throw new Error("the policy is broken");
-        },
-      },
-    });
-    diag.warn(SDK_SAID);
-    expect(events.map((e) => e.message)).toEqual(["(text withheld: the redaction policy threw)"]);
-  });
-
   it("refuses to answer after stop(), instead of reporting that nothing was emitted", async () => {
     const stopped = startTestTelemetry();
     trace.getTracer("kit").startSpan("s").end();
@@ -305,44 +410,124 @@ describe("startTestTelemetry", () => {
     expect((await telemetry.spans()).map((s) => s.name)).toEqual(["seen by the newer kit"]);
   });
 
-  it("start() refuses a test exporter with no redaction named, and registers nothing", async () => {
-    expect(() =>
-      start({
-        serviceName: "no-policy",
-        instrumentations: false,
-        loaderHook: false,
-        testExporters: { spanExporter: new InMemorySpanExporter() },
-      }),
-    ).toThrow(/no redaction policy: pass `redaction` to start\(\)/);
+  // every way a test's exporter can sit on the object it is handed in: the rule has no way round it
+  const HOLDERS: [string, (key: string, exporter: unknown) => object][] = [
+    ["an own property", (key, exporter) => ({ [key]: exporter })],
+    ["a property of its prototype", (key, exporter) => Object.create({ [key]: exporter }) as object],
+    [
+      "an accessor on its class",
+      (key, exporter) => {
+        class Kit {}
+        Object.defineProperty(Kit.prototype, key, { get: () => exporter });
+        return new Kit();
+      },
+    ],
+    [
+      "a property that is not enumerable",
+      (key, exporter) => Object.defineProperty({}, key, { value: exporter, enumerable: false }),
+    ],
+  ];
+  const EXPORTERS: [string, () => unknown][] = [
+    ["spanExporter", () => new InMemorySpanExporter()],
+    ["metricExporter", () => new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE)],
+    ["logRecordExporter", () => new InMemoryLogRecordExporter()],
+  ];
 
-    expect(getStatus().state).toBe("not-started");
-    expect(trace.getTracer("t").startSpan("s").isRecording()).toBe(false);
-    // and the next start is not blocked by it
-    telemetry = startTestTelemetry();
-    trace.getTracer("t").startSpan("works").end();
-    expect((await telemetry.spans()).map((s) => s.name)).toEqual(["works"]);
+  describe.each(EXPORTERS)("a test's %s with no redaction named", (key, create) => {
+    it.each(HOLDERS)("is refused when it is %s, and nothing is registered", async (_where, hold) => {
+      let sinkCreated = false;
+      expect(() =>
+        start({
+          serviceName: "no-policy",
+          instrumentations: false,
+          loaderHook: false,
+          diagnostics: () => {
+            sinkCreated = true;
+            return () => undefined;
+          },
+          testExporters: hold(key, create()),
+        }),
+      ).toThrow(/no redaction policy: pass `redaction` to start\(\)/);
+
+      expect(getStatus().state).toBe("not-started");
+      expect(trace.getTracer("t").startSpan("s").isRecording()).toBe(false);
+      // refused in validation: diagnostics were never set up, so nothing could be reported through them
+      expect(sinkCreated).toBe(false);
+      // and the next start is not blocked by it
+      telemetry = startTestTelemetry();
+      trace.getTracer("t").startSpan("works").end();
+      expect((await telemetry.spans()).map((s) => s.name)).toEqual(["works"]);
+    });
   });
 
-  it.each([
-    ["on", true, false],
-    ["off", false, true],
-  ])(
-    "sends pino, winston and bunyan lines over OTLP only when logs are exported: logs %s",
-    (_state, logsExported, disableLogSending) => {
-      const config = defaultInstrumentationConfig(logsExported);
+  it("asks for no policy when every test exporter is undefined and nothing is exported", async () => {
+    try {
+      expect(
+        start({
+          serviceName: "nothing-exported",
+          instrumentations: false,
+          loaderHook: false,
+          diagnostics: () => () => undefined,
+          testExporters: { spanExporter: undefined, metricExporter: undefined, logRecordExporter: undefined },
+        }).signals,
+      ).toMatchObject({
+        traces: { enabled: false, reason: "no-endpoint" },
+        metrics: { enabled: false, reason: "no-endpoint" },
+        logs: { enabled: false, reason: "not-requested" },
+      });
+    } finally {
+      await resetForTesting();
+    }
+  });
+
+  describe("the settings handed to the auto-instrumentation bundle", () => {
+    const logsOn = { signals: { logs: { enabled: true } } } as never;
+    const logsOff = { signals: { logs: { enabled: false } } } as never;
+    const sending = (config: InstrumentationConfigMap, logger = "pino") =>
+      (config[`@opentelemetry/instrumentation-${logger}` as keyof InstrumentationConfigMap] as {
+        disableLogSending?: boolean;
+      }).disableLogSending === false;
+
+    it.each([
+      ["the logs signal is on", logsOn, {}, true],
+      ["a test supplies a log exporter", logsOff, { logRecordExporter: new InMemoryLogRecordExporter() }, true],
+      ["logs are off and no test log exporter", logsOff, {}, false],
+      // another signal's test exporter does not turn log sending on
+      ["logs are off and a test supplies a span exporter", logsOff, { spanExporter: new InMemorySpanExporter() }, false],
+    ])("send log lines over OTLP exactly when logs are exported: %s", (_when, config, test, sent) => {
+      const settings = instrumentationConfigFor(config, test);
       for (const logger of ["pino", "winston", "bunyan"]) {
-        expect(config[`@opentelemetry/instrumentation-${logger}` as keyof typeof config]).toEqual({
-          disableLogSending,
-        });
+        expect(sending(settings, logger), logger).toBe(sent);
       }
-      // and the noisy three stay off either way
-      for (const noisy of ["fs", "net", "dns"]) {
-        expect(config[`@opentelemetry/instrumentation-${noisy}` as keyof typeof config]).toEqual({
-          enabled: false,
-        });
-      }
-    },
-  );
+    });
+
+    it("keep the preset's other settings for an instrumentation the caller overrides in part", () => {
+      const settings = instrumentationConfigFor(logsOff, {}, {
+        "@opentelemetry/instrumentation-pino": { logKeys: { traceId: "tid", spanId: "sid", traceFlags: "tf" } },
+        "@opentelemetry/instrumentation-fs": { enabled: true },
+        "@opentelemetry/instrumentation-http": { enabled: false },
+      });
+      expect(settings["@opentelemetry/instrumentation-pino"]).toEqual({
+        disableLogSending: true,
+        logKeys: { traceId: "tid", spanId: "sid", traceFlags: "tf" },
+      });
+      // a setting the caller names wins; an instrumentation the preset has no settings for is taken as given
+      expect(settings["@opentelemetry/instrumentation-fs"]).toEqual({ enabled: true });
+      expect(settings["@opentelemetry/instrumentation-http"]).toEqual({ enabled: false });
+      expect(settings["@opentelemetry/instrumentation-net"]).toEqual({ enabled: false });
+    });
+
+    it("let the caller turn log sending on or off for one logger, whatever the logs signal says", () => {
+      const settings = instrumentationConfigFor(logsOn, {}, {
+        "@opentelemetry/instrumentation-pino": { disableLogSending: true },
+      });
+      expect(sending(settings, "pino")).toBe(false);
+      expect(sending(settings, "winston")).toBe(true);
+    });
+
+    // batch G4a: a real pino line arrives at /v1/logs when logs are on, and does not when they are off
+    it.todo("a pino line is sent over OTLP exactly when logs are exported (the instrumentation fixture)");
+  });
 
   it("refuses a second start while one is running", () => {
     telemetry = startTestTelemetry();

@@ -8,7 +8,9 @@
  * // telemetry.mjs — import nothing here but the preset and Node built-ins
  * import { start } from "@satoshibits/observability/preset";
  * try {
- *   start({ serviceName: "billing-worker" });
+ *   // `redaction` is a policy of yours, or `false` to export everything as given;
+ *   // with a signal to export and no `redaction`, start() throws
+ *   start({ serviceName: "billing-worker", redaction: myPolicy });
  * } catch (error) {
  *   console.error(error); // run without telemetry rather than not at all
  * }

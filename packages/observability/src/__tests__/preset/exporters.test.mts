@@ -802,10 +802,16 @@ describe("a start that fails part-way", () => {
         loaderHook: false,
         diagnostics: () => (event) => events.push(event),
         redaction: false,
+        // an exporter the pipeline cannot be built around: it fails after diagnostics are in place
         testExporters: {
-          get metricExporter(): never {
-            diag.warn("held before the failure");
-            throw new Error("exporter could not be built");
+          metricExporter: {
+            export: () => undefined,
+            forceFlush: () => Promise.resolve(),
+            shutdown: () => Promise.resolve(),
+            get selectAggregationTemporality(): never {
+              diag.warn("held before the failure");
+              throw new Error("exporter could not be built");
+            },
           },
         },
       }),

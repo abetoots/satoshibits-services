@@ -265,6 +265,9 @@ describe("signals on", () => {
 });
 
 describe("rejected configuration", () => {
+  const NO_POLICY =
+    "no redaction policy: pass `redaction` to start() (a policy, or false to export everything as given)";
+
   it.each([
     [
       { OTEL_EXPORTER_OTLP_PROTOCOL: "grpc" },
@@ -301,15 +304,12 @@ describe("rejected configuration", () => {
 
     expect(run.code).toBe(0);
     expect(run.result.status.state).toBe("not-started");
-    // one line per problem (register names no policy yet, which is a problem of its own here)
-    expect(run.stderrLines.map((line) => [line.level, line.msg])).toEqual(
-      run.stderrLines.map(() => ["error", "telemetry was not started"]),
-    );
-    expect(run.stderrLines.map((line) => line.reason)).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("OTEL_EXPORTER_OTLP_PROTOCOL=grpc is not supported"),
-      ]),
-    );
+    // one line per problem, each once. Register names no policy yet, which is a problem of its
+    // own here; that second line goes when batch G4a gives register the standard policy
+    expect(run.stderrLines.map((line) => [line.level, line.msg, line.reason])).toEqual([
+      ["error", "telemetry was not started", expect.stringContaining("OTEL_EXPORTER_OTLP_PROTOCOL=grpc is not supported")],
+      ["error", "telemetry was not started", NO_POLICY],
+    ]);
     expect(sink.connections).toEqual([]);
   });
 
@@ -322,7 +322,8 @@ describe("rejected configuration", () => {
     expect(started.result.startError).not.toContain("SENTINEL");
 
     const registered = await runChild({ start: "register" }, env);
-    expect(registered.stderrLines.length).toBeGreaterThan(0);
+    // the protocol problem and, until batch G4a, the missing policy
+    expect(registered.stderrLines).toHaveLength(2);
     expect(registered.stderr).not.toContain("SENTINEL");
     expect(registered.stderr).not.toContain("collector.example");
   });
@@ -359,9 +360,6 @@ describe("rejected configuration", () => {
     },
   );
 
-  const NO_POLICY =
-    "no redaction policy: pass `redaction` to start() (a policy, or false to export everything as given)";
-
   it("start() refuses to export when no redaction is named, and sends nothing", async () => {
     const run = await runChild({ redaction: "none" }, endpoint());
 
@@ -375,7 +373,25 @@ describe("rejected configuration", () => {
     const run = await runChild({ redaction: "none" }, NAME);
 
     expect(run.result.startError).toBeNull();
+    expect(run.result.status).toMatchObject({
+      state: "shut-down",
+      signals: {
+        traces: { enabled: false, reason: "no-endpoint" },
+        metrics: { enabled: false, reason: "no-endpoint" },
+      },
+    });
+    expect(run.stderrLines.map((line) => line.msg)).toEqual(
+      expect.arrayContaining(["traces are not exported: no OTLP endpoint is configured"]),
+    );
+    expect(run.result.sockets).toEqual([]);
+  });
+
+  it("the register entry with nothing to export starts, and reports no error", async () => {
+    const run = await runChild({ start: "register" }, NAME);
+
+    expect(run.code).toBe(0);
     expect(run.result.status.state).toBe("shut-down");
+    expect(run.stderrLines.filter((line) => line.level === "error")).toEqual([]);
     expect(run.result.sockets).toEqual([]);
   });
 
