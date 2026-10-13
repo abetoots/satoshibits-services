@@ -24,7 +24,7 @@ import type { Redactor } from "./redaction.mjs";
 import type { Attributes } from "@opentelemetry/api";
 import type { Resource } from "@opentelemetry/resources";
 
-import { isThenable } from "./redaction.mjs";
+import { abandon, isThenable } from "./redaction.mjs";
 
 // not yet in the stable semantic-conventions export
 const ATTR_SERVICE_NAMESPACE = "service.namespace";
@@ -62,13 +62,17 @@ const IDENTITY_KEYS: ReadonlySet<string> = new Set([
   ATTR_SERVICE_INSTANCE_ID,
 ]);
 
+/**
+ * The SDK takes a promise for an attribute's value and waits for it: such a
+ * value would be exported without the policy ever having seen it. A resource
+ * attribute is a value. Every promise found is first given a handler, so that
+ * none is left to reject unheard once the set is refused.
+ */
 function refuseDeferred(attributes: Attributes, what: string): void {
-  for (const [key, value] of Object.entries(attributes)) {
-    if (!isThenable(value)) continue;
-    // not left to reject unheard once it has been refused
-    (value as unknown as PromiseLike<unknown>).then(undefined, () => undefined);
-    throw new TypeError(`${what} is a promise, not a value: ${key}`);
-  }
+  const deferred = Object.entries(attributes).filter(([, value]) => isThenable(value));
+  if (deferred.length === 0) return;
+  for (const [, value] of deferred) abandon(value);
+  throw new TypeError(`${what} is a promise, not a value: ${deferred[0]![0]}`);
 }
 
 export function buildResource(config: ResolvedConfig, redactor: Redactor): Resource {
@@ -91,6 +95,10 @@ export function buildResource(config: ResolvedConfig, redactor: Redactor): Resou
     ...config.environmentAttributes,
   };
 
+  // checked on everything gathered, before any key is dropped: a promise under a key that
+  // is about to be dropped would otherwise be let go of with nobody listening to it
+  refuseDeferred(merged, "a resource attribute");
+
   // everything that will be exported goes to the policy, the two identity keys aside,
   // wherever a value came from: the SDK, an option, or OTEL_RESOURCE_ATTRIBUTES
   const kept: Attributes = {};
@@ -98,9 +106,6 @@ export function buildResource(config: ResolvedConfig, redactor: Redactor): Resou
     if (!isDroppedResourceKey(key) && !IDENTITY_KEYS.has(key)) kept[key] = value;
   }
 
-  // The SDK takes a promise for an attribute's value and waits for it: such a value would
-  // be exported without the policy ever having seen it. A resource attribute is a value.
-  refuseDeferred(kept, "a resource attribute");
   const exported = redactor.attributes("resource", kept);
   refuseDeferred(exported, "a resource attribute the redaction policy returned");
 
