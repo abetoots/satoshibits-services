@@ -277,6 +277,11 @@ describe("the standard policy on a log record", () => {
     });
   });
 
+  it("passes on only the fields it has read", () => {
+    const record = { body: "b", attributes: {}, added: "to a@b.io", severityText: "INFO" };
+    expect(standardPolicy.logRecord(record)).toStrictEqual({ body: "b", attributes: {}, severityText: "INFO" });
+  });
+
   it("adds no event name or severity text where there was none", () => {
     const result = standardPolicy.logRecord({ body: "b", attributes: {} });
     expect(Object.keys(result).sort()).toEqual(["attributes", "body"]);
@@ -456,7 +461,7 @@ describe("a policy of one's own, from the parts", () => {
     });
   });
 
-  it("allows a key exactly as written, and only at the level it is written", () => {
+  it("allows a key exactly as written", () => {
     const policy = createPolicy({ ...standardParts, allowKeys: ["enduser.id"] });
     expect(policy.attributes("span", { "enduser.id": "a@b.io", "Enduser.Id": "a@b.io" })).toEqual({
       "enduser.id": "a@b.io",
