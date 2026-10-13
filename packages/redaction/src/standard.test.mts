@@ -414,19 +414,6 @@ describe("redactFields: the standard policy over a logger's fields", () => {
     expect(innermost(redactFields(nested(33)))).toBe("[TOO_DEEP]");
   });
 
-  it("walks an object that is reached by many paths once, not once per path", () => {
-    // each level holds the one below twice: 2^20 paths to the bottom, a million walks if each were taken
-    let shared: Record<string, unknown> = { email: "a@b.io", password: SECRET };
-    for (let level = 0; level < 20; level++) shared = { left: shared, right: shared };
-    const before = performance.now();
-    const result = redactFields(shared) as { left: unknown; right: unknown };
-    expect(performance.now() - before).toBeLessThan(250);
-    expect(result.left).toBe(result.right);
-    let bottom: unknown = result;
-    while (typeof bottom === "object" && bottom !== null && "left" in bottom) bottom = bottom.left;
-    expect(bottom).toEqual({ email: "[EMAIL]", password: REDACTED });
-  });
-
   describe("an object reached both deep and shallow", () => {
     const leaf = { inner: { email: "a@b.io", password: SECRET } };
     const under = (levels: number, value: unknown): unknown => {
@@ -467,18 +454,57 @@ describe("redactFields: the standard policy over a logger's fields", () => {
     });
   });
 
-  it("marks a cycle the same way whichever path reaches it first", () => {
-    const build = (): { first: Record<string, unknown>; second: Record<string, unknown> } => {
+  describe("a cycle reached by more than one path", () => {
+    const pair = (): { first: Record<string, unknown>; second: Record<string, unknown> } => {
       const first: Record<string, unknown> = { name: "first" };
       const second: Record<string, unknown> = { name: "second", first };
       first.second = second;
       return { first, second };
     };
-    const { first, second } = build();
-    const expectedFirst = { name: "first", second: { name: "second", first: "[CIRCULAR]" } };
-    const expectedSecond = { name: "second", first: { name: "first", second: "[CIRCULAR]" } };
-    expect(redactFields({ a: first, b: second })).toEqual({ a: expectedFirst, b: expectedSecond });
-    expect(redactFields({ b: second, a: first })).toEqual({ b: expectedSecond, a: expectedFirst });
+    const fromFirst = { name: "first", second: { name: "second", first: "[CIRCULAR]" } };
+    const fromSecond = { name: "second", first: { name: "first", second: "[CIRCULAR]" } };
+
+    it("is marked where it closes on each path, whichever is walked first", () => {
+      const { first, second } = pair();
+      expect(redactFields({ a: first, b: second })).toEqual({ a: fromFirst, b: fromSecond });
+      expect(redactFields({ b: second, a: first })).toEqual({ b: fromSecond, a: fromFirst });
+    });
+
+    it("is marked by what contains it there, not by where it was met before at the same depth", () => {
+      const { first, second } = pair();
+      // `second` is reached at the same depth twice: inside `first`, and where `first` does not contain it
+      expect(redactFields({ a: first, b: { x: second } })).toEqual({ a: fromFirst, b: { x: fromSecond } });
+      expect(redactFields({ b: { x: second }, a: first })).toEqual({ b: { x: fromSecond }, a: fromFirst });
+    });
+
+    it.each([
+      ["the longer path first", true],
+      ["the shorter path first", false],
+    ])("is marked as a cycle, not as too deep, when it closes at the last level followed, with %s", (_order, longerFirst) => {
+      // a ring of 31 objects: from `ring` the walk comes back to it at the 32nd level
+      const ring: Record<string, unknown> = {};
+      let link = ring;
+      for (let index = 0; index < 29; index++) link = { next: link };
+      const entry = { next: link };
+      ring.x = entry;
+      const longer = { x: entry };
+      const fields = longerFirst ? { a: longer, b: ring } : { b: ring, a: longer };
+      let value: unknown = (redactFields(fields) as { b: { x: unknown } }).b.x;
+      while (typeof value === "object" && value !== null) value = (value as { next: unknown }).next;
+      expect(value).toBe("[CIRCULAR]");
+    });
+
+    it("is marked the same through an attribute set and a log record", () => {
+      const { first, second } = pair();
+      expect(standardPolicy.attributes("span", { a: first, b: { x: second } })).toEqual({
+        a: fromFirst,
+        b: { x: fromSecond },
+      });
+      expect(standardPolicy.logRecord({ body: { a: first, b: { x: second } }, attributes: {} }).body).toEqual({
+        a: fromFirst,
+        b: { x: fromSecond },
+      });
+    });
   });
 
   it("does not change what it is given", () => {

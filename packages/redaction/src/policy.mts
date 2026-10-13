@@ -97,15 +97,6 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   return prototype === null || Object.getPrototypeOf(prototype) === null;
 };
 
-/** what one call keeps while it walks one value */
-interface Walk {
-  /** what each object became, by the depth it was reached at */
-  remembered: Map<object, Map<number, unknown>>;
-  /** how many times an object was found inside itself so far */
-  circular: number;
-}
-const newWalk = (): Walk => ({ remembered: new Map(), circular: 0 });
-
 interface Engine {
   text: (value: string) => string;
   /** an object's entries, each decided by its key; `without` names keys to leave out */
@@ -144,43 +135,29 @@ function createEngine(parts: PolicyParts): Engine {
    * One walk of one value. `ancestors` are the objects being walked, from the
    * outermost in: one found again contains itself.
    *
-   * `walk.remembered` holds what an object became at a depth, so one that is
-   * reached by several paths is walked once per depth and not once per path
-   * (which doubles the work at every level of a structure that shares its
-   * parts). What an object becomes depends on its depth (where the walk
-   * stops) and, when something beneath it contains one of its ancestors, on
-   * the path: a result with such a mark beneath it is not remembered.
+   * Nothing is remembered between the places an object is reached from: what
+   * it becomes depends on how deep it lies and on what contains it there. A
+   * structure that shares its parts is therefore walked once per path, as it
+   * is by whatever writes it out afterwards.
    */
-  const walk = (given: unknown, ancestors: object[], call: Walk): unknown => {
+  const walk = (given: unknown, ancestors: object[]): unknown => {
     if (typeof given === "string") return text(given);
     const isArray = Array.isArray(given);
     // anything that is neither is left as given: a number, a date, a buffer, an error
     if (!isArray && !isPlainObject(given)) return given;
-    if (ancestors.includes(given)) {
-      call.circular++;
-      return CIRCULAR;
-    }
-    const depth = ancestors.length;
-    if (depth >= MAX_DEPTH) return TOO_DEEP;
-    const atDepth = call.remembered.get(given);
-    if (atDepth?.has(depth) === true) return atDepth.get(depth);
-    const circularBefore = call.circular;
+    if (ancestors.includes(given)) return CIRCULAR;
+    if (ancestors.length >= MAX_DEPTH) return TOO_DEEP;
     ancestors.push(given);
     const result = isArray
-      ? given.map((item) => walk(item, ancestors, call))
-      : walkEntries(given, ancestors, call);
+      ? given.map((item) => walk(item, ancestors))
+      : walkEntries(given, ancestors);
     ancestors.pop();
-    if (call.circular === circularBefore) {
-      if (atDepth === undefined) call.remembered.set(given, new Map([[depth, result]]));
-      else atDepth.set(depth, result);
-    }
     return result;
   };
 
   const walkEntries = (
     given: Record<string, unknown>,
     ancestors: object[],
-    call: Walk,
     without?: ReadonlySet<string>,
   ): Record<string, unknown> => {
     const kept: [string, unknown][] = [];
@@ -201,7 +178,7 @@ function createEngine(parts: PolicyParts): Engine {
               : parts.replacement
             : decision === "url" && typeof value === "string"
               ? text(cutUrl(value))
-              : walk(value, ancestors, call),
+              : walk(value, ancestors),
       ]);
     }
     // from entries, so that a key named "__proto__" is a key and nothing more
@@ -210,8 +187,8 @@ function createEngine(parts: PolicyParts): Engine {
 
   return {
     text,
-    entries: (given, without) => walkEntries(given, [given], newWalk(), without),
-    value: (given) => walk(given, [], newWalk()),
+    entries: (given, without) => walkEntries(given, [given], without),
+    value: (given) => walk(given, []),
   };
 }
 

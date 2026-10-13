@@ -135,8 +135,8 @@ describe("the pino wiring in the redaction package's README", () => {
   // the options as the README gives them; the destination is this test's
   const logger = pino(
     {
-      serializers: { err: describeError },
-      hooks: { streamWrite: (line) => `${JSON.stringify(redactFields(JSON.parse(line)))}\n` },
+      serializers: { err: (error: unknown) => redactFields(describeError(error)) },
+      formatters: { log: (fields) => redactFields(fields) as Record<string, unknown> },
     },
     { write: (line: string) => lines.push(line) },
   );
@@ -144,45 +144,41 @@ describe("the pino wiring in the redaction package's README", () => {
   it("is what the README shows", () => {
     const readme = readFileSync(path.join(REDACTION_PACKAGE, "README.md"), "utf8");
     for (const line of [
-      "serializers: { err: describeError },",
-      "hooks: { streamWrite: (line) => `${JSON.stringify(redactFields(JSON.parse(line)))}\\n` },",
+      "serializers: { err: (error) => redactFields(describeError(error)) },",
+      "formatters: { log: (fields) => redactFields(fields) as Record<string, unknown> },",
     ]) {
       expect(readme).toContain(line);
     }
   });
 
-  it("masks a field, an error's message and stack, and the message", () => {
+  it("covers what the README says it covers: a line's fields, at any depth, and its errors", () => {
     logger.info(
-      { to: "a@b.io", password: "s3cr3t-value", err: new Error("no mailbox jane@example.com") },
-      "sent to %s",
-      "c@d.io",
+      {
+        to: "a@b.io",
+        password: "s3cr3t-value",
+        nested: { list: [{ owner: "c@d.io" }] },
+        err: new Error("no mailbox jane@example.com"),
+      },
+      "sent",
     );
     const line = logged();
-    expect(line.to).toBe("[EMAIL]");
-    expect(line.password).toBe("[REDACTED]");
-    expect(line.msg).toBe("sent to [EMAIL]");
-    expect(line.err).toMatchObject({ name: "Error", message: "no mailbox [EMAIL]" });
-    expect(lines.at(-1)).not.toContain("jane@example.com");
-    expect(lines.at(-1)!.endsWith("\n")).toBe(true);
+    expect(line).toMatchObject({
+      to: "[EMAIL]",
+      password: "[REDACTED]",
+      nested: { list: [{ owner: "[EMAIL]" }] },
+      err: { name: "Error", message: "no mailbox [EMAIL]" },
+      msg: "sent",
+    });
+    // the stack too: the address is nowhere in the line
+    for (const address of ["a@b.io", "c@d.io", "jane@example.com"]) expect(lines.at(-1)).not.toContain(address);
   });
 
-  it.each<[string, (log: typeof logger) => void]>([
-    ["an object put into the message", (log) => log.info({}, "sent to %j", { email: "jane@example.com" })],
-    ["an address assembled by the message", (log) => log.info("sent to %s@%s", "jane", "example.com")],
-    ["an error logged with no message of its own", (log) => log.error(new Error("bare jane@example.com"))],
-    ["a child logger's bindings", (log) => log.child({ owner: "jane@example.com" }).info("m")],
-    ["a field several levels down", (log) => log.info({ a: { b: [{ c: "jane@example.com" }] } }, "m")],
-  ])("leaves no way round for %s", (_what, write) => {
-    write(logger);
-    expect(lines.at(-1)).not.toContain("jane@example.com");
-    expect(lines.at(-1)).toContain("[EMAIL]");
+  it("leaves a large integer as pino wrote it: the line is not parsed again", () => {
+    logger.info({ id: 9007199254740993n }, "m");
+    expect(lines.at(-1)).toContain('"id":9007199254740993');
   });
 
-  it("keeps the line a line of JSON with pino's own fields as they were", () => {
-    logger.warn({ n: 1 }, "m");
-    expect(logged()).toMatchObject({ level: 40, n: 1, msg: "m", time: expect.any(Number) as unknown });
-  });
-
+  // the two facts about pino the README states; if pino changes either, the README is wrong
   it("redacting in formatters.log alone would let an error's text pass: pino runs it before serializers", () => {
     const plain: string[] = [];
     pino(
@@ -193,5 +189,10 @@ describe("the pino wiring in the redaction package's README", () => {
       { write: (line: string) => plain.push(line) },
     ).info({ err: new Error("no mailbox jane@example.com") }, "m");
     expect(plain[0]).toContain("jane@example.com");
+  });
+
+  it("does not cover the message, as the README says", () => {
+    logger.info("sent to %s", "jane@example.com");
+    expect(logged().msg).toBe("sent to jane@example.com");
   });
 });
