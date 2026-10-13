@@ -421,18 +421,85 @@ describe("startTestTelemetry", () => {
         });
         expect(unhandled).toEqual([]);
         expect(getStatus().state).toBe("running");
+        // and what was running is as it was: it still exports
+        trace.getTracer("t").startSpan("after the refused second start").end();
+        expect((await telemetry.spans()).map((span) => span.name)).toEqual([
+          "after the refused second start",
+        ]);
       });
 
+      class Attributes {
+        a = "b";
+      }
       it.each([
         ["a promise for the set", () => Promise.resolve({ a: "b" })],
         ["an array", () => ["a"]],
         ["a Map", () => new Map([["a", "b"]])],
         ["a string", () => "a=b"],
-      ])("refuses resourceAttributes that is %s, where it would otherwise be read as none or as numbered keys", (_what, given) => {
-        const attempt = () => startTestTelemetry({ resourceAttributes: given() as never });
-        expect(attempt).toThrow(PresetConfigError);
-        expect(attempt).toThrow("resourceAttributes must be an object of attribute values");
+        ["null", () => null],
+        // these two are objects of values, read only in part before: their inherited members were not exported
+        ["a class instance", () => new Attributes()],
+        ["an object made from another", () => Object.create({ a: "b" }) as object],
+      ])("refuses resourceAttributes that is %s, in validation", (_what, given) => {
+        vi.stubEnv("OTEL_BSP_SCHEDULE_DELAY", "not-a-number");
+        let sinkCreated = false;
+        const problems = (() => {
+          try {
+            startTestTelemetry({
+              resourceAttributes: given() as never,
+              diagnostics: () => {
+                sinkCreated = true;
+                return () => undefined;
+              },
+            });
+          } catch (error) {
+            if (!(error instanceof PresetConfigError)) throw error;
+            return error.problems;
+          }
+          return [];
+        })();
+        expect(problems).toEqual([
+          "resourceAttributes must be a plain object of attribute values, such as an object literal",
+        ]);
+        expect(sinkCreated).toBe(false);
+        expectNoDiagLoggerLeftBehind();
         expect(getStatus().state).toBe("not-started");
+      });
+
+      it.each([
+        ["an object literal", () => ({ kept: "v" })],
+        ["a null-prototype object", () => Object.assign(Object.create(null) as object, { kept: "v" })],
+        ["a plain object from another realm", () => runInNewContext('({ kept: "v" })') as object],
+        ["a frozen object", () => Object.freeze({ kept: "v" })],
+      ])("accepts resourceAttributes that is %s", async (_what, given) => {
+        telemetry = startTestTelemetry({ resourceAttributes: given() as never });
+        trace.getTracer("t").startSpan("s").end();
+        expect((await telemetry.spans())[0]!.resource.attributes.kept).toBe("v");
+      });
+
+      it("names a refused key so that it cannot pass for another line, and marks one it had to cut", () => {
+        const long = "k".repeat(81);
+        const problems = (() => {
+          try {
+            startTestTelemetry({
+              resourceAttributes: {
+                'line one\n  - forged: all is well "quoted"': Promise.resolve("a") as never,
+                "with space: and colon": Promise.resolve("b") as never,
+                [long]: Promise.resolve("c") as never,
+              },
+            });
+          } catch (error) {
+            return error instanceof PresetConfigError ? error.problems : [];
+          }
+          return [];
+        })();
+        expect(problems).toEqual([
+          'a resource attribute is a promise, not a value: "line one\\n  - forged: all is well \\"quoted\\""',
+          'a resource attribute is a promise, not a value: "with space: and colon"',
+          `a resource attribute is a promise, not a value: "${"k".repeat(80)}…"`,
+        ]);
+        // each problem is one line of the message, whatever the key held
+        expect(problems.every((problem) => !problem.includes("\n"))).toBe(true);
       });
 
       it("names each of them in the problems", () => {
@@ -517,7 +584,7 @@ describe("startTestTelemetry", () => {
                 attributes: () => ({ first: failingLater(), second: failingLater(), kept: "a value" }),
               }),
             }),
-          ).toThrow("a resource attribute the redaction policy returned is a promise, not a value: first");
+          ).toThrow('a resource attribute the redaction policy returned is a promise, not a value: "first"');
         });
         expect(unhandled).toEqual([]);
         expect(getStatus().state).toBe("not-started");

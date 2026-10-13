@@ -82,6 +82,15 @@ export const shown = (value: unknown): string =>
       ? `"${value}"`
       : NOT_SHOWN;
 
+/**
+ * A key the caller wrote in code (an attribute's name), as it may appear in a
+ * message: quoted and escaped, so a line break in it cannot pass for another
+ * line of the message, and cut to a length a message can carry, with a mark
+ * when it was cut.
+ */
+export const quotedKey = (key: string): string =>
+  JSON.stringify(key.length > 80 ? `${key.slice(0, 80)}…` : key);
+
 const API_LEVELS: Record<string, DiagLogLevel> = {
   NONE: DiagLogLevel.NONE,
   ERROR: DiagLogLevel.ERROR,
