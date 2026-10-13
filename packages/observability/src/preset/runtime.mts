@@ -64,7 +64,7 @@ import {
   resolveConfig,
   SIGNALS,
 } from "./config.mjs";
-import { createDiagnostics, createRateLimiter } from "./diagnostics.mjs";
+import { createDiagnostics, createRateLimiter, quotedKey } from "./diagnostics.mjs";
 import {
   createLogRecordExporter,
   createMetricExporter,
@@ -221,7 +221,7 @@ export function mergeInstrumentationConfig(
       // `false` for "off" is a natural guess, and would otherwise be ignored without a word
       throw new PresetConfigError([
         // the name is a key the caller wrote in code, not a value from the environment
-        `instrumentations: the settings for "${name.slice(0, 80)}" must be an object, such as { enabled: false }`,
+        `instrumentations: the settings for ${quotedKey(name)} must be an object, such as { enabled: false }`,
       ]);
     }
     // a setting given as undefined is one not given: the preset's stays
