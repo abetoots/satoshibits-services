@@ -51,13 +51,34 @@ const read = (from: object, property: string): unknown => {
 const isIdentifier = (value: unknown): value is string =>
   typeof value === "string" && IDENTIFIER.test(value);
 
+/** whether a property is the object's own; false when it refuses to say */
+const hasOwn = (object: object, property: string): boolean => {
+  try {
+    return Object.prototype.hasOwnProperty.call(object, property);
+  } catch {
+    return false;
+  }
+};
+
+/** a structure that can have a code: an object that is not an array; false when it refuses to say */
+const isStructure = (value: unknown): value is object => {
+  try {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+  } catch {
+    return false;
+  }
+};
+
 /**
  * An error's name: the one it gives itself, or its class's name when it only
- * inherits "Error" (a class that extends `Error` and sets no name).
+ * inherits "Error" (a class that extends `Error` and sets no name). An error
+ * that names itself "Error" keeps that name.
  */
 const nameOf = (error: object): string => {
   const name = read(error, "name");
-  if (name !== "Error") return isIdentifier(name) ? name : "Error";
+  if (name !== "Error" || hasOwn(error, "name")) {
+    return isIdentifier(name) ? name : "Error";
+  }
   const constructor = read(error, "constructor");
   const className =
     typeof constructor === "function" ? read(constructor, "name") : undefined;
@@ -98,10 +119,7 @@ export function describeError(error: unknown): ErrorDescription | ThrownDescript
   const stack = read(error, "stack");
   const cause = read(error, "cause");
   const causeIsError = isError(cause);
-  const causeCode =
-    typeof cause === "object" && cause !== null && !Array.isArray(cause)
-      ? read(cause, "code")
-      : undefined;
+  const causeCode = isStructure(cause) ? read(cause, "code") : undefined;
 
   return {
     name: nameOf(error),

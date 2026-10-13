@@ -24,6 +24,7 @@ export {
   maskProviderKeys,
   maskSsns,
   maskUuids,
+  maskVendorKeys,
 } from "./masks.mjs";
 
 export { cutUrl, cutUrls } from "./urls.mjs";

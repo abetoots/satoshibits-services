@@ -115,6 +115,7 @@ const isSegmentCharacter = (code: number): boolean =>
 /**
  * JWTs: three base64url segments joined by dots, the first starting `eyJ`
  * (a JSON object's opening brace and quote, encoded) at the start of a word.
+ * A hyphen that ends the third segment is not taken as part of it.
  *
  * A prefix that does not start a token costs one walk over its first
  * segment, and the scan resumes after that segment: a prefix inside it would
@@ -141,7 +142,7 @@ export const maskJwts =
         if (first > start + 3 && text.charCodeAt(first) === 46) {
           const second = segmentEnd(first + 1);
           if (second > first + 1 && text.charCodeAt(second) === 46) {
-            // the token ends at the last letter or digit of its third segment
+            // the token does not end in a hyphen: the third segment is cut back to its last other character
             let end = segmentEnd(second + 1);
             while (end > second + 1 && text.charCodeAt(end - 1) === 45) end--;
             if (end > second + 1) {
@@ -176,27 +177,45 @@ export const maskLongDigits = patternMask(/\b\d{13,}\b/g);
 /** thirteen to nineteen digits written in groups, which the rule for a run of digits misses */
 export const maskGroupedDigits = patternMask(/\b\d(?:[ -]?\d){12,18}\b/g);
 
+/** the key shapes of named vendors, as alternatives of one pattern */
+const VENDOR_KEYS = [
+  // Stripe
+  "(?:sk|pk)_(?:live|test)_[A-Za-z0-9]{24,}",
+  // AWS access key ids, long-term and temporary
+  "A[KS]IA[A-Z0-9]{16}",
+  // Google
+  "AIza[0-9A-Za-z_-]{35}",
+  // GitHub
+  "(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}",
+  "github_pat_[A-Za-z0-9_]{22,}",
+  // Slack
+  "xox[bpas]-[A-Za-z0-9-]{10,}",
+  // SendGrid; a segment longer than any real key's is not looked for: the bound keeps the pattern linear
+  "SG\\.[A-Za-z0-9_-]{1,128}\\.[A-Za-z0-9_-]{1,128}",
+  // OpenAI project keys, Anthropic
+  "sk-(?:proj|ant)[A-Za-z0-9_-]{20,}",
+];
+/** a word that suggests a key, an underscore, and sixteen letters or digits or more */
+const GENERIC_KEY = "(?:api|key|token|secret|auth|bearer)_[A-Za-z0-9]{16,}";
+
+const keyPattern = (alternatives: readonly string[]): RegExp =>
+  new RegExp(`\\b(?:${alternatives.join("|")})\\b`, "gi");
+
 /**
- * Keys with a known prefix: Stripe, AWS access key ids, Google, GitHub,
- * Slack, SendGrid, OpenAI project keys, Anthropic, and the generic
- * `api_`, `key_`, `token_`, `secret_`, `auth_`, `bearer_`. Not a matcher for
+ * Keys with a vendor's prefix: Stripe, AWS access key ids, Google, GitHub,
+ * Slack, SendGrid, OpenAI project keys, Anthropic. Not a matcher for
  * anything long and random: a hash or an id passes.
  */
+export const maskVendorKeys = patternMask(keyPattern(VENDOR_KEYS));
+
+/**
+ * `maskVendorKeys`, and anything that starts `api_`, `key_`, `token_`,
+ * `secret_`, `auth_` or `bearer_` and goes on for sixteen letters or digits.
+ * That second shape is also the shape of an ordinary name
+ * (`api_getUserProfileSettings`): use this where names are not expected.
+ */
 export const maskApiKeys = patternMask(
-  new RegExp(
-    "\\b(?:" +
-      "(?:sk|pk)_(?:live|test)_[A-Za-z0-9]{24,}|" +
-      "(?:api|key|token|secret|auth|bearer)_[A-Za-z0-9]{16,}|" +
-      "A[KS]IA[A-Z0-9]{16}|" +
-      "AIza[0-9A-Za-z_-]{35}|" +
-      "(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|" +
-      "xox[bpas]-[A-Za-z0-9-]{10,}|" +
-      // a segment longer than any real key's is not looked for: the bound keeps the pattern linear
-      "SG\\.[A-Za-z0-9_-]{1,128}\\.[A-Za-z0-9_-]{1,128}|" +
-      "sk-(?:proj|ant)[A-Za-z0-9_-]{20,}" +
-      ")\\b",
-    "gi",
-  ),
+  keyPattern([...VENDOR_KEYS, GENERIC_KEY]),
 );
 
 /**

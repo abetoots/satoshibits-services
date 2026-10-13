@@ -59,8 +59,8 @@ What it does, on every surface:
 
 | In | The standard policy |
 |---|---|
-| any text | cuts every URL down to scheme, host and path (query string, fragment and user-info go); masks email addresses, `Bearer` tokens, JWTs, keys with a known prefix and `password: value` pairs |
-| a key with `password`, `passwd`, `pwd`, `secret`, `credential(s)`, `authorization`, `cookie`, `api key`, `private key` or `connection string` among its words, or ending in `token` | replaces the value whole, an array or an object under it included |
+| any text | cuts every URL down to scheme, host and path (query string, fragment and user-info go); masks email addresses, `Bearer` tokens, JWTs, keys with a vendor's prefix and `password: value` pairs |
+| a key with `password`, `passwd`, `pwd`, `secret`, `credential(s)`, `authorization`, `cookie`, `api key`, `private key` or `connection string` among its words, or ending in `token` | replaces the value whole, an array or an object under it included. A name that only holds such a word is taken too: `aws.secretsmanager.secret.arn` is redacted. Allow it by name if you need it |
 | `client.address`, `network.peer.address` and the names they replaced (`http.client_ip`, `net.peer.ip`, `net.sock.peer.addr`) | drops key and value |
 | `url.query` | drops key and value |
 | `url.full`, `http.url`, `http.target` | removes the query string, fragment and user-info |
@@ -94,11 +94,12 @@ value would merge series.
 The table below is the standard policy run against a recorded list of attribute keys: the ones the
 auto-instrumentation bundle emitted for one Express request, one outbound HTTP request and one pino
 line, and the ones the MongoDB and Redis instrumentations declare (nothing connects to a database when
-the list is recorded). A test regenerates it and fails when this text differs. It covers the keys
-listed, not every key an instrumentation could emit.
+the list is recorded). Each key is tried on the surface it was recorded on; the span events recorded
+are `exception` events. A test regenerates the table and fails when this text differs. It covers the
+keys listed, not every key an instrumentation could emit.
 
 <!-- standard-policy-table:start -->
-| Key | Where it comes from | What the standard policy does |
+| Key | Where it comes from | What the standard policy does there |
 |---|---|---|
 | `client.address` | captured on a span | dropped, key and value |
 | `db.client.connection.pool.name` | declared by mongodb | kept; a text value passes the text masks |
@@ -108,8 +109,8 @@ listed, not every key an instrumentation could emit.
 | `db.operation.name` | declared by mongodb; declared by redis; declared by ioredis | kept; a text value passes the text masks |
 | `db.query.text` | declared by mongodb; declared by redis; declared by ioredis | kept; a text value passes the text masks |
 | `db.system.name` | declared by mongodb; declared by redis; declared by ioredis | kept; a text value passes the text masks |
-| `exception.message` | captured on a span event | kept; a text value passes the text masks |
-| `exception.stacktrace` | captured on a span event | kept; a text value passes the text masks |
+| `exception.message` | captured on a span event | dropped, key and value |
+| `exception.stacktrace` | captured on a span event | dropped, key and value |
 | `exception.type` | captured on a span event | kept; a text value passes the text masks |
 | `express.name` | captured on a span | kept; a text value passes the text masks |
 | `express.type` | captured on a span | kept; a text value passes the text masks |
@@ -160,17 +161,32 @@ console.log(redactFields({ err: describeError(failure) }));
 // → {"err":{"name":"TypeError","message":"no mailbox [EMAIL]","code":"EENVELOPE"}}
 ```
 
-With pino, apply it where the line's fields are formed:
+The key rules look at each key by itself, at every level. A rule written for a dotted attribute name
+(`client.address`, `url.full`) matches that spelling: in `{ client: { address } }` the key is `address`,
+and no standard rule names it.
+
+With pino there are three places a value can be, and each needs the policy:
 
 ```typescript
 import pino from "pino";
 import { describeError, redactFields } from "@satoshibits/redaction";
 
 const logger = pino({
-  serializers: { err: describeError },
+  // an error: pino applies serializers after `formatters.log`, so the description is redacted here
+  serializers: { err: (error) => redactFields(describeError(error)) },
+  // every other field of the line
   formatters: { log: (fields) => redactFields(fields) as Record<string, unknown> },
+  // the message and the values interpolated into it, which are not fields
+  hooks: {
+    logMethod(args, method) {
+      method.apply(this, args.map((arg) => (typeof arg === "string" ? redactFields(arg) : arg)) as typeof args);
+    },
+  },
 });
 ```
+
+One path is left: `logger.error(err)` with no message makes the error's message the line's `msg`,
+unmasked. Pass a message of your own with an error.
 
 ## Describing an error
 
@@ -255,7 +271,8 @@ the text masks.
 ### Key rules
 
 A rule looks at a key as it is built. A dotted key is segments, and a segment is words, separated by
-anything that is not a letter or a digit and by a change of case. A word matches a word.
+anything that is not a letter or a digit, by a change of case, and between a letter and a digit
+(`Password1` is `password` and `1`). A word matches a word.
 
 ```ts
 import { exactKeys, keyEndsWith, keyWords, wordsOfKey } from "@satoshibits/redaction";
@@ -292,9 +309,10 @@ not with its square, whatever the text is.
 | `maskEmails(replacement?)` | email addresses, with `[EMAIL]`, a text of yours, or a function of the local part and the domain |
 | `maskBearerTokens(replacement?)` | `Bearer <token>`, the scheme included, in any case; a word of eight characters or more after the word "bearer" in a sentence goes too |
 | `maskJwts(replacement?)` | three base64url segments, the first starting `eyJ` |
-| `maskApiKeys(replacement?)` | keys with a known prefix: Stripe, AWS access key ids, Google, GitHub, Slack, SendGrid, OpenAI project keys, Anthropic, and `api_`, `key_`, `token_`, `secret_`, `auth_`, `bearer_` followed by 16 characters or more |
+| `maskVendorKeys(replacement?)` | keys with a vendor's prefix: Stripe, AWS access key ids, Google, GitHub, Slack, SendGrid, OpenAI project keys, Anthropic |
 | `maskProviderKeys(replacement?)` | `sk-…` and `AIza…` at the shorter lengths an AI provider quotes back in an error; a model id such as `gpt-4o-mini` passes |
 | `maskPasswordPairs(replacement?)` | the value in `password: value` (also `passwd`, `pwd`) |
+| `maskApiKeys(replacement?)` | what `maskVendorKeys` does, and `api_`, `key_`, `token_`, `secret_`, `auth_` or `bearer_` followed by 16 letters or digits or more, which is also the shape of a name such as `api_getUserProfileSettings` |
 | `maskCardNumbers(replacement?)` | sixteen digits in four groups |
 | `maskLongDigits(replacement?)` | thirteen digits or more in a row |
 | `maskGroupedDigits(replacement?)` | thirteen to nineteen digits written in groups |
@@ -303,7 +321,8 @@ not with its square, whatever the text is.
 | `maskIpv4Addresses(replacement?)` | IPv4 addresses |
 | `maskUuids(replacement?)` | UUIDs |
 
-The first seven are the standard policy's, in that order. `composeMasks(...masks)` makes one of several.
+The first seven are the standard policy's, in that order. A replacement is used as written: `$&` in it
+means those two characters. `composeMasks(...masks)` makes one of several.
 `cutUrl(value)` cuts a value that is one URL, or a path with a query.
 
 For text sent to or returned by an AI provider:
@@ -326,7 +345,9 @@ console.log(incoming("401 Incorrect API key provided: sk-proj-Ab12Cd34Ef56Gh78. 
 
 - **URLs in a text** are recognised in the `scheme://` spelling only, and end at whitespace.
 - **Nested values** are followed 32 levels deep; below that a value is replaced with `[TOO_DEEP]`. An
-  object that contains itself is replaced with `[CIRCULAR]` where it repeats.
+  object that contains itself is replaced with `[CIRCULAR]` where it repeats. An object reached by
+  several paths is walked once, and appears in the result as one object in each of those places.
+- **An allowed key wins over everything**, the drop of an exception's message on a span included.
 - **A policy must answer at once** and the same way each time for the same input; the ones built here do.
 - **Keys are matched as written.** `exactKeys` and `allowKeys` are case-sensitive; `keyWords` and
   `keyEndsWith` are not.
