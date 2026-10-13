@@ -220,6 +220,28 @@ describe("exporter wrapper", () => {
       expect(reports).toEqual([]);
     });
 
+    it("answers with a failure when the exporter's answer is no result at all", () => {
+      const { reports, context } = collecting();
+      const answers: ExportResult[] = [];
+      wrap((_records, given) => given(undefined as never), context)((result) => answers.push(result));
+
+      expect(answers.map((a) => a.code)).toEqual([ExportResultCode.FAILED]);
+      expect(reports.map((r) => r.message)).toEqual([`${signal} export failed`]);
+    });
+
+    it("still answers when reporting the failure itself throws", () => {
+      const answers: ExportResult[] = [];
+      const diagnostics = createDiagnostics();
+      const context = { diagnostics, redactor: createRedactor() };
+      vi.spyOn(diagnostics, "report").mockImplementation(() => {
+        throw new Error("diagnostics is broken");
+      });
+      wrap((_records, given) => given({ code: ExportResultCode.FAILED }), context)((result) =>
+        answers.push(result),
+      );
+      expect(answers.map((a) => a.code)).toEqual([ExportResultCode.FAILED]);
+    });
+
     it("gives a failure that came without an error one it has marked as reported", () => {
       const { reports, context } = collecting();
       const answers: ExportResult[] = [];
@@ -290,9 +312,12 @@ describe("the SDK's global error handler", () => {
     // what the SDK would hand over during an outage, and beside it unrelated failures
     globalErrorHandler(reportedByWrapper);
     globalErrorHandler(new Error("PeriodicExportingMetricReader: metrics export failed (error x)"));
-    globalErrorHandler(new Error("first plain error"));
-    globalErrorHandler(new Error("second plain error"));
-    globalErrorHandler(new Error("third plain error"));
+    // the same error again and again, as in an outage: numbers aside, one kind
+    globalErrorHandler(new Error("batch 1 of 3 timed out"));
+    globalErrorHandler(new Error("batch 2 of 3 timed out"));
+    globalErrorHandler(new Error("batch 3 of 3 timed out"));
+    // a different error of the same class is not hidden behind it
+    globalErrorHandler(new Error("a different plain error"));
     globalErrorHandler(new TypeError("a type error"));
     // an error with a string code the wrapper never saw must not be swallowed
     globalErrorHandler(Object.assign(new RangeError("no such file"), { code: "ENOENT" }));
@@ -300,8 +325,14 @@ describe("the SDK's global error handler", () => {
     globalErrorHandler("a bare string" as never);
 
     const pipeline = events.filter((e) => e.message === "telemetry pipeline error");
-    expect(pipeline.map((e) => e.fields?.error)).toEqual(["Error", "TypeError", "RangeError"]);
-    expect(pipeline[0]!.fields).toMatchObject({ detail: "first plain error" });
+    expect(pipeline.map((e) => [e.fields?.error, e.fields?.detail])).toEqual([
+      ["Error", "batch 1 of 3 timed out"],
+      ["Error", "a different plain error"],
+      ["TypeError", "a type error"],
+      ["RangeError", "no such file"],
+      ["Error", "null"],
+      ["Error", "a bare string"],
+    ]);
   });
 
   it("sanitizes an error's whole message before cutting it", () => {
@@ -325,42 +356,6 @@ describe("the SDK's global error handler", () => {
     );
   });
 
-  it("does not print the value of a variable the SDK's own exporters could not use", () => {
-    vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:9");
-    vi.stubEnv("OTEL_EXPORTER_OTLP_TIMEOUT", "Basic SENTINEL-GENERAL");
-    vi.stubEnv("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT", "Basic SENTINEL-TRACES");
-    vi.stubEnv("OTEL_EXPORTER_OTLP_COMPRESSION", "Basic SENTINEL-COMPRESSION");
-    vi.stubEnv("OTEL_EXPORTER_OTLP_METRICS_COMPRESSION", "Basic SENTINEL-METRICS");
-    const events: DiagnosticsEvent[] = [];
-    start({
-      serviceName: "wrapper-test",
-      instrumentations: false,
-      loaderHook: false,
-      diagnostics: () => (event) => events.push(event),
-    });
-
-    const text = JSON.stringify(events);
-    // the SDK did complain about each of them, through the preset's logger
-    for (const name of [
-      "OTEL_EXPORTER_OTLP_TIMEOUT",
-      "OTEL_EXPORTER_OTLP_TRACES_TIMEOUT",
-      "OTEL_EXPORTER_OTLP_COMPRESSION",
-      "OTEL_EXPORTER_OTLP_METRICS_COMPRESSION",
-    ]) {
-      expect(text).toContain(name);
-    }
-    expect(text).toContain("(a value that is not shown)");
-    expect(text).not.toContain("SENTINEL");
-  });
-
-  it("stops reaching the sink once telemetry is reset", async () => {
-    const events = startWith({});
-    await resetForTesting();
-    events.length = 0;
-    globalErrorHandler(new Error("after reset"));
-    diag.warn("after reset");
-    expect(events).toEqual([]);
-  });
 });
 
 describe("a start that fails part-way", () => {

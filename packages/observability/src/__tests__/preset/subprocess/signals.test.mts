@@ -324,26 +324,6 @@ describe("rejected configuration", () => {
     expect(registered.stderr).not.toContain("collector.example");
   });
 
-  it.each(["start", "register"] as const)(
-    "%s does not let the SDK's exporters echo a variable they could not use",
-    async (start) => {
-      const run = await runChild(
-        { start },
-        {
-          ...endpoint(),
-          OTEL_EXPORTER_OTLP_TIMEOUT: "Basic SENTINEL-GENERAL",
-          OTEL_EXPORTER_OTLP_LOGS_COMPRESSION: "Basic SENTINEL-SIGNAL",
-        },
-      );
-      // telemetry did start (the child reports its status after shutting down)
-      expect(run.result.status.state).toBe("shut-down");
-      // the exporters did complain, on stderr, and named the variable
-      expect(run.stderr).toContain("OTEL_EXPORTER_OTLP_TIMEOUT");
-      expect(run.stderr).toContain("(a value that is not shown)");
-      expect(run.stderr).not.toContain("SENTINEL");
-    },
-  );
-
   it("the register entry starts from the environment alone", async () => {
     const run = await runChild({ start: "register" }, endpoint());
     expect(run.result.status.state).toBe("shut-down");

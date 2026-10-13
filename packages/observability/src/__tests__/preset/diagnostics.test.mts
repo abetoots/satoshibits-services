@@ -1,5 +1,3 @@
-import { inspect } from "node:util";
-
 import { DiagLogLevel } from "@opentelemetry/api";
 import { describe, expect, it, vi } from "vitest";
 
@@ -112,10 +110,32 @@ describe("diagnostics", () => {
     );
   });
 
-  it("keeps the bracket that closes an IPv6 host, and still leaves sentence punctuation", () => {
-    expect(scrubUrls("connect http://[::1]")).toBe("connect http://[::1]");
-    expect(scrubUrls("(see http://u:SENTINEL@[::1]:4318/p).")).toBe("(see http://[::1]:4318).");
-    expect(scrubUrls("[http://h.example/p]")).toBe("[http://h.example]");
+  it.each([
+    ["connect http://[::1]", "connect http://[::1]"],
+    ["connect http://[::]", "connect http://[::]"],
+    ["(see http://u:SENTINEL@[::1]:4318/p).", "(see http://[::1]:4318)."],
+    ["at http://[2001:db8::]/p?q=SENTINEL, again", "at http://[2001:db8::], again"],
+    ["[http://h.example/p]", "[http://h.example]"],
+  ])("keeps the brackets and colons of an IPv6 host and still leaves punctuation: %s", (text, expected) => {
+    expect(scrubUrls(text)).toBe(expected);
+  });
+
+  it.each([
+    // a quote inside the URL is part of it: password, path and query
+    ["failed http://u:pw'SENTINEL@h.example/p", "failed http://h.example"],
+    ["failed http://h.example/private'SENTINEL?token=SENTINEL", "failed http://h.example"],
+    ['failed http://h.example/p?q="SENTINEL"&r=SENTINEL done', "failed http://h.example done"],
+    // a quoted URL ends at its closing quote, and the text after it is kept
+    ["could not parse 'http://h.example/p?q=SENTINEL', giving up", "could not parse 'http://h.example', giving up"],
+    ['url "http://u:SENTINEL@h.example/p".', 'url "http://h.example".'],
+    // a quoted URL that holds the same quote is cut at the last one: nothing of it is printed
+    ["url 'http://u:pw'SENTINEL@h.example/p' failed", "url 'http://h.example' failed"],
+  ])("cuts the whole URL whatever quotes are in or around it: %s", (text, expected) => {
+    expect(scrubUrls(text)).toBe(expected);
+    const { events, diagnostics } = collecting();
+    diagnostics.activate();
+    diagnostics.report({ level: "error", message: text, fields: { detail: text } });
+    expect(events).toEqual([{ level: "error", message: expected, fields: { detail: expected } }]);
   });
 
   it("sanitizes the whole text before cutting it: a long user-info never passes for a host", () => {
@@ -137,43 +157,6 @@ describe("diagnostics", () => {
     diagnostics.report({ level: "error", message: "m".repeat(501), fields: { detail: "d".repeat(501) } });
     expect(events[0]!.message).toBe(`${"m".repeat(500)}…`);
     expect(events[0]!.fields).toEqual({ detail: `${"d".repeat(500)}…` });
-  });
-
-  it("never prints the value of a telemetry variable, however the SDK quotes it", () => {
-    const events: DiagnosticsEvent[] = [];
-    const header = " Basic SENTINEL-HEADER-VALUE ";
-    const quoted = `SENTINEL "it's"\nmultiline`;
-    const diagnostics = createDiagnostics({
-      sinkFactory: () => (event) => events.push(event),
-      environment: {
-        OTEL_EXPORTER_OTLP_TIMEOUT: header,
-        OTEL_EXPORTER_OTLP_COMPRESSION: quoted,
-        OBS_SOMETHING: "SENTINEL-OBS value",
-        OTEL_EXPORTER_OTLP_PROTOCOL: "http/jsonn",
-        UNRELATED: "an unrelated value",
-      },
-    });
-    diagnostics.activate();
-    // the three shapes the SDK uses: inspected, trimmed in quotes, and as an argument
-    diagnostics.diagLogger.warn(
-      `Unknown value ${inspect(header)} for OTEL_EXPORTER_OTLP_TIMEOUT, expected a number, using defaults`,
-    );
-    diagnostics.diagLogger.warn(
-      `Configuration: OTEL_EXPORTER_OTLP_TIMEOUT is invalid (actual: '${header.trim()}')`,
-    );
-    diagnostics.diagLogger.warn(`Unknown value ${inspect(quoted)} for X`, new Error(quoted));
-    diagnostics.report({ level: "warn", message: "m", fields: { detail: "SENTINEL-OBS value" } });
-    diagnostics.diagLogger.warn("protocol 'http/jsonn' and an unrelated value are left alone");
-
-    expect(JSON.stringify(events)).not.toContain("SENTINEL");
-    expect(events.map((e) => e.message)).toEqual([
-      "Unknown value '(a value that is not shown)' for OTEL_EXPORTER_OTLP_TIMEOUT, expected a number, using defaults",
-      "Configuration: OTEL_EXPORTER_OTLP_TIMEOUT is invalid (actual: '(a value that is not shown)')",
-      expect.stringMatching(/^Unknown value .\(a value that is not shown\). for X Error: \(a value that is not shown\)$/),
-      "m",
-      "protocol 'http/jsonn' and an unrelated value are left alone",
-    ]);
-    expect(events[3]!.fields).toEqual({ detail: "(a value that is not shown)" });
   });
 
   it("quotes a setting's value only when it is a plain token of at most 24 characters", () => {

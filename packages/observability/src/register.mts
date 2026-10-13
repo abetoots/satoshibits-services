@@ -15,8 +15,8 @@ try {
   start();
 } catch (error) {
   // through diagnostics, so the reason is sanitized like any other text: an
-  // error from below the preset can quote a URL or a variable's value
-  const diagnostics = createDiagnostics({ environment: process.env });
+  // error from below the preset can quote a URL
+  const diagnostics = createDiagnostics();
   diagnostics.activate();
   diagnostics.report({
     level: "error",

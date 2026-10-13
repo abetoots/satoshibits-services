@@ -382,9 +382,11 @@ function installErrorHandler(diagnostics: Diagnostics): void {
       ) {
         return;
       }
-      // one limit per kind of error; the kinds are few (the SDK's own classes)
-      // (a program that invents error names without end shares one limit past the first few)
-      const key = limiters.has(name) || limiters.size < 32 ? name : "";
+      // one limit per kind of error: its name and the shape of its message (numbers aside), since
+      // most SDK errors are plain `Error`s and a repeating one must not hide a different one.
+      // Past the first few kinds, the rest share one limit.
+      const kind = `${name}:${message.replace(/\d+/g, "#").slice(0, 80)}`;
+      const key = limiters.has(kind) || limiters.size < 32 ? kind : "";
       let limit = limiters.get(key);
       if (limit === undefined) {
         limit = createRateLimiter(FAILURE_REPORT_INTERVAL_MILLIS);
@@ -449,7 +451,6 @@ export function start(options: StartOptions = {}): PresetStatus {
     logLevel: process.env.OTEL_LOG_LEVEL,
     sinkFactory: options.diagnostics,
     redactText: redactor.text,
-    environment: process.env,
   });
 
   // from here on things are registered. The diagnostics logger goes first: the

@@ -119,15 +119,20 @@ function guarded(
   // exactly one answer per export, and one report for it: an exporter that
   // answers and then throws, or answers twice, is heard the first time only
   let settled = false;
-  const once = (given: ExportResult) => {
+  const once = (given: ExportResult | undefined) => {
     if (settled) return;
     settled = true;
-    let result = given;
+    // an answer that is no result at all is a failed export
+    let result: ExportResult = given ?? { code: ExportResultCode.FAILED };
     if (result.code !== ExportResultCode.SUCCESS) {
       // a failure without an error is given one, so the processor passes this
       // (marked) object on to the SDK's error handler and not one of its own
       result = { ...result, error: result.error ?? new Error("export failed") };
-      report(result.error);
+      try {
+        report(result.error);
+      } catch {
+        // reporting must never keep the answer from the processor
+      }
     }
     try {
       resultCallback(result);
