@@ -554,7 +554,8 @@ describe("no policy, no export", () => {
 
   it.each([
     ["a general endpoint", ENDPOINT],
-    ["one signal's own endpoint", { ...NAME, OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "http://c:4318/v1/metrics" }],
+    ["traces alone", { ...NAME, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://c:4318/v1/traces" }],
+    ["metrics alone", { ...NAME, OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "http://c:4318/v1/metrics" }],
     [
       "logs alone",
       {
@@ -607,6 +608,15 @@ describe("no policy, no export", () => {
     ],
   ])("rejects a redaction that is %s, even when nothing is exported", (_what, redaction, problem) => {
     expect(problemsOf(() => resolveConfig({ redaction: redaction as never }, NAME))).toEqual([problem]);
+  });
+
+  it("rejects a malformed redaction when something is exported too, and does not also ask for one", () => {
+    expect(problemsOf(() => resolveConfig({ redaction: true as never }, ENDPOINT))).toEqual([
+      "redaction must be a policy or false",
+    ]);
+    expect(
+      problemsOf(() => resolveConfig({ redaction: (() => undefined) as never }, NAME, { testExporters: true })),
+    ).toEqual(["redaction must be a policy or false"]);
   });
 
   it("is not asked for when the SDK is disabled", () => {

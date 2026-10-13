@@ -21,7 +21,11 @@ import type { InstrumentationScope } from "@opentelemetry/core";
 /** an attribute set as a policy sees it: plain keys and values */
 export type PolicyAttributes = Record<string, unknown>;
 
-/** where a free text is about to appear */
+/**
+ * Where a free text is about to appear. This list, like the one of attribute
+ * surfaces below, may grow in a later version: a policy that branches on the
+ * surface needs a branch for "anything else".
+ */
 export type TextSurface =
   | "span.name"
   | "scope.name"
@@ -95,13 +99,20 @@ export function redactionProblem(option: unknown): string | undefined {
 /** the policy as the preset applies it to what it wraps */
 export interface Redactor {
   text: (surface: TextSurface, value: string) => string;
-  /** returns the same object when the policy returned it */
+  /** what the policy returned for a copy of the set; `undefined` stays `undefined` */
   attributes: <T extends Attributes | undefined>(
     surface: AttributesSurface,
     attributes: T,
   ) => T;
   /** an instrumentation scope: its name and attributes are chosen by API callers */
   scope: (scope: InstrumentationScope) => InstrumentationScope;
+}
+
+/** an object literal or one without a prototype: not an array, a promise or a class instance */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null) return false;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 const AS_GIVEN: Redactor = {
@@ -114,13 +125,32 @@ export function createRedactor(option: RedactionOption): Redactor {
   if (option === false) return AS_GIVEN;
   const policy = option;
 
-  const text: Redactor["text"] = (surface, value) => policy.text(surface, value);
+  // What a policy returns is checked for its kind, here, once for every caller: a policy
+  // written without types, or as an async function, would otherwise put `undefined` or a
+  // promise where a text or an attribute set belongs, and nothing downstream would say so.
+  // A wrong kind is thrown like any other failure of the policy; the content is not looked at.
+  const text: Redactor["text"] = (surface, value) => {
+    const result: unknown = policy.text(surface, value);
+    if (typeof result !== "string") {
+      throw new TypeError(`the redaction policy's text() did not return a string for ${surface}`);
+    }
+    return result;
+  };
 
   const attributes = <T extends Attributes | undefined>(
     surface: AttributesSurface,
     input: T,
-  ): T =>
-    input === undefined ? input : (policy.attributes(surface, input) as T);
+  ): T => {
+    if (input === undefined) return input;
+    // a copy: the policy must not change what it is given, and this makes a slip harmless
+    const result: unknown = policy.attributes(surface, { ...input });
+    if (!isPlainObject(result)) {
+      throw new TypeError(
+        `the redaction policy's attributes() did not return an attribute set for ${surface}`,
+      );
+    }
+    return result as T;
+  };
 
   // scopes are few and long-lived, and every exported record carries one
   const scopes = new WeakMap<InstrumentationScope, InstrumentationScope>();
@@ -132,10 +162,7 @@ export function createRedactor(option: RedactionOption): Redactor {
     };
     const name = text("scope.name", input.name);
     const cleanAttributes = attributes("scope", withAttributes.attributes);
-    const clean =
-      name === input.name && cleanAttributes === withAttributes.attributes
-        ? input
-        : { ...input, name, attributes: cleanAttributes };
+    const clean = { ...input, name, attributes: cleanAttributes };
     scopes.set(input, clean);
     return clean;
   };

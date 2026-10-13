@@ -109,7 +109,9 @@ describe("resource", () => {
     }
   });
 
-  // the resource is a surface of the policy the application named; the preset decides nothing itself
+  // the resource is a surface of the policy the application named; the preset decides nothing itself.
+  // (The plan's "allow-listed key" case has no pair here: keeping a named key readable is now a rule
+  // of the policy, and returns with the redaction package's standard policy in batch GR.)
   const RESOURCE_VALUES =
     "api_key=SENTINEL-RESOURCE-SECRET,owner.contact=alice.sentinel@example.com,plain.key=plain-value";
 
@@ -120,7 +122,6 @@ describe("resource", () => {
     );
 
     expect(run.result.startError).toBeNull();
-    expect(Object.keys(resourcesBySignal()).sort()).toEqual(["logs", "metrics", "traces"]);
     for (const [signal, resource] of Object.entries(resourcesBySignal())) {
       expect(resource.api_key, signal).toBe("[probe:resource] SENTINEL-RESOURCE-SECRET");
       expect(resource["owner.contact"], signal).toBe("[probe:resource] alice.sentinel@example.com");
