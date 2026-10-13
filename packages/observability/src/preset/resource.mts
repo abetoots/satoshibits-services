@@ -24,6 +24,8 @@ import type { Redactor } from "./redaction.mjs";
 import type { Attributes } from "@opentelemetry/api";
 import type { Resource } from "@opentelemetry/resources";
 
+import { isThenable } from "./redaction.mjs";
+
 // not yet in the stable semantic-conventions export
 const ATTR_SERVICE_NAMESPACE = "service.namespace";
 const ATTR_SERVICE_INSTANCE_ID = "service.instance.id";
@@ -32,7 +34,9 @@ const ATTR_OS_TYPE = "os.type";
 
 /**
  * Keys that identify the machine, the command line or the OS user. Dropped
- * after every merge, wherever the value came from.
+ * from everything the preset gathers, wherever the value came from, before
+ * the policy sees the resource. (A policy that adds such a key itself has it
+ * exported: what the policy returns is the application's decision.)
  */
 const DROPPED_KEY_PATTERNS: readonly RegExp[] = [
   /^host\./,
@@ -57,6 +61,15 @@ const IDENTITY_KEYS: ReadonlySet<string> = new Set([
   ATTR_SERVICE_NAME,
   ATTR_SERVICE_INSTANCE_ID,
 ]);
+
+function refuseDeferred(attributes: Attributes, what: string): void {
+  for (const [key, value] of Object.entries(attributes)) {
+    if (!isThenable(value)) continue;
+    // not left to reject unheard once it has been refused
+    (value as unknown as PromiseLike<unknown>).then(undefined, () => undefined);
+    throw new TypeError(`${what} is a promise, not a value: ${key}`);
+  }
+}
 
 export function buildResource(config: ResolvedConfig, redactor: Redactor): Resource {
   const merged: Attributes = {
@@ -85,8 +98,14 @@ export function buildResource(config: ResolvedConfig, redactor: Redactor): Resou
     if (!isDroppedResourceKey(key) && !IDENTITY_KEYS.has(key)) kept[key] = value;
   }
 
+  // The SDK takes a promise for an attribute's value and waits for it: such a value would
+  // be exported without the policy ever having seen it. A resource attribute is a value.
+  refuseDeferred(kept, "a resource attribute");
+  const exported = redactor.attributes("resource", kept);
+  refuseDeferred(exported, "a resource attribute the redaction policy returned");
+
   return resourceFromAttributes({
-    ...redactor.attributes("resource", kept),
+    ...exported,
     // added after the policy has run, over whatever it returned.
     // a name passed in code wins, so two processes sharing one environment stay distinct
     [ATTR_SERVICE_NAME]: config.serviceName,

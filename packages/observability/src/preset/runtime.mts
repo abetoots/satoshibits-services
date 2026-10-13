@@ -58,7 +58,12 @@ import type {
   SpanProcessor,
 } from "@opentelemetry/sdk-trace";
 
-import { isRatioSampler, resolveConfig, SIGNALS } from "./config.mjs";
+import {
+  isRatioSampler,
+  PresetConfigError,
+  resolveConfig,
+  SIGNALS,
+} from "./config.mjs";
 import { createDiagnostics, createRateLimiter } from "./diagnostics.mjs";
 import {
   createLogRecordExporter,
@@ -71,7 +76,7 @@ import {
   wrapMetricExporter,
   wrapSpanExporter,
 } from "./exporters.mjs";
-import { createRedactor } from "./redaction.mjs";
+import { createRedactor, isPlainObject } from "./redaction.mjs";
 import { buildResource } from "./resource.mjs";
 
 /**
@@ -209,8 +214,16 @@ export function mergeInstrumentationConfig(
   overrides: InstrumentationConfigMap,
 ): InstrumentationConfigMap {
   const merged: Record<string, object> = { ...defaults };
-  for (const [name, settings] of Object.entries(overrides)) {
-    merged[name] = { ...merged[name], ...settings };
+  for (const [name, settings] of Object.entries(overrides) as [string, unknown][]) {
+    if (!isPlainObject(settings)) {
+      // `false` for "off" is a natural guess, and would otherwise be ignored without a word
+      throw new PresetConfigError([
+        // the name is a key the caller wrote in code, not a value from the environment
+        `instrumentations: the settings for "${name.slice(0, 80)}" must be an object, such as { enabled: false }`,
+      ]);
+    }
+    // a setting given as undefined is one not given: the preset's stays
+    merged[name] = { ...merged[name], ...defined(settings) };
   }
   return merged as InstrumentationConfigMap;
 }
@@ -277,7 +290,19 @@ function buildPipelines(
   config: ResolvedConfig,
   test: TestExporters,
   base: Omit<ExporterContext, "endpointHost">,
+  redactionNamed: boolean,
 ): Pipelines {
+  // Validation already refused a start that exports with no `redaction` named. This is the
+  // same rule asked a second time, at the one place exporters are made, so that a change to
+  // either side that let them disagree would stop here and not export as given.
+  const exporting =
+    Object.keys(test).length > 0 ||
+    SIGNALS.some((signal) => config.signals[signal].enabled);
+  if (exporting && !redactionNamed) {
+    throw new Error(
+      "@satoshibits/observability: an exporter would be built with no redaction named",
+    );
+  }
   const signals = {} as Record<Signal, SignalStatus>;
   const spanProcessors: SpanProcessor[] = [];
   const metricReaders: MetricReader[] = [];
@@ -542,7 +567,12 @@ export function start(options: StartOptions = {}): PresetStatus {
       config,
       testExporters,
     );
-    pipelines = buildPipelines(config, testExporters, { diagnostics, redactor });
+    pipelines = buildPipelines(
+      config,
+      testExporters,
+      { diagnostics, redactor },
+      options.redaction !== undefined,
+    );
     if (options.loaderHook !== false) installLoaderHook();
     const built = pipelines;
     sdk = withoutLogLevelVariable(

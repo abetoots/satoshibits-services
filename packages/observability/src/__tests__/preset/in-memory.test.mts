@@ -8,6 +8,7 @@ import {
   ROOT_CONTEXT,
   SpanStatusCode,
   trace,
+  DiagLogLevel,
 } from "@opentelemetry/api";
 import { logs } from "@opentelemetry/api-logs";
 import { globalErrorHandler } from "@opentelemetry/core";
@@ -19,9 +20,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TestTelemetry } from "../../testing/in-memory.mjs";
 
 import { getStatus, shutdown, start } from "../../preset.mjs";
+import { createRedactor } from "../../preset/redaction.mjs";
 import { instrumentationConfigFor, resetForTesting } from "../../preset/runtime.mjs";
 import { startTestTelemetry } from "../../testing/in-memory.mjs";
 import type { DiagnosticsEvent } from "../../preset/diagnostics.mjs";
+import type { ResolvedConfig } from "../../preset/config.mjs";
 import type { RedactionPolicy } from "../../preset/redaction.mjs";
 import type { ProbeCall } from "./probe-policy.mjs";
 import type { InstrumentationConfigMap } from "@opentelemetry/auto-instrumentations-node";
@@ -38,6 +41,12 @@ afterEach(async () => {
   await resetForTesting();
   telemetry = undefined;
 });
+
+const OFF: ResolvedConfig["signals"] = {
+  traces: { enabled: false, reason: "no-endpoint" },
+  metrics: { enabled: false, reason: "no-endpoint" },
+  logs: { enabled: false, reason: "not-requested" },
+};
 
 describe("startTestTelemetry", () => {
   it("collects spans, metric points and log records through the real pipeline", async () => {
@@ -230,6 +239,11 @@ describe("startTestTelemetry", () => {
     );
     expect(attributes["other.id"]).toBe("[probe:resource] 0f8fad5b");
     expect(attributes["telemetry.sdk.language"]).toBe("[probe:resource] nodejs");
+    // and every value exported is the one the policy returned: nothing is put back after it
+    for (const [key, value] of Object.entries(attributes)) {
+      if (key === "service.name" || key === "service.instance.id") continue;
+      expect(String(value), key).toMatch(/^\[probe:resource\] /);
+    }
 
     // and what is exported for the two is the preset's, not the operator's and not the policy's
     expect(attributes["service.name"]).toBe("billing");
@@ -260,30 +274,116 @@ describe("startTestTelemetry", () => {
       throw new Error("the policy is broken SENTINEL");
     };
 
+    const WRONG_KIND = /did not return an attribute set for resource/;
+    // a policy written `async` that then fails: the promise it returns rejects
+    const rejecting = () => Promise.reject(new Error("the policy is broken SENTINEL"));
+
+    /** run `act` and report any rejection nobody handled, by the time the event loop has turned */
+    async function unhandledDuring(act: () => void | Promise<void>): Promise<unknown[]> {
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on("unhandledRejection", onUnhandled);
+      try {
+        await act();
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+      } finally {
+        process.off("unhandledRejection", onUnhandled);
+      }
+      return unhandled;
+    }
+
     it.each([
-      ["throws", failing],
-      ["returns nothing", () => undefined],
-      ["returns a promise", () => Promise.resolve({})],
-      ["returns a string", () => "abc"],
-      ["returns an array", () => []],
-    ])("on the resource (%s): start() fails and nothing is left registered", async (_how, attributes) => {
-      expect(() =>
-        startTestTelemetry({ redaction: broken({ attributes }) }),
-      ).toThrow(/the policy is broken|did not return an attribute set for resource/);
+      ["throws", failing, /the policy is broken/],
+      ["returns nothing", () => undefined, WRONG_KIND],
+      ["returns a promise", () => Promise.resolve({}), WRONG_KIND],
+      ["returns a promise that rejects", rejecting, WRONG_KIND],
+      ["returns a string", () => "abc", WRONG_KIND],
+      ["returns an array", () => [], WRONG_KIND],
+      ["returns a Map", () => new Map(), WRONG_KIND],
+    ])("on the resource (%s): start() fails and gives back what it had registered", async (_how, attributes, message) => {
+      // an ignored setting, so that diagnostics hold something when the start fails
+      vi.stubEnv("OTEL_BSP_SCHEDULE_DELAY", "not-a-number");
+      const events: DiagnosticsEvent[] = [];
+      let sinkCreated = false;
+      const unhandled = await unhandledDuring(() => {
+        expect(() =>
+          startTestTelemetry({
+            redaction: broken({ attributes }),
+            diagnostics: () => {
+              sinkCreated = true;
+              return (event) => events.push(event);
+            },
+          }),
+        ).toThrow(message);
+      });
+      expect(unhandled).toEqual([]);
 
       expect(getStatus().state).toBe("not-started");
       expect(trace.getTracer("t").startSpan("s").isRecording()).toBe(false);
+      // the failure was inside the part of start() that undoes itself: what diagnostics held was
+      // delivered (the sink was created), and the logger and error handler are no longer the preset's
+      expect(sinkCreated).toBe(true);
+      expect(events.map((event) => event.message)).toEqual([
+        expect.stringContaining("OTEL_BSP_SCHEDULE_DELAY"),
+      ]);
+      vi.unstubAllEnvs();
+      const before = events.length;
+      diag.warn("after the failed start");
+      globalErrorHandler(new Error("after the failed start"));
+      expect(events).toHaveLength(before);
+      const said: string[] = [];
+      const note = (...parts: unknown[]) => said.push(parts.map(String).join(" "));
+      // installing a logger over one that was left behind makes the API warn the new one of it
+      diag.setLogger({ error: note, warn: note, info: note, debug: note, verbose: note }, DiagLogLevel.WARN);
+      expect(said).toEqual([]);
+      diag.disable();
+
       telemetry = startTestTelemetry();
       trace.getTracer("t").startSpan("works").end();
       expect((await telemetry.spans()).map((s) => s.name)).toEqual(["works"]);
     });
 
+    it("on the resource: a promise for an attribute's value is refused, from the caller or from the policy", async () => {
+      const unhandled = await unhandledDuring(() => {
+        expect(() =>
+          startTestTelemetry({
+            resourceAttributes: { later: Promise.reject(new Error("SENTINEL")) as never },
+          }),
+        ).toThrow("a resource attribute is a promise, not a value: later");
+        expect(() =>
+          startTestTelemetry({
+            redaction: broken({ attributes: () => ({ later: Promise.resolve("SENTINEL") }) }),
+          }),
+        ).toThrow("a resource attribute the redaction policy returned is a promise, not a value: later");
+      });
+      expect(unhandled).toEqual([]);
+      expect(getStatus().state).toBe("not-started");
+    });
+
+    it("hands the policy a copy of an attribute set, so one that changes its argument changes nothing", () => {
+      const given = Object.freeze({ kept: "as it was" });
+      const redactor = createRedactor({
+        ...createProbePolicy(),
+        attributes: (_surface, attributes) => {
+          attributes.kept = "changed by the policy";
+          attributes.added = "by the policy";
+          return { returned: true };
+        },
+      });
+      // a frozen input would make the assignment throw if the policy were handed the original
+      expect(redactor.attributes("scope", given)).toEqual({ returned: true });
+      expect(given).toEqual({ kept: "as it was" });
+    });
+
+    const NOT_A_STRING = /did not return a string for scope.name/;
     it.each([
-      ["throws", failing],
-      ["returns nothing", () => undefined],
-      ["returns a promise", () => Promise.resolve("text")],
-      ["returns a number", () => 7],
-    ])("on a scope name (%s): the export fails closed and is reported", async (_how, text) => {
+      ["throws", failing, /the policy is broken/],
+      ["returns nothing", () => undefined, NOT_A_STRING],
+      ["returns a promise", () => Promise.resolve("text"), NOT_A_STRING],
+      ["returns a promise that rejects", rejecting, NOT_A_STRING],
+      ["returns a number", () => 7, NOT_A_STRING],
+    ])("on a scope name (%s): the export fails closed and is reported", async (_how, text, message) => {
       const events: DiagnosticsEvent[] = [];
       telemetry = startTestTelemetry({
         diagnostics: () => (event) => events.push(event),
@@ -294,10 +394,14 @@ describe("startTestTelemetry", () => {
             surface === "scope.name" ? (text() as unknown as string) : value,
         },
       });
-      trace.getTracer("a scope").startSpan("s").end();
-
-      // the flush that would have delivered the span rejects: the record did not go out as it was
-      await expect(telemetry.spans()).rejects.toThrow(/the policy is broken|did not return a string for scope.name/);
+      const pending = telemetry;
+      const unhandled = await unhandledDuring(async () => {
+        trace.getTracer("a scope").startSpan("s").end();
+        // asked for at once, while the export is still pending: the flush that would have
+        // delivered the span rejects, so the record did not go out as it was
+        await expect(pending.spans()).rejects.toThrow(message);
+      });
+      expect(unhandled).toEqual([]);
       expect(events.map((event) => [event.message, event.fields?.signal])).toContainEqual([
         "traces export failed",
         "traces",
@@ -309,14 +413,18 @@ describe("startTestTelemetry", () => {
       ["throws", failing],
       ["returns nothing", () => undefined],
       ["returns a promise", () => Promise.resolve("text")],
-    ])("on a diagnostics text (%s): the text is withheld and diagnostics keep reporting", (_how, text) => {
+      ["returns a promise that rejects", rejecting],
+    ])("on a diagnostics text (%s): the text is withheld and diagnostics keep reporting", async (_how, text) => {
       const events: DiagnosticsEvent[] = [];
       telemetry = startTestTelemetry({
         diagnostics: () => (event) => events.push(event),
         redaction: broken({ text }),
       });
-      diag.warn("first SENTINEL");
-      diag.warn("second SENTINEL");
+      const unhandled = await unhandledDuring(() => {
+        diag.warn("first SENTINEL");
+        diag.warn("second SENTINEL");
+      });
+      expect(unhandled).toEqual([]);
       expect(events.map((event) => event.message)).toEqual([
         "(text withheld: the redaction policy threw)",
         "(text withheld: the redaction policy threw)",
@@ -481,12 +589,12 @@ describe("startTestTelemetry", () => {
   });
 
   describe("the settings handed to the auto-instrumentation bundle", () => {
-    const logsOn = { signals: { logs: { enabled: true } } } as never;
-    const logsOff = { signals: { logs: { enabled: false } } } as never;
-    const sending = (config: InstrumentationConfigMap, logger = "pino") =>
-      (config[`@opentelemetry/instrumentation-${logger}` as keyof InstrumentationConfigMap] as {
-        disableLogSending?: boolean;
-      }).disableLogSending === false;
+    const logsOn: Pick<ResolvedConfig, "signals"> = {
+      signals: { ...OFF, logs: { enabled: true, url: "http://c:4318/v1/logs", protocol: "http/protobuf" } },
+    };
+    const logsOff: Pick<ResolvedConfig, "signals"> = { signals: OFF };
+    const of = (settings: InstrumentationConfigMap, name: string): unknown =>
+      settings[`@opentelemetry/instrumentation-${name}` as keyof InstrumentationConfigMap];
 
     it.each([
       ["the logs signal is on", logsOn, {}, true],
@@ -496,8 +604,16 @@ describe("startTestTelemetry", () => {
       ["logs are off and a test supplies a span exporter", logsOff, { spanExporter: new InMemorySpanExporter() }, false],
     ])("send log lines over OTLP exactly when logs are exported: %s", (_when, config, test, sent) => {
       const settings = instrumentationConfigFor(config, test);
+      // the setting is always written, in one direction or the other: left out, the logger's own default is to send
       for (const logger of ["pino", "winston", "bunyan"]) {
-        expect(sending(settings, logger), logger).toBe(sent);
+        expect(of(settings, logger), logger).toEqual({ disableLogSending: !sent });
+      }
+    });
+
+    it("turn the three noisy instrumentations off", () => {
+      const settings = instrumentationConfigFor(logsOff, {});
+      for (const noisy of ["fs", "net", "dns"]) {
+        expect(of(settings, noisy), noisy).toEqual({ enabled: false });
       }
     });
 
@@ -506,27 +622,56 @@ describe("startTestTelemetry", () => {
         "@opentelemetry/instrumentation-pino": { logKeys: { traceId: "tid", spanId: "sid", traceFlags: "tf" } },
         "@opentelemetry/instrumentation-fs": { enabled: true },
         "@opentelemetry/instrumentation-http": { enabled: false },
+        // a setting given as undefined is one not given
+        "@opentelemetry/instrumentation-winston": { disableLogSending: undefined },
       });
-      expect(settings["@opentelemetry/instrumentation-pino"]).toEqual({
+      expect(of(settings, "pino")).toEqual({
         disableLogSending: true,
         logKeys: { traceId: "tid", spanId: "sid", traceFlags: "tf" },
       });
       // a setting the caller names wins; an instrumentation the preset has no settings for is taken as given
-      expect(settings["@opentelemetry/instrumentation-fs"]).toEqual({ enabled: true });
-      expect(settings["@opentelemetry/instrumentation-http"]).toEqual({ enabled: false });
-      expect(settings["@opentelemetry/instrumentation-net"]).toEqual({ enabled: false });
+      expect(of(settings, "fs")).toEqual({ enabled: true });
+      expect(of(settings, "http")).toEqual({ enabled: false });
+      expect(of(settings, "net")).toEqual({ enabled: false });
+      expect(of(settings, "winston")).toEqual({ disableLogSending: true });
     });
 
-    it("let the caller turn log sending on or off for one logger, whatever the logs signal says", () => {
-      const settings = instrumentationConfigFor(logsOn, {}, {
-        "@opentelemetry/instrumentation-pino": { disableLogSending: true },
+    it.each([
+      ["off while logs are exported", logsOn, true],
+      ["on while logs are not exported", logsOff, false],
+    ])("let the caller turn log sending %s, for one logger alone", (_which, config, disableLogSending) => {
+      const settings = instrumentationConfigFor(config, {}, {
+        "@opentelemetry/instrumentation-pino": { disableLogSending },
       });
-      expect(sending(settings, "pino")).toBe(false);
-      expect(sending(settings, "winston")).toBe(true);
+      expect(of(settings, "pino")).toEqual({ disableLogSending });
+      expect(of(settings, "winston")).toEqual({ disableLogSending: !disableLogSending });
     });
 
-    // batch G4a: a real pino line arrives at /v1/logs when logs are on, and does not when they are off
-    it.todo("a pino line is sent over OTLP exactly when logs are exported (the instrumentation fixture)");
+    it.each([
+      ["false", false],
+      ["a string", "off"],
+      ["an array", [1]],
+      ["null", null],
+    ])("refuse settings for an instrumentation that are %s, where they would otherwise be ignored", (_what, settings) => {
+      expect(() =>
+        instrumentationConfigFor(logsOff, {}, {
+          "@opentelemetry/instrumentation-http": settings as never,
+        }),
+      ).toThrow(
+        'instrumentations: the settings for "@opentelemetry/instrumentation-http" must be an object, such as { enabled: false }',
+      );
+    });
+
+    // batch G4a, with the instrumentation fixture. Nothing in this batch observes the settings a real
+    // start() hands to the bundle, so that fixture has to show all of: start() passes these settings
+    // (built from the resolved configuration and the test exporters it read) to the bundle; a pino
+    // line arrives at /v1/logs when logs are exported and does not when they are not; and a caller's
+    // override of one pino setting leaves that unchanged.
+    it.todo("a real start() hands these settings to the bundle: a pino line is sent over OTLP exactly when logs are exported");
+  });
+
+  it("the kit refuses a redaction that is null, as start() does, and does not read it as false", () => {
+    expect(() => startTestTelemetry({ redaction: null as never })).toThrow("redaction must be a policy or false");
   });
 
   it("refuses a second start while one is running", () => {

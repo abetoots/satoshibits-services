@@ -602,6 +602,11 @@ describe("no policy, no export", () => {
     ["a string", "standard", "redaction must be a policy or false"],
     ["null", null, "redaction must be a policy or false"],
     [
+      "an empty object",
+      {},
+      "redaction is not a policy: it has no text, attributes, spanStatus, spanEvent, logRecord function",
+    ],
+    [
       "an object missing functions",
       { text: policy.text, attributes: policy.attributes },
       "redaction is not a policy: it has no spanStatus, spanEvent, logRecord function",
