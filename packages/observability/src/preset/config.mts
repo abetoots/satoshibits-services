@@ -12,7 +12,10 @@
 
 import type { Attributes } from "@opentelemetry/api";
 
+import type { RedactionOption } from "./redaction.mjs";
+
 import { shown } from "./diagnostics.mjs";
+import { redactionProblem } from "./redaction.mjs";
 
 export type Signal = "traces" | "metrics" | "logs";
 export const SIGNALS: readonly Signal[] = ["traces", "metrics", "logs"];
@@ -51,6 +54,18 @@ export interface PresetConfigOptions {
   headers?: Record<string, string>;
   /** used when `OTEL_TRACES_SAMPLER` is not set */
   sampler?: SamplerOption;
+  /**
+   * What decides how exported data is redacted: a policy, or `false` to
+   * export everything as given. Required whenever any signal is exported;
+   * there is no default.
+   */
+  redaction?: RedactionOption;
+}
+
+/** what configuration validation needs to know that is not a setting */
+export interface ResolveContext {
+  /** a test supplied an exporter, so something is exported whatever the environment says */
+  testExporters?: boolean;
 }
 
 export type SignalOffReason =
@@ -372,6 +387,7 @@ function environmentAttributes(
 export function resolveConfig(
   options: PresetConfigOptions,
   env: Env,
+  context: ResolveContext = {},
 ): Resolution {
   if (read(env, "OTEL_SDK_DISABLED")?.toLowerCase() === "true") {
     return { disabled: true };
@@ -441,6 +457,21 @@ export function resolveConfig(
     logBatch: batchTuning(env, "OTEL_BLRP", warnings),
     warnings,
   };
+
+  // no policy, no export: checked here, with everything else, so nothing has been registered
+  const exporting =
+    context.testExporters === true ||
+    SIGNALS.some((signal) => config.signals[signal].enabled);
+  if (options.redaction === undefined) {
+    if (exporting) {
+      problems.push(
+        "no redaction policy: pass `redaction` to start() (a policy, or false to export everything as given)",
+      );
+    }
+  } else {
+    const problem = redactionProblem(options.redaction);
+    if (problem !== undefined) problems.push(problem);
+  }
 
   if (problems.length > 0) throw new PresetConfigError(problems);
   return { disabled: false, config };

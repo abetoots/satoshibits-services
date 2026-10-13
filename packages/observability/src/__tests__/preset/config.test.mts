@@ -12,15 +12,17 @@ type Env = Record<string, string | undefined>;
 const NAME = { OTEL_SERVICE_NAME: "svc" };
 const ENDPOINT = { ...NAME, OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318" };
 
+// these tests are about the other settings: a policy decision is named for them
+// (the no-policy rule has its own tests below, which call resolveConfig directly)
 function resolved(env: Env, options: PresetConfigOptions = {}): ResolvedConfig {
-  const result = resolveConfig(options, env);
+  const result = resolveConfig({ redaction: false, ...options }, env);
   if (result.disabled) throw new Error("expected an enabled configuration");
   return result.config;
 }
 
 function problems(env: Env, options: PresetConfigOptions = {}): readonly string[] {
   try {
-    resolveConfig(options, env);
+    resolveConfig({ redaction: false, ...options }, env);
   } catch (error) {
     if (error instanceof PresetConfigError) return error.problems;
     throw error;
@@ -527,5 +529,87 @@ describe("OTEL_SDK_DISABLED", () => {
     expect(
       resolveConfig({}, { ...NAME, OTEL_SDK_DISABLED: "1" }).disabled,
     ).toBe(false);
+  });
+});
+
+describe("no policy, no export", () => {
+  const NO_POLICY =
+    "no redaction policy: pass `redaction` to start() (a policy, or false to export everything as given)";
+  const policy = {
+    text: (_surface: string, value: string) => value,
+    attributes: (_surface: string, attributes: Record<string, unknown>) => attributes,
+    spanStatus: (message: string) => message,
+    spanEvent: <T,>(event: T) => event,
+    logRecord: <T,>(record: T) => record,
+  };
+  const problemsOf = (resolve: () => unknown): readonly string[] => {
+    try {
+      resolve();
+    } catch (error) {
+      if (error instanceof PresetConfigError) return error.problems;
+      throw error;
+    }
+    return [];
+  };
+
+  it.each([
+    ["a general endpoint", ENDPOINT],
+    ["one signal's own endpoint", { ...NAME, OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "http://c:4318/v1/metrics" }],
+    [
+      "logs alone",
+      {
+        ...NAME,
+        OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "http://c:4318/v1/logs",
+        OTEL_LOGS_EXPORTER: "otlp",
+      },
+    ],
+  ])("refuses to export over %s when no redaction was named", (_what, env) => {
+    expect(problemsOf(() => resolveConfig({}, env))).toEqual([NO_POLICY]);
+  });
+
+  it("refuses when a test supplies an exporter, whatever the environment says", () => {
+    expect(problemsOf(() => resolveConfig({}, NAME, { testExporters: true }))).toEqual([NO_POLICY]);
+  });
+
+  it.each([
+    ["a policy", policy],
+    ["false", false as const],
+  ])("exports when redaction is %s", (_what, redaction) => {
+    expect(problemsOf(() => resolveConfig({ redaction }, ENDPOINT))).toEqual([]);
+    expect(problemsOf(() => resolveConfig({ redaction }, NAME, { testExporters: true }))).toEqual([]);
+  });
+
+  it("needs no policy when nothing is exported", () => {
+    // no endpoint at all
+    expect(problemsOf(() => resolveConfig({}, NAME))).toEqual([]);
+    // an endpoint, with every signal turned off
+    expect(
+      problemsOf(() =>
+        resolveConfig({}, { ...ENDPOINT, OTEL_TRACES_EXPORTER: "none", OTEL_METRICS_EXPORTER: "none" }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("is reported with the other problems, not in place of them", () => {
+    expect(
+      problemsOf(() => resolveConfig({}, { ...ENDPOINT, OTEL_EXPORTER_OTLP_PROTOCOL: "grpc" })),
+    ).toEqual(expect.arrayContaining([NO_POLICY, expect.stringContaining("grpc is not supported")]));
+  });
+
+  it.each([
+    ["true", true, "redaction must be a policy or false"],
+    ["a string", "standard", "redaction must be a policy or false"],
+    ["null", null, "redaction must be a policy or false"],
+    [
+      "an object missing functions",
+      { text: policy.text, attributes: policy.attributes },
+      "redaction is not a policy: it has no spanStatus, spanEvent, logRecord function",
+    ],
+  ])("rejects a redaction that is %s, even when nothing is exported", (_what, redaction, problem) => {
+    expect(problemsOf(() => resolveConfig({ redaction: redaction as never }, NAME))).toEqual([problem]);
+  });
+
+  it("is not asked for when the SDK is disabled", () => {
+    expect(resolveConfig({}, { ...ENDPOINT, OTEL_SDK_DISABLED: "true" })).toEqual({ disabled: true });
   });
 });

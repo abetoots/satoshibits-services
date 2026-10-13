@@ -39,4 +39,12 @@ export type {
   DiagnosticsLevel,
   DiagnosticsSink,
 } from "./preset/diagnostics.mjs";
-export type { RedactionOptions } from "./preset/redaction.mjs";
+export type {
+  AttributesSurface,
+  PolicyAttributes,
+  PolicyLogRecord,
+  PolicySpanEvent,
+  RedactionOption,
+  RedactionPolicy,
+  TextSurface,
+} from "./preset/redaction.mjs";

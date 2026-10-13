@@ -4,7 +4,7 @@
  * The wrapper does two things at the one point all telemetry passes on its
  * way out:
  *
- * - it hands the real exporter redacted views of the records (originals are
+ * - it hands the real exporter views of the records as the named policy left them (originals are
  *   never mutated, so another exporter on the same pipeline is unaffected);
  * - it reports a failed export through diagnostics, naming the signal and the
  *   HTTP status or network error code. The SDK's own error path names
@@ -149,7 +149,7 @@ function nameOf(error: unknown): string {
  * taken for one: an exporter that neither calls back nor rejects is left to
  * the processor that called (its export timeout, where it has one).
  *
- * Run one export. A throw from redaction or from the exporter itself is
+ * Run one export. A throw from the policy or from the exporter itself is
  * reported like any failed export and answered with a failed result, so the
  * processor that called is never left waiting and never sees an exception.
  */

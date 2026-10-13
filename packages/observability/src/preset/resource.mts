@@ -4,7 +4,7 @@
  * The preset builds the finished resource itself and gives it to NodeSDK with
  * NodeSDK's own detection turned off. Otherwise NodeSDK would merge
  * `OTEL_RESOURCE_ATTRIBUTES` in afterwards and those values would bypass the
- * filtering and redaction done here. The upstream environment detector is not
+ * filtering done here and the policy the application named. The upstream environment detector is not
  * used either: at debug level it logs the raw attributes it found.
  */
 
@@ -78,8 +78,8 @@ export function buildResource(config: ResolvedConfig, redactor: Redactor): Resou
   // defaultResource supplies telemetry.sdk.*; ours wins on every shared key
   return defaultResource().merge(
     resourceFromAttributes({
-      ...redactor.attributes(kept),
-      // the two identity keys are added after redaction: a masked name or
+      ...redactor.attributes("resource", kept),
+      // the two identity keys are added after the policy has run: a masked name or
       // instance id would merge the series of different services and replicas.
       // a name passed in code wins, so two processes sharing one environment stay distinct
       [ATTR_SERVICE_NAME]: config.serviceName,

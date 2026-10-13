@@ -301,13 +301,14 @@ describe("rejected configuration", () => {
 
     expect(run.code).toBe(0);
     expect(run.result.status.state).toBe("not-started");
-    expect(run.stderrLines).toHaveLength(1);
-    expect(run.stderrLines[0]).toMatchObject({
-      level: "error",
-      msg: "telemetry was not started",
-    });
-    expect(String(run.stderrLines[0]!.reason)).toContain(
-      "OTEL_EXPORTER_OTLP_PROTOCOL=grpc is not supported",
+    // one line per problem (register names no policy yet, which is a problem of its own here)
+    expect(run.stderrLines.map((line) => [line.level, line.msg])).toEqual(
+      run.stderrLines.map(() => ["error", "telemetry was not started"]),
+    );
+    expect(run.stderrLines.map((line) => line.reason)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("OTEL_EXPORTER_OTLP_PROTOCOL=grpc is not supported"),
+      ]),
     );
     expect(sink.connections).toEqual([]);
   });
@@ -321,12 +322,16 @@ describe("rejected configuration", () => {
     expect(started.result.startError).not.toContain("SENTINEL");
 
     const registered = await runChild({ start: "register" }, env);
-    expect(registered.stderrLines).toHaveLength(1);
+    expect(registered.stderrLines.length).toBeGreaterThan(0);
     expect(registered.stderr).not.toContain("SENTINEL");
     expect(registered.stderr).not.toContain("collector.example");
   });
 
-  it.each(["start", "register"] as const)(
+  // the register arm returns with batch G4a: until register names the standard policy it
+  // refuses to export (see "no policy" below), so the SDK's exporters are never built for it
+  it.todo("register keeps an endpoint's password out of stderr when the SDK would have quoted the variable");
+
+  it.each(["start"] as const)(
     "%s keeps an endpoint's password out of stderr when the SDK would have quoted the variable",
     async (start) => {
       // each is accepted by the preset (it trims, and a URL parses from these spellings), but the
@@ -354,10 +359,38 @@ describe("rejected configuration", () => {
     },
   );
 
-  it("the register entry starts from the environment alone", async () => {
-    const run = await runChild({ start: "register" }, endpoint());
-    expect(run.result.status.state).toBe("shut-down");
-    expect(sink.spans().map((s) => s.name)).toEqual(["child-span-0"]);
-    expect(sink.spans()[0]!.resource["service.name"]).toBe("signals-test");
+  const NO_POLICY =
+    "no redaction policy: pass `redaction` to start() (a policy, or false to export everything as given)";
+
+  it("start() refuses to export when no redaction is named, and sends nothing", async () => {
+    const run = await runChild({ redaction: "none" }, endpoint());
+
+    expect(run.result.startError).toContain(NO_POLICY);
+    expect(run.result.status.state).toBe("not-started");
+    expect(run.result.sockets).toEqual([]);
+    expect(sink.connections).toEqual([]);
   });
+
+  it("start() with no redaction named and nothing to export starts, and says why nothing is sent", async () => {
+    const run = await runChild({ redaction: "none" }, NAME);
+
+    expect(run.result.startError).toBeNull();
+    expect(run.result.status.state).toBe("shut-down");
+    expect(run.result.sockets).toEqual([]);
+  });
+
+  it("the register entry names no policy yet: with an endpoint it reports that, sends nothing, and the process carries on", async () => {
+    const run = await runChild({ start: "register" }, endpoint());
+
+    expect(run.code).toBe(0);
+    expect(run.result.status.state).toBe("not-started");
+    expect(run.stderrLines.map((line) => [line.level, line.msg, line.reason])).toEqual([
+      ["error", "telemetry was not started", NO_POLICY],
+    ]);
+    expect(run.result.sockets).toEqual([]);
+    expect(sink.connections).toEqual([]);
+  });
+
+  // batch G4a: register passes the redaction package's standard policy and says so in one line
+  it.todo("the register entry starts from the environment alone, under the standard policy");
 });

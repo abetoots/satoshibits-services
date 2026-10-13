@@ -1,77 +1,126 @@
 /**
- * Redaction of what leaves the process.
+ * The seam at which what leaves the process is redacted.
  *
- * One redactor is built per `start()` and applied where data is handed to an
- * exporter, so it covers telemetry from any source (auto-instrumentation
- * included) and does not depend on processor order.
+ * The preset owns the seam and nothing else: it wraps every exporter and
+ * hands what is about to leave to a policy the application named. It ships no
+ * patterns and no default. `redaction: false` exports everything as given; a
+ * start that would export with no `redaction` at all is refused.
  *
- * A value under a sensitive key is replaced whole, whatever its type. Other
- * string values have secrets and email addresses masked. Keys on the allow
- * list are passed through untouched.
+ * A policy is a plain object of functions, each told the surface it is
+ * looking at, because the same key means different things in different
+ * places (an exception's message belongs in a log record and not on a span).
+ * It works on plain values, so a policy needs no OpenTelemetry import.
+ *
+ * Metric attributes are not passed to a policy: labels are bounded names
+ * chosen in code, and a redacted label value would merge series.
  */
 
-import type { SanitizerOptions } from "../enrichment/sanitizer.mjs";
-import type { Attributes, AttributeValue } from "@opentelemetry/api";
+import type { Attributes } from "@opentelemetry/api";
 import type { InstrumentationScope } from "@opentelemetry/core";
 
-import { DataSanitizer } from "../enrichment/sanitizer.mjs";
+/** an attribute set as a policy sees it: plain keys and values */
+export type PolicyAttributes = Record<string, unknown>;
 
-export interface RedactionOptions {
-  /** attribute keys whose values are exported as they are */
-  allowKeys?: readonly string[];
-  /** options for the underlying sanitizer; email masking is on unless turned off here */
-  sanitizer?: SanitizerOptions;
+/** where a free text is about to appear */
+export type TextSurface =
+  | "span.name"
+  | "scope.name"
+  /** the library's own diagnostics: a message, or a text field of one */
+  | "diagnostics";
+
+/** what an attribute set is attached to */
+export type AttributesSurface =
+  | "span"
+  | "link"
+  /** every resource attribute but `service.name` and `service.instance.id` */
+  | "resource"
+  | "scope";
+
+/** a span event: its name and attributes together, so an `exception` event can be recognised */
+export interface PolicySpanEvent {
+  name: string;
+  attributes: PolicyAttributes;
 }
 
+/** a log record: everything of it that is exported text, together */
+export interface PolicyLogRecord {
+  /** a string, or a nested value */
+  body: unknown;
+  attributes: PolicyAttributes;
+  eventName?: string;
+  severityText?: string;
+}
+
+/**
+ * What an application names as `redaction`. Each function returns what is to
+ * be exported in place of what it was given; it must not change its argument.
+ */
+export interface RedactionPolicy {
+  text: (surface: TextSurface, value: string) => string;
+  attributes: (
+    surface: AttributesSurface,
+    attributes: PolicyAttributes,
+  ) => PolicyAttributes;
+  /** a span's status text; `undefined` drops it */
+  spanStatus: (message: string) => string | undefined;
+  spanEvent: (event: PolicySpanEvent) => PolicySpanEvent;
+  logRecord: (record: PolicyLogRecord) => PolicyLogRecord;
+}
+
+/** a policy, or `false` to export everything as given */
+export type RedactionOption = RedactionPolicy | false;
+
+const POLICY_FUNCTIONS = [
+  "text",
+  "attributes",
+  "spanStatus",
+  "spanEvent",
+  "logRecord",
+] as const satisfies readonly (keyof RedactionPolicy)[];
+
+/** what is wrong with a `redaction` value that is neither a policy nor `false`; `undefined` when nothing is */
+export function redactionProblem(option: unknown): string | undefined {
+  if (option === false) return undefined;
+  if (typeof option !== "object" || option === null) {
+    return "redaction must be a policy or false";
+  }
+  const missing = POLICY_FUNCTIONS.filter(
+    (name) => typeof (option as Record<string, unknown>)[name] !== "function",
+  );
+  return missing.length === 0
+    ? undefined
+    : `redaction is not a policy: it has no ${missing.join(", ")} function`;
+}
+
+/** the policy as the preset applies it to what it wraps */
 export interface Redactor {
-  /** a free-text value: a span name, a status message, a scope name */
-  text: (value: string) => string;
-  /** an attribute set; returns the same object when nothing changed */
-  attributes: <T extends Attributes | undefined>(attributes: T) => T;
+  text: (surface: TextSurface, value: string) => string;
+  /** returns the same object when the policy returned it */
+  attributes: <T extends Attributes | undefined>(
+    surface: AttributesSurface,
+    attributes: T,
+  ) => T;
   /** an instrumentation scope: its name and attributes are chosen by API callers */
   scope: (scope: InstrumentationScope) => InstrumentationScope;
 }
 
-export const REDACTED = "[REDACTED]";
+const AS_GIVEN: Redactor = {
+  text: (_surface, value) => value,
+  attributes: (_surface, attributes) => attributes,
+  scope: (scope) => scope,
+};
 
-export function createRedactor(options: RedactionOptions = {}): Redactor {
-  const sanitizer = new DataSanitizer({
-    maskEmails: true,
-    ...options.sanitizer,
-  });
-  const redacted = options.sanitizer?.redactionString ?? REDACTED;
-  const allowed = new Set(options.allowKeys ?? []);
+export function createRedactor(option: RedactionOption): Redactor {
+  if (option === false) return AS_GIVEN;
+  const policy = option;
 
-  const text = (value: string): string => sanitizer.sanitize(value) as string;
+  const text: Redactor["text"] = (surface, value) => policy.text(surface, value);
 
-  const value = (attribute: AttributeValue): AttributeValue => {
-    if (typeof attribute === "string") return text(attribute);
-    if (Array.isArray(attribute)) {
-      let changed = false;
-      const items = attribute.map((item) => {
-        if (typeof item !== "string") return item;
-        const clean = text(item);
-        if (clean !== item) changed = true;
-        return clean;
-      });
-      return changed ? (items as AttributeValue) : attribute;
-    }
-    return attribute;
-  };
-
-  const attributes = <T extends Attributes | undefined>(input: T): T => {
-    if (input === undefined) return input;
-    let output: Attributes | undefined;
-    for (const [key, original] of Object.entries(input)) {
-      if (original === undefined || allowed.has(key)) continue;
-      const clean = sanitizer.shouldRedactField(key) ? redacted : value(original);
-      if (clean !== original) {
-        output ??= { ...input };
-        output[key] = clean;
-      }
-    }
-    return (output ?? input) as T;
-  };
+  const attributes = <T extends Attributes | undefined>(
+    surface: AttributesSurface,
+    input: T,
+  ): T =>
+    input === undefined ? input : (policy.attributes(surface, input) as T);
 
   // scopes are few and long-lived, and every exported record carries one
   const scopes = new WeakMap<InstrumentationScope, InstrumentationScope>();
@@ -81,8 +130,8 @@ export function createRedactor(options: RedactionOptions = {}): Redactor {
     const withAttributes = input as InstrumentationScope & {
       attributes?: Attributes;
     };
-    const name = text(input.name);
-    const cleanAttributes = attributes(withAttributes.attributes);
+    const name = text("scope.name", input.name);
+    const cleanAttributes = attributes("scope", withAttributes.attributes);
     const clean =
       name === input.name && cleanAttributes === withAttributes.attributes
         ? input

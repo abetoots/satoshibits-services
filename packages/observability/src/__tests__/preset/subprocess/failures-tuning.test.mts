@@ -123,9 +123,13 @@ describe("failure visibility", () => {
     expect(JSON.stringify(run.result)).not.toContain("SENTINEL");
   });
 
-  it("at debug level, prints neither resource secrets nor exported values", async () => {
+  // what debug level prints is the SDK's doing; under either redaction choice it is shapes, not values
+  it.each([
+    ["redaction: false", false, ""],
+    ["the probe policy", "probe", "[probe:diagnostics] "],
+  ] as const)("at debug level under %s, prints neither resource secrets nor exported values", async (_what, redaction, mark) => {
     const run = await runChild(
-      { scopeAttributes: { api_key: "SENTINEL-SCOPE" } },
+      { scopeAttributes: { api_key: "SENTINEL-SCOPE" }, redaction },
       {
         ...NAME,
         OTEL_EXPORTER_OTLP_ENDPOINT: sink.url,
@@ -142,6 +146,9 @@ describe("failure visibility", () => {
     expect(sink.logRecords()).toHaveLength(1);
     expect(run.stderr).not.toContain("SENTINEL");
     expect(run.stderr).not.toContain("erin.sentinel");
+    // every line passed the policy as the diagnostics surface, or none did
+    expect(run.stderrLines.every((line) => String(line.msg).startsWith(mark))).toBe(true);
+    expect(run.stderrLines.some((line) => String(line.msg).startsWith("[probe:"))).toBe(mark !== "");
   });
 
   it("reports a setting the upstream exporter refuses at construction", async () => {
