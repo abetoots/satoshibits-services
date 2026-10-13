@@ -197,8 +197,8 @@ const createPolicyFrom = (parts: PolicyParts, engine: Engine): RedactionPolicy =
         : undefined,
     ),
   }),
+  // field by field: one this policy does not know is not passed on unread
   logRecord: (record) => ({
-    ...record,
     body: engine.value(record.body),
     attributes: engine.entries(record.attributes),
     ...(record.eventName !== undefined && {

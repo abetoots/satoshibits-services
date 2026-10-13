@@ -290,7 +290,7 @@ not with its square, whatever the text is.
 |---|---|
 | `cutUrls()` | every `scheme://…` URL, with the same cut down to scheme, host and path |
 | `maskEmails(replacement?)` | email addresses, with `[EMAIL]`, a text of yours, or a function of the local part and the domain |
-| `maskBearerTokens(replacement?)` | `Bearer <token>`, the scheme included |
+| `maskBearerTokens(replacement?)` | `Bearer <token>`, the scheme included, in any case; a word of eight characters or more after the word "bearer" in a sentence goes too |
 | `maskJwts(replacement?)` | three base64url segments, the first starting `eyJ` |
 | `maskApiKeys(replacement?)` | keys with a known prefix: Stripe, AWS access key ids, Google, GitHub, Slack, SendGrid, OpenAI project keys, Anthropic, and `api_`, `key_`, `token_`, `secret_`, `auth_`, `bearer_` followed by 16 characters or more |
 | `maskProviderKeys(replacement?)` | `sk-…` and `AIza…` at the shorter lengths an AI provider quotes back in an error; a model id such as `gpt-4o-mini` passes |
