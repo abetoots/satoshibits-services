@@ -391,8 +391,8 @@ export function resolveConfig(
     );
   }
 
-  // the variable is validated even when the option overrides it: the upstream
-  // exporters parse it regardless, and report a bad one by printing its value
+  // the variable is validated even when the option overrides it: a setting is
+  // honoured or rejected, never left wrong and ignored
   const envEndpointValue = read(env, "OTEL_EXPORTER_OTLP_ENDPOINT");
   const envEndpoint =
     envEndpointValue === undefined

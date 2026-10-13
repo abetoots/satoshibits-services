@@ -56,6 +56,11 @@ net.Socket.prototype.connect = function (
 } as typeof net.Socket.prototype.connect;
 
 // ===== start =====
+const endpointVariables = (): [string, string][] =>
+  Object.entries(process.env).flatMap(([name, value]): [string, string][] =>
+    value !== undefined && /^OTEL_EXPORTER_OTLP_(\w+_)?ENDPOINT$/.test(name) ? [[name, value]] : [],
+  );
+const endpointVariablesBeforeStart = JSON.stringify(endpointVariables());
 const diagnostics: DiagnosticsEvent[] = [];
 let sinkFactoryCalledAfterSdkStarted: boolean | null = null;
 let startError: string | null = null;
@@ -91,6 +96,9 @@ if (scenario.start === "register") {
 }
 
 const logLevelAfterStart = process.env.OTEL_LOG_LEVEL ?? null;
+// compared here and reported as a flag: the values can hold credentials, and the result is printed
+const endpointVariablesRestored =
+  JSON.stringify(endpointVariables()) === endpointVariablesBeforeStart;
 
 // ===== emit =====
 const scopeName = scenario.scopeName ?? "preset-child";
@@ -157,6 +165,7 @@ const result: ChildResult = {
   diagnostics,
   sinkFactoryCalledAfterSdkStarted,
   logLevelAfterStart,
+  endpointVariablesRestored,
 };
 process.stdout.write(`RESULT ${JSON.stringify(result)}\n`);
 

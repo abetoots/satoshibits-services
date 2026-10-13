@@ -67,6 +67,8 @@ export interface ChildResult {
   sinkFactoryCalledAfterSdkStarted: boolean | null;
   /** `OTEL_LOG_LEVEL` as the child sees it after start() returned */
   logLevelAfterStart: string | null;
+  /** whether the endpoint variables read the same once start() has returned as before it */
+  endpointVariablesRestored: boolean;
 }
 
 export interface ChildRun {
