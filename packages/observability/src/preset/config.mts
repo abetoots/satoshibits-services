@@ -15,7 +15,7 @@ import type { Attributes } from "@opentelemetry/api";
 import type { RedactionOption } from "./redaction.mjs";
 
 import { shown } from "./diagnostics.mjs";
-import { redactionProblem } from "./redaction.mjs";
+import { isPlainObject, redactionProblem } from "./redaction.mjs";
 
 export type Signal = "traces" | "metrics" | "logs";
 export const SIGNALS: readonly Signal[] = ["traces", "metrics", "logs"];
@@ -46,7 +46,10 @@ export interface PresetConfigOptions {
   serviceVersion?: string;
   /** exported as `deployment.environment.name` */
   deploymentEnvironment?: string;
-  /** further resource attributes; `OTEL_RESOURCE_ATTRIBUTES` wins over these */
+  /**
+   * Further resource attributes, as values (a promise for one is refused);
+   * `OTEL_RESOURCE_ATTRIBUTES` wins over these.
+   */
   resourceAttributes?: Attributes;
   /** overrides `OTEL_EXPORTER_OTLP_ENDPOINT` */
   endpoint?: string;
@@ -463,7 +466,12 @@ export function resolveConfig(
   // a resource attribute is a value. The SDK would wait for a promise and export what it
   // settled to, which no policy would have seen
   for (const key of context.deferredResourceAttributes ?? []) {
-    problems.push(`a resource attribute is a promise, not a value: ${shown(key)}`);
+    // the key is one the caller wrote in code, not a value from the environment: named as it is
+    problems.push(`a resource attribute is a promise, not a value: "${key.slice(0, 80)}"`);
+  }
+  if (options.resourceAttributes !== undefined && !isPlainObject(options.resourceAttributes)) {
+    // anything else (a promise for the set, an array, a Map) would be read as no attributes, or as keys "0", "1"
+    problems.push("resourceAttributes must be an object of attribute values");
   }
 
   // no policy, no export: checked here, with everything else, so nothing has been registered
