@@ -5,7 +5,21 @@
  * Protects user privacy and ensures compliance with data regulations.
  */
 
+import {
+  composeMasks,
+  maskApiKeys,
+  maskCardNumbers,
+  maskEmails,
+  maskIpv4Addresses,
+  maskJwts,
+  maskPasswordPairs,
+  maskPhoneNumbers,
+  maskSsns,
+  maskUuids,
+} from "@satoshibits/redaction";
 import { LRUCache } from "lru-cache";
+
+import type { Mask } from "@satoshibits/redaction";
 
 import { getUnifiedClientInstance } from "../client-instance.mjs";
 
@@ -83,56 +97,6 @@ export const BUILT_IN_SENSITIVE_FIELD_PATTERNS: readonly RegExp[] = [
   /prescription/i,
   /medication/i,
 ];
-
-/**
- * Patterns for sensitive data in strings
- */
-const SENSITIVE_PATTERNS = {
-  // Credit card numbers (basic pattern)
-  creditCard: /\b(?:\d{4}[\s-]?){3}\d{4}\b/g,
-
-  // SSN (US)
-  ssn: /\b\d{3}-\d{2}-\d{4}\b/g,
-
-  // Email (only mask domain if needed)
-  email: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g,
-
-  // Phone numbers (various formats)
-  phone: /\b(?:\+?1[-.\s]?)?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}\b/g,
-
-  // IP addresses (IPv4)
-  ipv4: /\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b/g,
-
-  // JWT tokens
-  jwt: /\beyJ[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\b/g,
-
-  // Doc 4 L2 Fix: More specific API key patterns to avoid matching hashes/UUIDs
-  // Codex review: added case-insensitive prefixes, AWS STS (ASIA), GitHub, Slack, SendGrid, OpenAI
-  apiKey: new RegExp(
-    "\\b(?:" +
-      // Stripe keys (sk_live_, sk_test_, pk_live_, pk_test_)
-      "(?:sk|pk)_(?:live|test)_[A-Za-z0-9]{24,}|" +
-      // Generic prefixed keys (case-insensitive: api_, key_, token_, secret_, auth_, bearer_)
-      "(?:api|key|token|secret|auth|bearer)_[A-Za-z0-9]{16,}|" +
-      // AWS Access Keys (AKIA for long-term, ASIA for STS temporary) - 20 chars total
-      "A[KS]IA[A-Z0-9]{16}|" +
-      // Google API keys
-      "AIza[0-9A-Za-z_-]{35}|" +
-      // GitHub tokens (ghp_, gho_, ghu_, ghs_, ghr_, github_pat_)
-      "(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|" +
-      // Slack tokens (xoxb-, xoxp-, xoxa-, xoxs-)
-      "xox[bpas]-[A-Za-z0-9-]{10,}|" +
-      // SendGrid (SG.segment1.segment2 format)
-      "SG\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+|" +
-      // OpenAI/Anthropic (sk-proj-xxx, sk-ant-xxx with potential hyphens)
-      "sk-(?:proj|ant)[A-Za-z0-9_-]{20,}" +
-      ")\\b",
-    "gi", // case-insensitive, global
-  ),
-
-  // UUIDs (might be user IDs)
-  uuid: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
-};
 
 /**
  * Sanitizer options
@@ -362,6 +326,8 @@ export class DataSanitizer {
    * API Boundary Fix - Issue L2: pre-computed for performance.
    */
   private readonly activeFieldPatterns: readonly RegExp[];
+  /** mask sensitive patterns in a string */
+  private readonly maskSensitivePatterns: (value: string) => string;
 
   constructor(options: SanitizerOptions = {}) {
     this.options = {
@@ -389,6 +355,8 @@ export class DataSanitizer {
     } else {
       this.activeFieldPatterns = BUILT_IN_SENSITIVE_FIELD_PATTERNS;
     }
+
+    this.maskSensitivePatterns = DataSanitizer.masksFor(this.options);
 
     // Pre-calculate the options part of the cache key for performance
     this.optionsCacheKey = JSON.stringify(this.options);
@@ -490,67 +458,31 @@ export class DataSanitizer {
   }
 
   /**
-   * Mask sensitive patterns in a string
+   * The masks this sanitizer's options turn on, as one. The masks themselves
+   * are the redaction package's; this class only chooses among them.
    */
-  private maskSensitivePatterns(value: string): string {
-    let masked = value;
-
-    // Always mask credit cards and SSNs
-    masked = masked.replace(
-      SENSITIVE_PATTERNS.creditCard,
-      this.options.redactionString,
-    );
-    masked = masked.replace(
-      SENSITIVE_PATTERNS.ssn,
-      this.options.redactionString,
-    );
-
-    // Always mask JWT tokens and API keys
-    masked = masked.replace(
-      SENSITIVE_PATTERNS.jwt,
-      this.options.redactionString,
-    );
-
-    // Mask password values (password: <value>)
-    masked = masked.replace(/\b(password|passwd|pwd):\s*\S+/gi, (match) => {
-      const [key] = match.split(":");
-      return `${key}: ${this.options.redactionString}`;
-    });
-
-    // Conditionally mask other patterns
-    if (this.options.maskEmails) {
-      masked = masked.replace(SENSITIVE_PATTERNS.email, (match) => {
-        const [local, domain] = match.split("@");
-        return `${local?.charAt(0)}***@${domain}`;
-      });
-    }
-
-    if (this.options.maskPhones) {
-      masked = masked.replace(SENSITIVE_PATTERNS.phone, (match) => {
-        return match.replace(/\d/g, "*").replace(/\*{3,}/g, "***");
-      });
-    }
-
-    if (this.options.maskIPs) {
-      masked = masked.replace(SENSITIVE_PATTERNS.ipv4, "***.***.***");
-    }
-
-    if (this.options.maskUUIDs) {
-      masked = masked.replace(
-        SENSITIVE_PATTERNS.uuid,
-        "********-****-****-****-************",
+  private static masksFor(
+    options: DataSanitizer["options"],
+  ): (value: string) => string {
+    const redaction = options.redactionString;
+    const masks: Mask[] = [
+      // always: card numbers, SSNs, JWTs and password pairs
+      maskCardNumbers(redaction),
+      maskSsns(redaction),
+      maskJwts(redaction),
+      maskPasswordPairs(redaction),
+    ];
+    if (options.maskEmails) {
+      masks.push(
+        maskEmails((local, domain) => `${local.charAt(0)}***@${domain}`),
       );
     }
-
-    // In strict mode, mask potential API keys
-    if (this.options.strictMode) {
-      masked = masked.replace(
-        SENSITIVE_PATTERNS.apiKey,
-        this.options.redactionString,
-      );
-    }
-
-    return masked;
+    if (options.maskPhones) masks.push(maskPhoneNumbers());
+    if (options.maskIPs) masks.push(maskIpv4Addresses());
+    if (options.maskUUIDs) masks.push(maskUuids());
+    // in strict mode, mask potential API keys
+    if (options.strictMode) masks.push(maskApiKeys(redaction));
+    return composeMasks(...masks);
   }
 
   /**

@@ -1,0 +1,128 @@
+{
+  "note": "Written by packages/observability's capture:attribute-keys script; do not edit by hand.",
+  "captured": {
+    "client.address": [
+      "span"
+    ],
+    "exception.message": [
+      "span event"
+    ],
+    "exception.stacktrace": [
+      "span event"
+    ],
+    "exception.type": [
+      "span event"
+    ],
+    "express.name": [
+      "span"
+    ],
+    "express.type": [
+      "span"
+    ],
+    "http.request.method": [
+      "span"
+    ],
+    "http.response.status_code": [
+      "span"
+    ],
+    "http.route": [
+      "span"
+    ],
+    "network.peer.address": [
+      "span"
+    ],
+    "network.peer.port": [
+      "span"
+    ],
+    "network.protocol.version": [
+      "span"
+    ],
+    "os.type": [
+      "resource"
+    ],
+    "router.name": [
+      "span"
+    ],
+    "router.type": [
+      "span"
+    ],
+    "router.version": [
+      "span"
+    ],
+    "server.address": [
+      "span"
+    ],
+    "server.port": [
+      "span"
+    ],
+    "service.instance.id": [
+      "resource"
+    ],
+    "service.name": [
+      "resource"
+    ],
+    "telemetry.sdk.language": [
+      "resource"
+    ],
+    "telemetry.sdk.name": [
+      "resource"
+    ],
+    "telemetry.sdk.version": [
+      "resource"
+    ],
+    "url.full": [
+      "span"
+    ],
+    "url.path": [
+      "span"
+    ],
+    "url.query": [
+      "span"
+    ],
+    "url.scheme": [
+      "span"
+    ],
+    "userId": [
+      "log record"
+    ],
+    "user_agent.original": [
+      "span"
+    ]
+  },
+  "declared": {
+    "@opentelemetry/instrumentation-mongodb": {
+      "version": "0.76.0",
+      "keys": [
+        "db.client.connection.pool.name",
+        "db.client.connection.state",
+        "db.collection.name",
+        "db.namespace",
+        "db.operation.name",
+        "db.query.text",
+        "db.system.name",
+        "server.address",
+        "server.port"
+      ]
+    },
+    "@opentelemetry/instrumentation-redis": {
+      "version": "0.71.0",
+      "keys": [
+        "db.operation.name",
+        "db.query.text",
+        "db.system.name",
+        "server.address",
+        "server.port"
+      ]
+    },
+    "@opentelemetry/instrumentation-ioredis": {
+      "version": "0.71.0",
+      "keys": [
+        "db.operation.name",
+        "db.query.text",
+        "db.system.name",
+        "server.address",
+        "server.port"
+      ]
+    }
+  }
+}
