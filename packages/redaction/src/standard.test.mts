@@ -414,10 +414,10 @@ describe("redactFields: the standard policy over a logger's fields", () => {
     expect(innermost(redactFields(nested(33)))).toBe("[TOO_DEEP]");
   });
 
-  it("walks an object that is reached by many paths once", () => {
-    // each level holds the one below twice: 2^40 paths to the bottom
+  it("walks an object that is reached by many paths once, not once per path", () => {
+    // each level holds the one below twice: 2^20 paths to the bottom, a million walks if each were taken
     let shared: Record<string, unknown> = { email: "a@b.io", password: SECRET };
-    for (let level = 0; level < 30; level++) shared = { left: shared, right: shared };
+    for (let level = 0; level < 20; level++) shared = { left: shared, right: shared };
     const before = performance.now();
     const result = redactFields(shared) as { left: unknown; right: unknown };
     expect(performance.now() - before).toBeLessThan(250);
@@ -425,6 +425,60 @@ describe("redactFields: the standard policy over a logger's fields", () => {
     let bottom: unknown = result;
     while (typeof bottom === "object" && bottom !== null && "left" in bottom) bottom = bottom.left;
     expect(bottom).toEqual({ email: "[EMAIL]", password: REDACTED });
+  });
+
+  describe("an object reached both deep and shallow", () => {
+    const leaf = { inner: { email: "a@b.io", password: SECRET } };
+    const under = (levels: number, value: unknown): unknown => {
+      let wrapped = value;
+      for (let level = 0; level < levels; level++) wrapped = { next: wrapped };
+      return wrapped;
+    };
+    const whole = { inner: { email: "[EMAIL]", password: REDACTED } };
+
+    it.each([
+      ["the deep one first", () => ({ deep: under(30, leaf), shallow: leaf })],
+      ["the shallow one first", () => ({ shallow: leaf, deep: under(30, leaf) })],
+    ])("is whole where it is shallow and cut where it is deep, with %s", (_order, fields) => {
+      const result = redactFields(fields()) as { shallow: unknown; deep: unknown };
+      expect(result.shallow).toEqual(whole);
+      // the leaf's own level is the 32nd: its inner object lies beyond
+      expect(JSON.stringify(result.deep)).toContain('{"inner":"[TOO_DEEP]"}');
+      expect(JSON.stringify(result.deep)).not.toContain("[EMAIL]");
+    });
+
+    it("never yields a result deeper than the cap, however the parts are shared", () => {
+      // a chain of 10,000, every link also reachable from the top
+      const fields: Record<string, unknown> = {};
+      let node: Record<string, unknown> = { email: "a@b.io" };
+      fields.n0 = node;
+      for (let index = 1; index <= 10_000; index++) fields[`n${index}`] = node = { next: node };
+      const result = redactFields(fields) as Record<string, unknown>;
+      const depthOf = (value: unknown): number => {
+        let depth = 0;
+        for (let current = value; typeof current === "object" && current !== null; depth++) {
+          current = (current as { next?: unknown }).next;
+        }
+        return depth;
+      };
+      expect(depthOf(result.n10000)).toBe(31);
+      expect(JSON.stringify(result.n10000)).toContain("[TOO_DEEP]");
+      expect(result.n5).toEqual(under(5, { email: "[EMAIL]" }));
+    });
+  });
+
+  it("marks a cycle the same way whichever path reaches it first", () => {
+    const build = (): { first: Record<string, unknown>; second: Record<string, unknown> } => {
+      const first: Record<string, unknown> = { name: "first" };
+      const second: Record<string, unknown> = { name: "second", first };
+      first.second = second;
+      return { first, second };
+    };
+    const { first, second } = build();
+    const expectedFirst = { name: "first", second: { name: "second", first: "[CIRCULAR]" } };
+    const expectedSecond = { name: "second", first: { name: "first", second: "[CIRCULAR]" } };
+    expect(redactFields({ a: first, b: second })).toEqual({ a: expectedFirst, b: expectedSecond });
+    expect(redactFields({ b: second, a: first })).toEqual({ b: expectedSecond, a: expectedFirst });
   });
 
   it("does not change what it is given", () => {

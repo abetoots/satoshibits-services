@@ -17,7 +17,7 @@ import {
   standardParts,
   standardPolicy,
 } from "@satoshibits/redaction";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import pino from "pino";
@@ -80,20 +80,52 @@ describe("the recorded attribute keys", () => {
   it("were recorded from the instrumentations installed now", () => {
     const fixture = JSON.parse(
       readFileSync(path.join(REDACTION_PACKAGE, "src/fixtures/attribute-keys.json"), "utf8"),
-    ) as { declared: Record<string, { version: string }> };
+    ) as {
+      capturedWith: Record<string, string>;
+      declared: Record<string, { version: string }>;
+    };
+    const requireFromHere = createRequire(import.meta.url);
     const requireFromBundle = createRequire(
-      createRequire(import.meta.url).resolve("@opentelemetry/auto-instrumentations-node"),
+      requireFromHere.resolve("@opentelemetry/auto-instrumentations-node"),
     );
-    const installed = Object.fromEntries(
-      Object.keys(fixture.declared).map((name) => [
-        name,
-        (requireFromBundle(`${name}/package.json`) as { version: string }).version,
-      ]),
-    );
+    const recorded = {
+      ...fixture.capturedWith,
+      ...Object.fromEntries(
+        Object.entries(fixture.declared).map(([name, { version }]) => [name, version]),
+      ),
+    };
+    // the bundle, the three instrumentations the capture exercises, and the three it reads
+    expect(Object.keys(recorded).sort()).toEqual([
+      "@opentelemetry/auto-instrumentations-node",
+      "@opentelemetry/instrumentation-express",
+      "@opentelemetry/instrumentation-http",
+      "@opentelemetry/instrumentation-ioredis",
+      "@opentelemetry/instrumentation-mongodb",
+      "@opentelemetry/instrumentation-pino",
+      "@opentelemetry/instrumentation-redis",
+    ]);
+    // read from the manifest above each package's entry file: a package need not export it
+    const versionOf = (name: string): string => {
+      const resolve =
+        name === "@opentelemetry/auto-instrumentations-node" ? requireFromHere : requireFromBundle;
+      for (
+        let directory = path.dirname(resolve.resolve(name));
+        directory !== path.dirname(directory);
+        directory = path.dirname(directory)
+      ) {
+        const manifest = path.join(directory, "package.json");
+        if (!existsSync(manifest)) continue;
+        const { name: found, version } = JSON.parse(readFileSync(manifest, "utf8")) as {
+          name?: string;
+          version?: string;
+        };
+        if (found === name && version !== undefined) return version;
+      }
+      throw new Error(`no package.json found for ${name}`);
+    };
+    const installed = Object.fromEntries(Object.keys(recorded).map((name) => [name, versionOf(name)]));
     // a difference means an upgrade: run `pnpm run capture:attribute-keys` and commit what changes
-    expect(
-      Object.fromEntries(Object.entries(fixture.declared).map(([name, { version }]) => [name, version])),
-    ).toEqual(installed);
+    expect(recorded).toEqual(installed);
   });
 });
 
@@ -103,13 +135,8 @@ describe("the pino wiring in the redaction package's README", () => {
   // the options as the README gives them; the destination is this test's
   const logger = pino(
     {
-      serializers: { err: (error: unknown) => redactFields(describeError(error)) },
-      formatters: { log: (fields) => redactFields(fields) as Record<string, unknown> },
-      hooks: {
-        logMethod(args, method) {
-          method.apply(this, args.map((arg: unknown) => (typeof arg === "string" ? redactFields(arg) : arg)) as typeof args);
-        },
-      },
+      serializers: { err: describeError },
+      hooks: { streamWrite: (line) => `${JSON.stringify(redactFields(JSON.parse(line)))}\n` },
     },
     { write: (line: string) => lines.push(line) },
   );
@@ -117,15 +144,14 @@ describe("the pino wiring in the redaction package's README", () => {
   it("is what the README shows", () => {
     const readme = readFileSync(path.join(REDACTION_PACKAGE, "README.md"), "utf8");
     for (const line of [
-      "serializers: { err: (error) => redactFields(describeError(error)) },",
-      "formatters: { log: (fields) => redactFields(fields) as Record<string, unknown> },",
-      'method.apply(this, args.map((arg) => (typeof arg === "string" ? redactFields(arg) : arg)) as typeof args);',
+      "serializers: { err: describeError },",
+      "hooks: { streamWrite: (line) => `${JSON.stringify(redactFields(JSON.parse(line)))}\\n` },",
     ]) {
       expect(readme).toContain(line);
     }
   });
 
-  it("masks a field, an error's message and stack, and the message with what is put into it", () => {
+  it("masks a field, an error's message and stack, and the message", () => {
     logger.info(
       { to: "a@b.io", password: "s3cr3t-value", err: new Error("no mailbox jane@example.com") },
       "sent to %s",
@@ -137,9 +163,27 @@ describe("the pino wiring in the redaction package's README", () => {
     expect(line.msg).toBe("sent to [EMAIL]");
     expect(line.err).toMatchObject({ name: "Error", message: "no mailbox [EMAIL]" });
     expect(lines.at(-1)).not.toContain("jane@example.com");
+    expect(lines.at(-1)!.endsWith("\n")).toBe(true);
   });
 
-  it("without the serializer's own redaction an error's text would pass: the formatter runs first", () => {
+  it.each<[string, (log: typeof logger) => void]>([
+    ["an object put into the message", (log) => log.info({}, "sent to %j", { email: "jane@example.com" })],
+    ["an address assembled by the message", (log) => log.info("sent to %s@%s", "jane", "example.com")],
+    ["an error logged with no message of its own", (log) => log.error(new Error("bare jane@example.com"))],
+    ["a child logger's bindings", (log) => log.child({ owner: "jane@example.com" }).info("m")],
+    ["a field several levels down", (log) => log.info({ a: { b: [{ c: "jane@example.com" }] } }, "m")],
+  ])("leaves no way round for %s", (_what, write) => {
+    write(logger);
+    expect(lines.at(-1)).not.toContain("jane@example.com");
+    expect(lines.at(-1)).toContain("[EMAIL]");
+  });
+
+  it("keeps the line a line of JSON with pino's own fields as they were", () => {
+    logger.warn({ n: 1 }, "m");
+    expect(logged()).toMatchObject({ level: 40, n: 1, msg: "m", time: expect.any(Number) as unknown });
+  });
+
+  it("redacting in formatters.log alone would let an error's text pass: pino runs it before serializers", () => {
     const plain: string[] = [];
     pino(
       {
@@ -149,11 +193,5 @@ describe("the pino wiring in the redaction package's README", () => {
       { write: (line: string) => plain.push(line) },
     ).info({ err: new Error("no mailbox jane@example.com") }, "m");
     expect(plain[0]).toContain("jane@example.com");
-  });
-
-  it("leaves the one path the README names: an error logged with no message", () => {
-    logger.error(new Error("bare jane@example.com"));
-    expect(logged().msg).toBe("bare jane@example.com");
-    expect((logged().err as { message: string }).message).toBe("bare [EMAIL]");
   });
 });

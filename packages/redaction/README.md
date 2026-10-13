@@ -165,28 +165,24 @@ The key rules look at each key by itself, at every level. A rule written for a d
 (`client.address`, `url.full`) matches that spelling: in `{ client: { address } }` the key is `address`,
 and no standard rule names it.
 
-With pino there are three places a value can be, and each needs the policy:
+With pino, redact the finished line. A line is made in several places (the fields, the serializers,
+the message and what is interpolated into it, a child logger's bindings), and pino runs
+`formatters.log` before the serializers, so redacting the fields there lets an error's message and
+stack pass. The one place everything has arrived is `hooks.streamWrite`:
 
 ```typescript
 import pino from "pino";
 import { describeError, redactFields } from "@satoshibits/redaction";
 
 const logger = pino({
-  // an error: pino applies serializers after `formatters.log`, so the description is redacted here
-  serializers: { err: (error) => redactFields(describeError(error)) },
-  // every other field of the line
-  formatters: { log: (fields) => redactFields(fields) as Record<string, unknown> },
-  // the message and the values interpolated into it, which are not fields
-  hooks: {
-    logMethod(args, method) {
-      method.apply(this, args.map((arg) => (typeof arg === "string" ? redactFields(arg) : arg)) as typeof args);
-    },
-  },
+  serializers: { err: describeError },
+  hooks: { streamWrite: (line) => `${JSON.stringify(redactFields(JSON.parse(line)))}\n` },
 });
 ```
 
-One path is left: `logger.error(err)` with no message makes the error's message the line's `msg`,
-unmasked. Pass a message of your own with an error.
+That parses and writes each line a second time; measure it if your service logs heavily. It covers
+what pino writes to its stream, not a copy of the record sent elsewhere (OpenTelemetry's log sending
+has the exporter's policy for that).
 
 ## Describing an error
 
