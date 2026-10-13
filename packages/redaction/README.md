@@ -165,24 +165,27 @@ The key rules look at each key by itself, at every level. A rule written for a d
 (`client.address`, `url.full`) matches that spelling: in `{ client: { address } }` the key is `address`,
 and no standard rule names it.
 
-With pino, redact the finished line. A line is made in several places (the fields, the serializers,
-the message and what is interpolated into it, a child logger's bindings), and pino runs
-`formatters.log` before the serializers, so redacting the fields there lets an error's message and
-stack pass. The one place everything has arrived is `hooks.streamWrite`:
+Where to call it is your logger's business, and this package knows no logger. Two things about pino
+are worth knowing before you wire it, because both let a value past a wiring that looks complete:
+
+- pino runs `formatters.log` **before** its serializers. Redacting the fields there does not reach an
+  error's message and stack; redact the error's description in the serializer.
+- the message (`msg`), and anything interpolated into it, is not a field and passes neither.
 
 ```typescript
 import pino from "pino";
 import { describeError, redactFields } from "@satoshibits/redaction";
 
 const logger = pino({
-  serializers: { err: describeError },
-  hooks: { streamWrite: (line) => `${JSON.stringify(redactFields(JSON.parse(line)))}\n` },
+  // an error: described, then redacted, here
+  serializers: { err: (error) => redactFields(describeError(error)) },
+  // every other field of the line
+  formatters: { log: (fields) => redactFields(fields) as Record<string, unknown> },
 });
 ```
 
-That parses and writes each line a second time; measure it if your service logs heavily. It covers
-what pino writes to its stream, not a copy of the record sent elsewhere (OpenTelemetry's log sending
-has the exporter's policy for that).
+That covers a line's fields and its errors. It does not cover the message: keep values out of messages
+and put them in fields, where the policy sees them.
 
 ## Describing an error
 
@@ -342,7 +345,7 @@ console.log(incoming("401 Incorrect API key provided: sk-proj-Ab12Cd34Ef56Gh78. 
 - **URLs in a text** are recognised in the `scheme://` spelling only, and end at whitespace.
 - **Nested values** are followed 32 levels deep; below that a value is replaced with `[TOO_DEEP]`. An
   object that contains itself is replaced with `[CIRCULAR]` where it repeats. An object reached by
-  several paths is walked once, and appears in the result as one object in each of those places.
+  several paths is walked once for each, as it is by whatever writes the result out.
 - **An allowed key wins over everything**, the drop of an exception's message on a span included.
 - **A policy must answer at once** and the same way each time for the same input; the ones built here do.
 - **Keys are matched as written.** `exactKeys` and `allowKeys` are case-sensitive; `keyWords` and
