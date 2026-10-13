@@ -104,41 +104,50 @@ function failureReporter(signal: Signal, context: ExporterContext) {
   };
 }
 
-function observing(
-  report: (error: unknown) => void,
-  resultCallback: (result: ExportResult) => void,
-): (result: ExportResult) => void {
-  return (result) => {
-    if (result.code !== ExportResultCode.SUCCESS) report(result.error);
-    resultCallback(result);
-  };
-}
-
 /**
  * Run one export. A throw from redaction or from the exporter itself is
  * reported like any failed export and answered with a failed result, so the
  * processor that called is never left waiting and never sees an exception.
  */
 function guarded(
+  signal: Signal,
+  context: ExporterContext,
   report: (error: unknown) => void,
   resultCallback: (result: ExportResult) => void,
   send: (observed: (result: ExportResult) => void) => void,
 ): void {
-  // exactly one answer per export: an exporter that answers and then throws
-  // (or a callback that itself throws) must not be answered a second time
+  // exactly one answer per export, and one report for it: an exporter that
+  // answers and then throws, or answers twice, is heard the first time only
   let settled = false;
-  const once = (result: ExportResult) => {
+  const once = (given: ExportResult) => {
     if (settled) return;
     settled = true;
-    resultCallback(result);
+    let result = given;
+    if (result.code !== ExportResultCode.SUCCESS) {
+      // a failure without an error is given one, so the processor passes this
+      // (marked) object on to the SDK's error handler and not one of its own
+      result = { ...result, error: result.error ?? new Error("export failed") };
+      report(result.error);
+    }
+    try {
+      resultCallback(result);
+    } catch (error) {
+      // the processor's own callback threw. Whoever answered (the exporter,
+      // possibly later and from its own promise chain) must not get that back.
+      context.diagnostics.report({
+        level: "error",
+        message: `${signal} export result could not be handed back`,
+        fields: { signal, error: error instanceof Error ? error.name : "Error" },
+      });
+    }
   };
   try {
-    send(observing(report, once));
+    send(once);
   } catch (error) {
-    if (settled) return;
-    const failure = error instanceof Error ? error : new Error(String(error));
-    report(failure);
-    once({ code: ExportResultCode.FAILED, error: failure });
+    once({
+      code: ExportResultCode.FAILED,
+      error: error instanceof Error ? error : new Error(String(error)),
+    });
   }
 }
 
@@ -162,7 +171,7 @@ export function wrapSpanExporter(
   const { redactor } = context;
   return {
     export: (spans: ReadableSpan[], resultCallback) => {
-      guarded(report, resultCallback, (observed) => {
+      guarded("traces", context, report, resultCallback, (observed) => {
         inner.export(
           spans.map((span) =>
             viewOf(span, {
@@ -186,7 +195,7 @@ export function wrapMetricExporter(
   const { redactor } = context;
   return {
     export: (metrics: ResourceMetrics, resultCallback) => {
-      guarded(report, resultCallback, (observed) => {
+      guarded("metrics", context, report, resultCallback, (observed) => {
         inner.export(
           {
             ...metrics,
@@ -221,7 +230,7 @@ export function wrapLogRecordExporter(
   const { redactor } = context;
   return {
     export: (records: ReadableLogRecord[], resultCallback) => {
-      guarded(report, resultCallback, (observed) => {
+      guarded("logs", context, report, resultCallback, (observed) => {
         inner.export(
           records.map((record) =>
             viewOf(record, {

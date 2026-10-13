@@ -296,8 +296,12 @@ describe("tuning variables", () => {
       OTEL_TRACES_EXPORTER: "none",
       OTEL_METRICS_EXPORTER: "none",
     };
-    await runChild({ lingerMillis: CONTROL_LINGER, finish: "none" }, env);
-    // the default delay is a second (five on older lines): nothing has left yet
+    // the default delay is only a second, too close to the linger for a slow machine,
+    // so the control sets a long one: the variable is what decides either way
+    await runChild(
+      { lingerMillis: CONTROL_LINGER, finish: "none" },
+      { ...env, OTEL_BLRP_SCHEDULE_DELAY: "10000" },
+    );
     expect(sink.requestsTo("/v1/logs")).toEqual([]);
 
     await runChild(

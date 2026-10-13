@@ -378,6 +378,30 @@ describe("OTLP sink", () => {
       { "content-type": "application/x-protobuf" },
       new Uint8Array([0x08, 0x01]),
     ],
+    [
+      "a field number that cannot exist",
+      "/v1/traces",
+      { "content-type": "application/x-protobuf" },
+      new Uint8Array([0x00, 0x01]),
+    ],
+    [
+      "a JSON body that is not an object",
+      "/v1/traces",
+      { "content-type": "application/json" },
+      new TextEncoder().encode("[]"),
+    ],
+    [
+      "a JSON body whose repeated field is not an array",
+      "/v1/traces",
+      { "content-type": "application/json" },
+      new TextEncoder().encode('{"resourceSpans":"not-an-array"}'),
+    ],
+    [
+      "a JSON body whose repeated field holds something other than objects",
+      "/v1/logs",
+      { "content-type": "application/json" },
+      new TextEncoder().encode('{"resourceLogs":[{"scopeLogs":[7]}]}'),
+    ],
   ])("refuses %s the same way, without crashing", async (_what, path, headers, body) => {
     sink = await startOtlpSink();
     const response = await fetch(`${sink.url}${path}`, { method: "POST", headers, body });
@@ -402,6 +426,43 @@ describe("OTLP sink", () => {
     expect(result.code).toBe(ExportResultCode.FAILED);
     expect(() => sink!.spans()).toThrow(/respondWith threw/);
     expect(() => sink!.requestsTo("/v1/traces")).toThrow(/respondWith threw/);
+  });
+
+  it.each([
+    ["JSON", "application/json", new TextEncoder().encode("{}")],
+    ["protobuf", "application/x-protobuf", new Uint8Array([])],
+    // field 99 is not in the schema: skipped, as a newer exporter's field would be
+    ["protobuf with an unknown field", "application/x-protobuf", new Uint8Array([0x98, 0x06, 0x01])],
+  ])("accepts an empty %s request as an export of nothing", async (_what, contentType, body) => {
+    sink = await startOtlpSink();
+    const response = await fetch(`${sink.url}/v1/traces`, {
+      method: "POST",
+      headers: { "content-type": contentType },
+      body,
+    });
+    expect(response.status).toBe(200);
+    expect(sink.undecodable).toEqual([]);
+    expect(sink.requestsTo("/v1/traces")).toHaveLength(1);
+    expect(sink.spans()).toEqual([]);
+  });
+
+  it.each([
+    // Span.name (5, a string) sent as eight fixed bytes
+    ["a string sent as fixed64", [0x29, 0, 0, 0, 0, 0, 0, 0, 0], /arrived with wire type 1/],
+    // Span.attributes (9) > KeyValue.value (2) > AnyValue.double_value (4) sent as an empty length-delimited field
+    ["a double sent length-delimited", [0x4a, 0x04, 0x12, 0x02, 0x22, 0x00], /arrived with wire type 2/],
+  ])("tells fixed-width and length-delimited fields apart: %s", async (_what, span, error) => {
+    sink = await startOtlpSink();
+    const scopeSpans = [0x12, span.length, ...span];
+    const resourceSpans = [0x12, scopeSpans.length, ...scopeSpans];
+    const body = new Uint8Array([0x0a, resourceSpans.length, ...resourceSpans]);
+    const response = await fetch(`${sink.url}/v1/traces`, {
+      method: "POST",
+      headers: { "content-type": "application/x-protobuf" },
+      body,
+    });
+    expect(response.status).toBe(400);
+    expect(sink.undecodable[0]!.error).toMatch(error);
   });
 
   it("refuses a scalar field that arrives with the wrong wire type", async () => {
