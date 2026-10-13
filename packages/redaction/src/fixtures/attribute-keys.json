@@ -1,5 +1,11 @@
 {
   "note": "Written by packages/observability's capture:attribute-keys script; do not edit by hand.",
+  "capturedWith": {
+    "@opentelemetry/auto-instrumentations-node": "0.81.0",
+    "@opentelemetry/instrumentation-http": "0.223.0",
+    "@opentelemetry/instrumentation-express": "0.71.0",
+    "@opentelemetry/instrumentation-pino": "0.69.0"
+  },
   "captured": {
     "client.address": [
       "span"

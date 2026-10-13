@@ -161,6 +161,43 @@ const declaredBy = (name: string): { version: string; keys: string[] } => {
   return { version, keys: [...keys].sort() };
 };
 
+/**
+ * The installed version of a package, as `resolve` finds it: read from the
+ * `package.json` above its entry file, since a package need not export that file.
+ */
+const versionOf = (name: string, resolve: (name: string) => string): string => {
+  for (
+    let directory = path.dirname(resolve(name));
+    directory !== path.dirname(directory);
+    directory = path.dirname(directory)
+  ) {
+    try {
+      const manifest = JSON.parse(
+        readFileSync(path.join(directory, "package.json"), "utf8"),
+      ) as { name?: string; version?: string };
+      if (manifest.name === name && manifest.version !== undefined) return manifest.version;
+    } catch {
+      // no manifest at this level: look one up
+    }
+  }
+  throw new Error(`no package.json found for ${name}`);
+};
+
+// what produced the captured keys: an upgrade of one of these is a reason to capture again
+const capturedWith = {
+  "@opentelemetry/auto-instrumentations-node": versionOf(
+    "@opentelemetry/auto-instrumentations-node",
+    (name) => createRequire(import.meta.url).resolve(name),
+  ),
+  ...Object.fromEntries(
+    [
+      "@opentelemetry/instrumentation-http",
+      "@opentelemetry/instrumentation-express",
+      "@opentelemetry/instrumentation-pino",
+    ].map((name) => [name, versionOf(name, (wanted) => requireFromBundle.resolve(wanted))]),
+  ),
+};
+
 const declared = Object.fromEntries(
   [
     "@opentelemetry/instrumentation-mongodb",
@@ -174,6 +211,7 @@ writeFileSync(
   `${JSON.stringify(
     {
       note: "Written by packages/observability's capture:attribute-keys script; do not edit by hand.",
+      capturedWith,
       captured: Object.fromEntries(
         [...captured.entries()]
           .sort(([left], [right]) => (left < right ? -1 : 1))
