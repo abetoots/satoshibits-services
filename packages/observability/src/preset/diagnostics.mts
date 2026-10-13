@@ -93,11 +93,12 @@ const THRESHOLD: Record<DiagnosticsLevel, DiagLogLevel> = {
 export const stderrSink: DiagnosticsSink = (event) => {
   process.stderr.write(
     JSON.stringify({
+      // fields first: none of them can stand in for the line's own keys
+      ...event.fields,
       time: new Date().toISOString(),
       level: event.level,
       source: "opentelemetry",
       msg: event.message,
-      ...event.fields,
     }) + "\n",
   );
 };
@@ -133,9 +134,11 @@ function scrubbedUrl(token: string): string {
  * less the punctuation at its very end. Text glued to a URL without a space
  * is therefore lost with it, and no part of such a URL is kept.
  *
- * The limit of that rule: a URL that holds a raw space ends at the space,
- * and what follows it is ordinary text here. That text still passes the
- * redaction the application named, like all other text.
+ * The limits of that rule. A URL that holds raw whitespace (a space, a tab,
+ * a line break) ends there, and what follows is ordinary text here; that text
+ * still passes the redaction the application named, like all other text. And
+ * only the `scheme://` spelling is recognised: the preset hands its own
+ * endpoints on in that spelling alone.
  *
  * One pass over the text, with no backtracking: it runs on text of any size
  * inside whatever called the diagnostics logger.
@@ -246,7 +249,10 @@ export function createDiagnostics(
       fields: Object.fromEntries(
         Object.entries(event.fields).map(([key, value]) => [
           key,
-          typeof value === "string" ? clean(value) : value,
+          // numbers and flags as they are; text sanitized; anything else by shape, never by content
+          typeof value === "number" || typeof value === "boolean"
+            ? value
+            : clean(typeof value === "string" ? value : described(value)),
         ]),
       ),
     }),

@@ -11,6 +11,8 @@
  *   neither, and says nothing at all unless a diagnostics logger is installed.
  */
 
+import { types } from "node:util";
+
 import { ExportResultCode } from "@opentelemetry/core";
 import { OTLPLogExporter as JsonLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
 import { OTLPLogExporter as ProtoLogExporter } from "@opentelemetry/exporter-logs-otlp-proto";
@@ -74,12 +76,16 @@ function failureReporter(signal: Signal, context: ExporterContext) {
   return (error: unknown) => {
     // marked whether or not the line below is let through by the limit
     if (typeof error === "object" && error !== null) reported.add(error);
+    // read before the limit is consulted: an error that cannot be read must
+    // not use up the interval's one line and then print nothing
+    let detail: { name?: unknown; code?: unknown; message?: unknown } = {};
+    try {
+      const { name, code, message } = (error ?? {}) as typeof detail;
+      detail = { name, code, message };
+    } catch {
+      // reported as a plain "Error", with no status, code or reason
+    }
     limit((suppressed) => {
-      const detail = (error ?? {}) as {
-        name?: unknown;
-        code?: unknown;
-        message?: unknown;
-      };
       const reason = localReason(detail.message);
       context.diagnostics.report({
         level: "error",
@@ -110,13 +116,25 @@ function failureReporter(signal: Signal, context: ExporterContext) {
  * a fixed text: its content is never read, so it can neither leak nor throw.
  */
 const asError = (value: unknown): Error =>
-  value instanceof Error
+  // not `instanceof`: that walks the prototype chain, which a proxy can make throw
+  // (and it would not know an error from another realm)
+  types.isNativeError(value)
     ? value
     : new Error(
         value === undefined || value === null
           ? "export failed"
           : "export failed with a value that is not an error",
       );
+
+/** an error's name for a report; `Error` when it has none that can be read as text */
+function nameOf(error: unknown): string {
+  try {
+    const name = types.isNativeError(error) ? (error.name as unknown) : undefined;
+    return typeof name === "string" ? name : "Error";
+  } catch {
+    return "Error";
+  }
+}
 
 /**
  * Run one export. A throw from redaction or from the exporter itself is
@@ -137,11 +155,13 @@ function guarded(
     if (settled) return;
     settled = true;
     // an answer that is no result at all is a failed export
+    // the answer is read once, here, and the processor is handed a result of the wrapper's
+    // own making: what the exporter passed may read differently, or throw, a second time
     let result: ExportResult;
     try {
       result =
         given?.code === ExportResultCode.SUCCESS
-          ? given
+          ? { code: ExportResultCode.SUCCESS }
           : // a failure always carries an error, so the processor passes this (marked)
             // object on to the SDK's error handler and not one of its own
             { code: ExportResultCode.FAILED, error: asError(given?.error) };
@@ -149,7 +169,7 @@ function guarded(
       // an answer that cannot even be read
       result = { code: ExportResultCode.FAILED, error: asError(undefined) };
     }
-    if (result.code !== ExportResultCode.SUCCESS) {
+    if (result.error !== undefined) {
       try {
         report(result.error);
       } catch {
@@ -165,7 +185,7 @@ function guarded(
         context.diagnostics.report({
           level: "error",
           message: `${signal} export result could not be handed back`,
-          fields: { signal, error: error instanceof Error ? error.name : "Error" },
+          fields: { signal, error: nameOf(error) },
         });
       } catch {
         // nor may reporting it
@@ -173,6 +193,8 @@ function guarded(
     }
   };
   const failed = (error: unknown) => {
+    // a failure after the answer is not looked at at all
+    if (settled) return;
     once({ code: ExportResultCode.FAILED, error: asError(error) });
   };
   try {
@@ -180,7 +202,10 @@ function guarded(
     // promise (or something like one, from another realm or a promise library)
     const returned = send(once) as { then?: unknown } | null | undefined;
     if (typeof returned?.then === "function") {
-      Promise.resolve(returned).then(undefined, failed);
+      // adopted through its then() alone (Promise.resolve would also read its constructor)
+      new Promise((resolve) => {
+        resolve(returned);
+      }).then(undefined, failed);
     }
   } catch (error) {
     failed(error);

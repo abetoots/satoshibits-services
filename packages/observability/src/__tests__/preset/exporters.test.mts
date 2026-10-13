@@ -330,6 +330,143 @@ describe("exporter wrapper", () => {
       expect(reports.map((r) => r.message)).toEqual([`${signal} export failed`]);
     });
 
+    // values built to throw when looked at: a proxy that will not say what it is
+    const hostile = (): unknown =>
+      new Proxy(
+        {},
+        {
+          getPrototypeOf: () => {
+            throw new Error("SENTINEL from a proxy");
+          },
+        },
+      );
+    const answeredOnceWithAFailure = (answers: ExportResult[]) => {
+      expect(answers.map((a) => [a.code, a.error?.message])).toEqual([
+        [ExportResultCode.FAILED, "export failed with a value that is not an error"],
+      ]);
+      expect(wasReportedByExporter(answers[0]!.error)).toBe(true);
+    };
+
+    it("answers once when the exporter throws something that cannot even be examined", () => {
+      const { reports, context } = collecting();
+      const answers: ExportResult[] = [];
+      const exportIt = wrap(() => {
+        throw hostile();
+      }, context);
+
+      expect(() => exportIt((result) => answers.push(result))).not.toThrow();
+      answeredOnceWithAFailure(answers);
+      expect(reports.map((r) => r.message)).toEqual([`${signal} export failed`]);
+    });
+
+    it.each([
+      ["before any answer", false],
+      ["after a success", true],
+    ])("leaves nothing unhandled when the exporter rejects with such a thing %s", async (_when, answerFirst) => {
+      const { context } = collecting();
+      const answers: ExportResult[] = [];
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on("unhandledRejection", onUnhandled);
+      try {
+        wrap(
+          ((_records: unknown, given: Callback) => {
+            if (answerFirst) given({ code: ExportResultCode.SUCCESS });
+            // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- a non-error rejection is the case under test
+            return Promise.reject(hostile());
+          }) as unknown as InnerExport,
+          context,
+        )((result) => answers.push(result));
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+      } finally {
+        process.off("unhandledRejection", onUnhandled);
+      }
+
+      expect(unhandled).toEqual([]);
+      if (answerFirst) expect(answers.map((a) => a.code)).toEqual([ExportResultCode.SUCCESS]);
+      else answeredOnceWithAFailure(answers);
+    });
+
+    it.each([
+      [
+        "its code cannot be read",
+        () => ({
+          get code(): never {
+            throw new Error("SENTINEL");
+          },
+        }),
+      ],
+      [
+        "its error cannot be read",
+        () => ({
+          code: ExportResultCode.FAILED,
+          get error(): never {
+            throw new Error("SENTINEL");
+          },
+        }),
+      ],
+    ])("answers once with a marked failure when the exporter's answer is one where %s", (_what, answer) => {
+      const { reports, context } = collecting();
+      const answers: ExportResult[] = [];
+      const exportIt = wrap((_records, given) => given(answer() as never), context);
+
+      expect(() => exportIt((result) => answers.push(result))).not.toThrow();
+      expect(answers.map((a) => [a.code, a.error?.message])).toEqual([
+        [ExportResultCode.FAILED, "export failed"],
+      ]);
+      expect(wasReportedByExporter(answers[0]!.error)).toBe(true);
+      expect(reports.map((r) => r.message)).toEqual([`${signal} export failed`]);
+    });
+
+    it("reads the answer once: a success that would read differently the second time is a success", () => {
+      const { reports, context } = collecting();
+      const answers: ExportResult[] = [];
+      let reads = 0;
+      const answer = {
+        get code(): ExportResultCode {
+          if (reads++ > 0) throw new Error("read a second time");
+          return ExportResultCode.SUCCESS;
+        },
+      };
+      let late: Callback | undefined;
+      wrap((_records, given) => {
+        late = given;
+      }, context)((result) => answers.push(result));
+
+      // after export() has returned, so nothing but the wrapper stands between this and the exporter
+      expect(() => late!(answer as never)).not.toThrow();
+      expect(answers).toEqual([{ code: ExportResultCode.SUCCESS }]);
+      expect(reports).toEqual([]);
+    });
+
+    it("hears a rejection from a thenable whose then() throws", async () => {
+      const { context } = collecting();
+      const answers: ExportResult[] = [];
+      const thenable = {
+        then: () => {
+          throw new RangeError("then threw");
+        },
+      };
+      wrap((() => thenable) as unknown as InnerExport, context)((result) => answers.push(result));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(answers.map((a) => [a.code, a.error?.name])).toEqual([
+        [ExportResultCode.FAILED, "RangeError"],
+      ]);
+    });
+
+    it("names a callback's error by a plain name only", () => {
+      const { reports, context } = collecting();
+      const odd = Object.assign(new Error("m"), { name: { url: "http://u:SENTINEL@h.example/p" } });
+      wrap((_records, given) => given({ code: ExportResultCode.SUCCESS }), context)(() => {
+        throw odd;
+      });
+      expect(reports.map((r) => [r.message, r.fields?.error])).toEqual([
+        [`${signal} export result could not be handed back`, "Error"],
+      ]);
+    });
+
     it("hears a rejection from something that is only like a promise", async () => {
       const { reports, context } = collecting();
       const answers: ExportResult[] = [];

@@ -154,6 +154,34 @@ describe("diagnostics", () => {
     expect(events).toEqual([{ level: "error", message: expected, fields: { detail: expected } }]);
   });
 
+  it("still finds a URL glued after something that only looked like one", () => {
+    expect(scrubUrls("://http://u:SENTINEL@h.example/p")).toBe("://http://h.example");
+    expect(scrubUrls("1://x,http://u:SENTINEL@h.example/p y")).toBe("1://x,http://h.example y");
+  });
+
+  it("sanitizes a field that is not text by its shape, and keeps numbers and flags", () => {
+    const { events, diagnostics } = collecting();
+    diagnostics.activate();
+    diagnostics.report({
+      level: "error",
+      message: "m",
+      fields: {
+        status: 401,
+        retried: true,
+        error: { url: "http://u:SENTINEL@h.example/p", nested: ["SENTINEL"] },
+        list: ["SENTINEL"],
+        nothing: null,
+      },
+    });
+    expect(events[0]!.fields).toEqual({
+      status: 401,
+      retried: true,
+      error: "{url, nested}",
+      list: "[array of 1]",
+      nothing: "null",
+    });
+  });
+
   it("leaves text that only looks like the start of a URL alone", () => {
     expect(scrubUrls("a :// b, ://c and 123://d")).toBe("a :// b, ://c and 123://d");
     expect(scrubUrls("no url here")).toBe("no url here");
@@ -175,7 +203,8 @@ describe("diagnostics", () => {
 
   it.each([
     ["trailing dots", (n: number) => `http://h.example/${".".repeat(n)}a`],
-    ["no whitespace at all", (n: number) => "a-".repeat(n / 2)],
+    ["one URL that swallows the text", (n: number) => "a://".repeat(n / 4)],
+    ["dots to the very end", (n: number) => `http://h.example/${".".repeat(n)}`],
     ["bare markers, no whitespace", (n: number) => "://".repeat(n / 3)],
     ["digits where a scheme would be", (n: number) => "1://".repeat(n / 4)],
   ])("does work in proportion to the text, however it is built: %s", (_what, build) => {
@@ -196,6 +225,9 @@ describe("diagnostics", () => {
   it("ends a URL at a raw space inside it: the rest is ordinary text, left to the redactor", () => {
     // the limit of the whitespace rule, pinned so the policy work that follows knows this tail is its job
     expect(scrubUrls("x https://h.example/p?q=a b&token=T y")).toBe("x https://h.example b&token=T y");
+    // a tab or a line break ends it the same way
+    expect(scrubUrls("x https://h.example/p\ttoken=T")).toBe("x https://h.example\ttoken=T");
+    expect(scrubUrls("x https://h.example/p\ntoken=T")).toBe("x https://h.example\ntoken=T");
     const events: DiagnosticsEvent[] = [];
     const diagnostics = createDiagnostics({
       sinkFactory: () => (event) => events.push(event),
@@ -324,6 +356,18 @@ describe("diagnostics", () => {
       signal: "traces",
     });
     expect(Number.isNaN(Date.parse((JSON.parse(line) as { time: string }).time))).toBe(false);
+  });
+
+  it("the default sink's own keys cannot be replaced by a field of the same name", () => {
+    const write = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    stderrSink({
+      level: "warn",
+      message: "the message",
+      fields: { msg: "replaced", level: "replaced", source: "replaced", time: "replaced" },
+    });
+    const line = JSON.parse(String(write.mock.calls[0]![0])) as Record<string, string>;
+    expect(line).toMatchObject({ level: "warn", source: "opentelemetry", msg: "the message" });
+    expect(line.time).not.toBe("replaced");
   });
 });
 

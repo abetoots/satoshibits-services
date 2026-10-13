@@ -8,6 +8,8 @@
  * without telemetry: a mistyped variable must not stop a service from booting.
  */
 
+import { types } from "node:util";
+
 import { PresetConfigError } from "./preset/config.mjs";
 import { createDiagnostics } from "./preset/diagnostics.mjs";
 import { start } from "./preset/runtime.mjs";
@@ -15,20 +17,27 @@ import { start } from "./preset/runtime.mjs";
 try {
   start();
 } catch (error) {
-  // through diagnostics, so the reason is sanitized like any other text: an
-  // error from below the preset can quote a URL
-  const diagnostics = createDiagnostics();
-  diagnostics.activate();
-  // a configuration error lists every problem; each gets a line of its own, so none is cut off
-  const reasons =
-    error instanceof PresetConfigError
-      ? [...new Set(error.problems)]
-      : [error instanceof Error ? error.message : "start() threw a value that is not an error"];
-  for (const reason of reasons) {
-    diagnostics.report({
-      level: "error",
-      message: "telemetry was not started",
-      fields: { reason },
-    });
+  try {
+    // through diagnostics, so the reason is sanitized like any other text: an
+    // error from below the preset can quote a URL
+    const diagnostics = createDiagnostics();
+    diagnostics.activate();
+    // a configuration error lists every problem; each gets a line of its own, so none is cut off
+    const reasons =
+      error instanceof PresetConfigError
+        ? [...new Set(error.problems)]
+        : [types.isNativeError(error) ? error.message : "start() threw a value that is not an error"];
+    for (const reason of reasons) {
+      diagnostics.report({
+        level: "error",
+        message: "telemetry was not started",
+        fields: { reason },
+      });
+    }
+  } catch {
+    // an error that cannot even be read; the process still carries on
+    process.stderr.write(
+      '{"level":"error","source":"opentelemetry","msg":"telemetry was not started"}\n',
+    );
   }
 }
