@@ -50,6 +50,18 @@ const OFF: ResolvedConfig["signals"] = {
   logs: { enabled: false, reason: "not-requested" },
 };
 
+/**
+ * After a start that was refused: nothing of it is left on the diagnostics API. A logger
+ * left behind would make the API warn the next one installed that it is replacing one.
+ */
+function expectNoDiagLoggerLeftBehind(): void {
+  const said: string[] = [];
+  const note = (...parts: unknown[]) => said.push(parts.map(String).join(" "));
+  diag.setLogger({ error: note, warn: note, info: note, debug: note, verbose: note }, DiagLogLevel.WARN);
+  expect(said).toEqual([]);
+  diag.disable();
+}
+
 describe("startTestTelemetry", () => {
   it("collects spans, metric points and log records through the real pipeline", async () => {
     telemetry = startTestTelemetry({ serviceName: "kit-test" });
@@ -363,26 +375,63 @@ describe("startTestTelemetry", () => {
       const failingLater = () => Promise.reject(new Error("SENTINEL"));
 
       it("is refused from the caller as a configuration problem, every one named, before anything is registered", async () => {
+        // an ignored setting too: were anything registered before the refusal, this would be held and then delivered
+        vi.stubEnv("OTEL_BSP_SCHEDULE_DELAY", "not-a-number");
         let sinkCreated = false;
+        let problems: readonly string[] = [];
         const unhandled = await unhandledDuring(() => {
-          const attempt = () =>
+          try {
             startTestTelemetry({
               diagnostics: () => {
                 sinkCreated = true;
                 return () => undefined;
               },
-              // several at once, one under a key the preset drops and one written by hand as a thenable
+              // several at once: one under a key the preset drops, one under a long standard key,
+              // and one written by hand as a thenable
               resourceAttributes: {
                 first: failingLater() as never,
                 second: failingLater() as never,
                 "host.name": failingLater() as never,
+                "deployment.environment.name": failingLater() as never,
                 handWritten: laterUnchecked() as never,
               },
             });
-          expect(attempt).toThrow(PresetConfigError);
+          } catch (error) {
+            if (!(error instanceof PresetConfigError)) throw error;
+            problems = error.problems;
+          }
         });
+        expect(problems).toEqual(
+          ["first", "second", "host.name", "deployment.environment.name", "handWritten"].map(
+            (key) => `a resource attribute is a promise, not a value: "${key}"`,
+          ),
+        );
         expect(unhandled).toEqual([]);
         expect(sinkCreated).toBe(false);
+        expectNoDiagLoggerLeftBehind();
+        expect(getStatus().state).toBe("not-started");
+      });
+
+      it("is heard on a second start(), which is refused for being a second one", async () => {
+        telemetry = startTestTelemetry();
+        const unhandled = await unhandledDuring(() => {
+          expect(() =>
+            startTestTelemetry({ resourceAttributes: { later: failingLater() as never } }),
+          ).toThrow(/start\(\) was already called/);
+        });
+        expect(unhandled).toEqual([]);
+        expect(getStatus().state).toBe("running");
+      });
+
+      it.each([
+        ["a promise for the set", () => Promise.resolve({ a: "b" })],
+        ["an array", () => ["a"]],
+        ["a Map", () => new Map([["a", "b"]])],
+        ["a string", () => "a=b"],
+      ])("refuses resourceAttributes that is %s, where it would otherwise be read as none or as numbered keys", (_what, given) => {
+        const attempt = () => startTestTelemetry({ resourceAttributes: given() as never });
+        expect(attempt).toThrow(PresetConfigError);
+        expect(attempt).toThrow("resourceAttributes must be an object of attribute values");
         expect(getStatus().state).toBe("not-started");
       });
 
@@ -418,7 +467,9 @@ describe("startTestTelemetry", () => {
       ])("is refused, and heard, even when %s and would have replaced it", async (_when, arrange, options) => {
         arrange();
         const unhandled = await unhandledDuring(() => {
-          expect(() => startTestTelemetry(options())).toThrow("a resource attribute is a promise, not a value");
+          const attempt = () => startTestTelemetry(options());
+          expect(attempt).toThrow(PresetConfigError);
+          expect(attempt).toThrow("a resource attribute is a promise, not a value");
         });
         expect(unhandled).toEqual([]);
         expect(getStatus().state).toBe("not-started");
@@ -744,6 +795,8 @@ describe("startTestTelemetry", () => {
 
   describe.each(EXPORTERS)("a test's %s with no redaction named", (key, create) => {
     it.each(HOLDERS)("is refused when it is %s, and nothing is registered", async (_where, hold) => {
+      // an ignored setting: were anything registered before the refusal, it would be held and then delivered
+      vi.stubEnv("OTEL_BSP_SCHEDULE_DELAY", "not-a-number");
       let sinkCreated = false;
       expect(() =>
         start({
@@ -762,6 +815,8 @@ describe("startTestTelemetry", () => {
       expect(trace.getTracer("t").startSpan("s").isRecording()).toBe(false);
       // refused in validation: diagnostics were never set up, so nothing could be reported through them
       expect(sinkCreated).toBe(false);
+      expectNoDiagLoggerLeftBehind();
+      vi.unstubAllEnvs();
       // and the next start is not blocked by it
       telemetry = startTestTelemetry();
       trace.getTracer("t").startSpan("works").end();
@@ -935,13 +990,35 @@ describe("startTestTelemetry", () => {
     });
   });
 
-  it("uses the exporter it read from wherever the test held it, when a redaction is named", async () => {
-    const exporter = new InMemorySpanExporter();
+  it.each([
+    ["spanExporter", "traces"],
+    ["metricExporter", "metrics"],
+    ["logRecordExporter", "logs"],
+  ] as const)("reads a test's %s once, from wherever the test held it, and uses that one", (key, signal) => {
+    const create = EXPORTERS.find(([name]) => name === key)![1];
+    const first = create();
     let reads = 0;
+    class Kit {}
+    Object.defineProperty(Kit.prototype, key, {
+      // the one it is given first is the one used: a different one on any later read
+      get: () => (reads++ === 0 ? first : create()),
+    });
+    const status = start({
+      serviceName: "held-on-a-class",
+      instrumentations: false,
+      loaderHook: false,
+      redaction: false,
+      testExporters: new Kit(),
+    });
+    expect(reads).toBe(1);
+    expect(status.signals[signal]).toEqual({ enabled: true, destination: "test" });
+  });
+
+  it("exports through the exporter it read from an accessor", async () => {
+    const exporter = new InMemorySpanExporter();
     class Kit {
       get spanExporter() {
-        // the one it is given first is the one used: a different one on any later read
-        return reads++ === 0 ? exporter : new InMemorySpanExporter();
+        return exporter;
       }
     }
     start({
@@ -954,7 +1031,6 @@ describe("startTestTelemetry", () => {
     trace.getTracer("t").startSpan("through the accessor").end();
     await forceFlush();
     expect(exporter.getFinishedSpans().map((span) => span.name)).toEqual(["through the accessor"]);
-    expect(reads).toBe(1);
   });
 
   it("the kit refuses a redaction that is null, as start() does, and does not read it as false", () => {

@@ -516,15 +516,15 @@ const snapshot = (status: PresetStatus): PresetStatus => structuredClone(status)
  * With `OTEL_SDK_DISABLED=true` it registers nothing and returns.
  */
 export function start(options: StartOptions = {}): PresetStatus {
+  // first of all, whatever else this start comes to (a second call included): a promise
+  // passed as a resource attribute is given a handler here, before anything can throw
+  const deferredResourceAttributes = deferredAttributes(options.resourceAttributes);
+
   if (handle !== undefined) {
     throw new Error(
       "@satoshibits/observability: start() was already called in this process",
     );
   }
-
-  // first of all, whatever else this start comes to: a promise passed as a resource
-  // attribute is given a handler here, so that it cannot reject unheard on any path out
-  const deferredResourceAttributes = deferredAttributes(options.resourceAttributes);
   const testExporters = readTestExporters(options.testExporters);
   const resolution = resolveConfig(options, process.env, {
     testExporters: Object.keys(testExporters).length > 0,

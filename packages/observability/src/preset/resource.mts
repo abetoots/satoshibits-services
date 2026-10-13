@@ -64,12 +64,22 @@ const IDENTITY_KEYS: ReadonlySet<string> = new Set([
 
 /**
  * The keys of an attribute set whose value is a promise, each promise having
- * been given a handler so that none is left to reject unheard. Called on what
- * the caller passed before anything else looks at it: before a setting can
- * replace a key, before the SDK is found disabled, before validation can fail.
+ * been given a handler. Called on what the caller passed before anything else
+ * in `start()` looks at it.
+ *
+ * What is guaranteed, and what is not (owner, 2026-10-13). Guaranteed: a
+ * promise is refused wherever it would otherwise be exported without the
+ * policy having seen what it settled to, which is as the value of a top-level
+ * key here and in what the policy returns for the resource. Best effort only:
+ * that a promise passed where the types say a value belongs is given a
+ * handler. The ones found are; one tucked where this does not look (inside an
+ * array, under a symbol, behind an option that is not an object of values)
+ * is the caller's to handle, as any promise they create is.
  */
 export function deferredAttributes(attributes: unknown): string[] {
   if (typeof attributes !== "object" || attributes === null) return [];
+  // a promise for the whole set: refused in validation as not an object of values
+  abandon(attributes);
   const deferred = Object.entries(attributes).filter(([, value]) => isThenable(value));
   for (const [, value] of deferred) abandon(value);
   return deferred.map(([key]) => key);
