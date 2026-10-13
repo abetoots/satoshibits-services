@@ -114,7 +114,7 @@ function guarded(
   context: ExporterContext,
   report: (error: unknown) => void,
   resultCallback: (result: ExportResult) => void,
-  send: (observed: (result: ExportResult) => void) => void,
+  send: (observed: (result: ExportResult) => void) => unknown,
 ): void {
   // exactly one answer per export, and one report for it: an exporter that
   // answers and then throws, or answers twice, is heard the first time only
@@ -127,7 +127,12 @@ function guarded(
     if (result.code !== ExportResultCode.SUCCESS) {
       // a failure without an error is given one, so the processor passes this
       // (marked) object on to the SDK's error handler and not one of its own
-      result = { ...result, error: result.error ?? new Error("export failed") };
+      const given: unknown = result.error;
+      const error =
+        given instanceof Error
+          ? given
+          : new Error(given === undefined || given === null ? "export failed" : "export failed with a value that is not an error");
+      result = { ...result, error };
       try {
         report(result.error);
       } catch {
@@ -139,20 +144,29 @@ function guarded(
     } catch (error) {
       // the processor's own callback threw. Whoever answered (the exporter,
       // possibly later and from its own promise chain) must not get that back.
-      context.diagnostics.report({
-        level: "error",
-        message: `${signal} export result could not be handed back`,
-        fields: { signal, error: error instanceof Error ? error.name : "Error" },
-      });
+      try {
+        context.diagnostics.report({
+          level: "error",
+          message: `${signal} export result could not be handed back`,
+          fields: { signal, error: error instanceof Error ? error.name : "Error" },
+        });
+      } catch {
+        // nor may reporting it
+      }
     }
   };
-  try {
-    send(once);
-  } catch (error) {
+  const failed = (error: unknown) => {
     once({
       code: ExportResultCode.FAILED,
       error: error instanceof Error ? error : new Error(String(error)),
     });
+  };
+  try {
+    // `export` returns nothing, but an exporter written as an async function returns a promise
+    const returned: unknown = send(once);
+    if (returned instanceof Promise) returned.then(undefined, failed);
+  } catch (error) {
+    failed(error);
   }
 }
 
@@ -177,7 +191,7 @@ export function wrapSpanExporter(
   return {
     export: (spans: ReadableSpan[], resultCallback) => {
       guarded("traces", context, report, resultCallback, (observed) => {
-        inner.export(
+        return inner.export(
           spans.map((span) =>
             viewOf(span, {
               instrumentationScope: redactor.scope(span.instrumentationScope),
@@ -201,7 +215,7 @@ export function wrapMetricExporter(
   return {
     export: (metrics: ResourceMetrics, resultCallback) => {
       guarded("metrics", context, report, resultCallback, (observed) => {
-        inner.export(
+        return inner.export(
           {
             ...metrics,
             scopeMetrics: metrics.scopeMetrics.map((scopeMetrics) => ({
@@ -236,7 +250,7 @@ export function wrapLogRecordExporter(
   return {
     export: (records: ReadableLogRecord[], resultCallback) => {
       guarded("logs", context, report, resultCallback, (observed) => {
-        inner.export(
+        return inner.export(
           records.map((record) =>
             viewOf(record, {
               instrumentationScope: redactor.scope(record.instrumentationScope),

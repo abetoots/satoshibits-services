@@ -128,14 +128,69 @@ describe("diagnostics", () => {
     // a quoted URL ends at its closing quote, and the text after it is kept
     ["could not parse 'http://h.example/p?q=SENTINEL', giving up", "could not parse 'http://h.example', giving up"],
     ['url "http://u:SENTINEL@h.example/p".', 'url "http://h.example".'],
-    // a quoted URL that holds the same quote is cut at the last one: nothing of it is printed
+    // a quoted URL that holds the same quote: nothing of it is printed
     ["url 'http://u:pw'SENTINEL@h.example/p' failed", "url 'http://h.example' failed"],
+    // a quote that opens before the URL and never closes it
+    ['url "http://u:pw"SENTINEL@h.example/p failed', 'url "http://h.example failed'],
+    ['url "http://h.example/a"SENTINEL?token=SENTINEL', 'url "http://h.example'],
+    ["url `http://u:pw`SENTINEL@h.example/p failed", "url `http://h.example failed"],
+    // angle brackets inside a URL, and around one
+    ["failed http://u:pw<SENTINEL@h.example/p", "failed http://h.example"],
+    ["failed http://h.example/private>SENTINEL?token=SENTINEL", "failed http://h.example"],
+    ["failed http://h.example/p?q=before<SENTINEL", "failed http://h.example"],
+    ["see <http://h.example/p?q=SENTINEL>.", "see <http://h.example>."],
+    // a scheme glued to what precedes it
+    ["x _http://u:SENTINEL@h.example/p?token=SENTINEL y", "x _http://h.example y"],
+    ["x 0http://u:SENTINEL@h.example/p y", "x 0http://h.example y"],
+    // (the scheme is taken to be "Fhttp"; a URL prints its scheme in lower case)
+    ["x %2Fhttp://u:SENTINEL@h.example/p y", "x %2fhttp://h.example y"],
+    // two URLs glued together are one token: the first host stands for both
+    ["http://a.example/x,http://u:SENTINEL@b.example/y", "http://a.example"],
   ])("cuts the whole URL whatever quotes are in or around it: %s", (text, expected) => {
     expect(scrubUrls(text)).toBe(expected);
     const { events, diagnostics } = collecting();
     diagnostics.activate();
     diagnostics.report({ level: "error", message: text, fields: { detail: text } });
     expect(events).toEqual([{ level: "error", message: expected, fields: { detail: expected } }]);
+  });
+
+  it("leaves text that only looks like the start of a URL alone", () => {
+    expect(scrubUrls("a :// b, ://c and 123://d")).toBe("a :// b, ://c and 123://d");
+    expect(scrubUrls("no url here")).toBe("no url here");
+    expect(scrubUrls("")).toBe("");
+  });
+
+  it("bounds what it sanitizes: an oversized text is cut at whitespace, never inside a URL", () => {
+    const { events, diagnostics } = collecting();
+    diagnostics.activate();
+    const huge = `http://u:SENTINEL@h.example/${"a-".repeat(200_000)}SENTINEL`;
+    diagnostics.report({ level: "error", message: `start ${huge}`, fields: { detail: huge } });
+    diagnostics.report({ level: "error", message: `${"word ".repeat(4000)}${huge}` });
+
+    // the URL began before the bound and ran past it: it is dropped whole
+    expect(events[0]).toEqual({ level: "error", message: "start …", fields: { detail: " …" } });
+    expect(events[1]!.message).toBe(`${"word ".repeat(100)}…`);
+    expect(JSON.stringify(events)).not.toContain("SENTINEL");
+  });
+
+  it.each([
+    ["trailing dots", `http://h.example/${".".repeat(15_000)}a`],
+    ["no whitespace at all", "a-".repeat(8_000)],
+    ["scheme characters before every marker", "ab.".repeat(2_000) + "://x ".repeat(2_000)],
+  ])("stays quick on text built to make a pattern backtrack: %s", (_what, text) => {
+    const started = performance.now();
+    scrubUrls(text);
+    // linear work on 16k characters takes well under a millisecond; a backtracking pattern took seconds
+    expect(performance.now() - started).toBeLessThan(250);
+  });
+
+  it("survives an argument that cannot be described", () => {
+    const { events, diagnostics } = collecting();
+    diagnostics.activate();
+    const hostile = new Proxy({}, { ownKeys: () => { throw new Error("boom"); } });
+    expect(() => diagnostics.diagLogger.error("m", hostile)).not.toThrow();
+    diagnostics.diagLogger.error("still reporting");
+    expect(events.map((e) => e.message)).toEqual(["still reporting"]);
   });
 
   it("sanitizes the whole text before cutting it: a long user-info never passes for a host", () => {

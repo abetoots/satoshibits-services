@@ -102,42 +102,75 @@ export const stderrSink: DiagnosticsSink = (event) => {
   );
 };
 
-const URL_TOKEN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>]+/gi;
+/** longer than any scheme in use; bounds the walk back from "://" */
+const MAX_SCHEME_LENGTH = 32;
+const isSchemeChar = (char: string): boolean => /[a-z0-9+.-]/i.test(char);
+const isWhitespace = (char: string): boolean => /\s/.test(char);
+/** what may follow a URL in a sentence, or close what was opened before it */
+const TRAILING_PUNCTUATION = new Set(".,;:!?)]}>'\"`");
 /** the scheme, any user-info and a bracketed (IPv6) host: its brackets and colons are not punctuation */
-const BRACKETED_AUTHORITY = /^[a-z][a-z0-9+.-]*:\/\/(?:[^/?#[\]]*@)?\[[^\]]*\]/i;
+const BRACKETED_AUTHORITY = /^[a-z][a-z0-9+.-]*:\/\/(?:[^/?#[\]@]*@)?\[[^\]]*\]/i;
+
+function scrubbedUrl(token: string): string {
+  const authority = BRACKETED_AUTHORITY.exec(token)?.[0].length ?? 0;
+  let end = token.length;
+  while (end > authority && TRAILING_PUNCTUATION.has(token[end - 1]!)) end--;
+  const trailing = token.slice(end);
+  try {
+    const url = new URL(token.slice(0, end));
+    return `${url.protocol}//${url.host}${trailing}`;
+  } catch {
+    return `[url]${trailing}`;
+  }
+}
 
 /**
  * Cut every URL in a text down to scheme and host. An endpoint URL can carry
  * credentials in its user-info, path or query, and error messages quote URLs.
  *
- * A URL runs to the next whitespace. A quote inside it is part of it (a
- * password or a path may hold one), unless the URL itself was quoted: then it
- * ends at the last such quote. Erring long loses text after the URL; erring
- * short would print part of the URL.
+ * A URL is taken to run from its scheme to the next whitespace, whatever is
+ * in between (a password or a query may hold a quote or an angle bracket),
+ * less the punctuation at its very end. Text glued to a URL without a space
+ * is therefore lost with it; no part of a URL is ever kept.
+ *
+ * One pass over the text, with no backtracking: it runs on text of any size
+ * inside whatever called the diagnostics logger.
  */
 export function scrubUrls(text: string): string {
-  return text.replace(URL_TOKEN, (match: string, offset: number) => {
-    let token = match;
-    let after = "";
-    const opener = text[offset - 1];
-    if (opener === '"' || opener === "'" || opener === "`") {
-      const close = token.lastIndexOf(opener);
-      if (close !== -1) {
-        after = token.slice(close);
-        token = token.slice(0, close);
-      }
+  let out = "";
+  let copied = 0;
+  let search = 0;
+  for (;;) {
+    const marker = text.indexOf("://", search);
+    if (marker === -1) break;
+    // back over the scheme, never into text already replaced; a scheme starts with a letter
+    let start = marker;
+    const floor = Math.max(copied, marker - MAX_SCHEME_LENGTH);
+    while (start > floor && isSchemeChar(text[start - 1]!)) start--;
+    while (start < marker && !/[a-z]/i.test(text[start]!)) start++;
+    let end = marker + 3;
+    while (end < text.length && !isWhitespace(text[end]!)) end++;
+    if (start === marker) {
+      // "://" with no scheme before it is not a URL
+      search = marker + 3;
+      continue;
     }
-    // punctuation that ends the sentence or closes a bracket is not part of the URL
-    const authority = BRACKETED_AUTHORITY.exec(token)?.[0].length ?? 0;
-    const trailing = /[.,;:!?)\]}'"`]+$/.exec(token.slice(authority))?.[0] ?? "";
-    const candidate = token.slice(0, token.length - trailing.length);
-    try {
-      const url = new URL(candidate);
-      return `${url.protocol}//${url.host}${trailing}${after}`;
-    } catch {
-      return `[url]${trailing}${after}`;
-    }
-  });
+    out += text.slice(copied, start) + scrubbedUrl(text.slice(start, end));
+    copied = end;
+    search = end;
+  }
+  return out + text.slice(copied);
+}
+
+/** far more than a message needs; what is sanitized is bounded, so sanitizing is */
+const MAX_INPUT_LENGTH = 16_384;
+
+/** cut an oversized text at whitespace, so no URL is split and its tail mistaken for text */
+function bounded(text: string): string {
+  if (text.length <= MAX_INPUT_LENGTH) return text;
+  let end = MAX_INPUT_LENGTH;
+  while (end > 0 && !isWhitespace(text[end]!)) end--;
+  return `${text.slice(0, end)} …`;
 }
 
 const truncate = (text: string): string =>
@@ -189,7 +222,7 @@ export function createDiagnostics(
 
   // the whole text is sanitized, and only then cut to length
   const clean = (text: string): string => {
-    const scrubbed = scrubUrls(text);
+    const scrubbed = scrubUrls(bounded(text));
     return truncate(options.redactText ? options.redactText(scrubbed) : scrubbed);
   };
   const sanitized = (event: DiagnosticsEvent): DiagnosticsEvent => ({
@@ -234,11 +267,15 @@ export function createDiagnostics(
   const fromApi =
     (level: DiagnosticsLevel) =>
     (message: string, ...args: unknown[]) => {
-      // typed as a string, but instrumentations do pass errors and objects
-      report({
-        level,
-        message: [message, ...args].map(describeArgument).join(" "),
-      });
+      try {
+        // typed as a string, but instrumentations do pass errors and objects
+        report({
+          level,
+          message: [message, ...args].map(describeArgument).join(" "),
+        });
+      } catch {
+        // an argument that cannot even be described must not throw into the caller
+      }
     };
 
   return {

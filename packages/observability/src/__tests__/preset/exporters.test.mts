@@ -242,6 +242,53 @@ describe("exporter wrapper", () => {
       expect(answers.map((a) => a.code)).toEqual([ExportResultCode.FAILED]);
     });
 
+    it("lets nothing out when the callback throws and reporting that throws too", () => {
+      const diagnostics = createDiagnostics();
+      const context = { diagnostics, redactor: createRedactor() };
+      vi.spyOn(diagnostics, "report").mockImplementation(() => {
+        throw new Error("diagnostics is broken");
+      });
+      const { calls, callback } = throwingCallback();
+      let answer: Callback | undefined;
+      wrap((_records, given) => {
+        answer = given;
+      }, context)(callback);
+
+      expect(() => answer!({ code: ExportResultCode.SUCCESS })).not.toThrow();
+      expect(calls()).toBe(1);
+    });
+
+    it("answers and reports a failure when an exporter written as an async function rejects", async () => {
+      const { reports, context } = collecting();
+      const answers: ExportResult[] = [];
+      wrap(
+        (() => Promise.reject(new RangeError("rejected"))) as unknown as InnerExport,
+        context,
+      )((result) => answers.push(result));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(answers.map((a) => [a.code, a.error?.name])).toEqual([
+        [ExportResultCode.FAILED, "RangeError"],
+      ]);
+      expect(reports.map((r) => [r.message, r.fields?.error])).toEqual([
+        [`${signal} export failed`, "RangeError"],
+      ]);
+    });
+
+    it("gives a failure whose error is not an error object one it has marked, without its text", () => {
+      const { reports, context } = collecting();
+      const answers: ExportResult[] = [];
+      wrap(
+        (_records, given) =>
+          given({ code: ExportResultCode.FAILED, error: "SENTINEL from the far end" as never }),
+        context,
+      )((result) => answers.push(result));
+
+      expect(answers[0]!.error).toBeInstanceOf(Error);
+      expect(wasReportedByExporter(answers[0]!.error)).toBe(true);
+      expect(JSON.stringify([reports, answers[0]!.error!.message])).not.toContain("SENTINEL");
+    });
+
     it("gives a failure that came without an error one it has marked as reported", () => {
       const { reports, context } = collecting();
       const answers: ExportResult[] = [];

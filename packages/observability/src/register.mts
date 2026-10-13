@@ -8,6 +8,7 @@
  * without telemetry: a mistyped variable must not stop a service from booting.
  */
 
+import { PresetConfigError } from "./preset/config.mjs";
 import { createDiagnostics } from "./preset/diagnostics.mjs";
 import { start } from "./preset/runtime.mjs";
 
@@ -18,9 +19,16 @@ try {
   // error from below the preset can quote a URL
   const diagnostics = createDiagnostics();
   diagnostics.activate();
-  diagnostics.report({
-    level: "error",
-    message: "telemetry was not started",
-    fields: { reason: error instanceof Error ? error.message : String(error) },
-  });
+  // a configuration error lists every problem; each gets a line of its own, so none is cut off
+  const reasons =
+    error instanceof PresetConfigError
+      ? [...new Set(error.problems)]
+      : [error instanceof Error ? error.message : String(error)];
+  for (const reason of reasons) {
+    diagnostics.report({
+      level: "error",
+      message: "telemetry was not started",
+      fields: { reason },
+    });
+  }
 }
