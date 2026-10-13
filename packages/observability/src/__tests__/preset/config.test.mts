@@ -85,6 +85,14 @@ describe("signals", () => {
     }
   });
 
+  it("hands a signal-specific endpoint on in its canonical spelling only", () => {
+    // these parse as URLs, but nothing downstream would know them for one
+    for (const spelling of ["http:\\\\u:p@h.example:9\\p", "http:/u:p@h.example:9/p", "HTTP://u:p@H.example:9/p"]) {
+      const { signals } = resolved({ ...ENDPOINT, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: spelling });
+      expect(signals.traces).toMatchObject({ url: "http://u:p@h.example:9/p" });
+    }
+  });
+
   it("uses a signal-specific endpoint as given, over the general one", () => {
     const { signals } = resolved({
       ...ENDPOINT,

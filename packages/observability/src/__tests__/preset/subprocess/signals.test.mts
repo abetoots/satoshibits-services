@@ -38,6 +38,8 @@ describe("the default-address trap itself", () => {
       { ...NAME, OTEL_EXPORTER_OTLP_ENDPOINT: `http://localhost:${DEFAULT_OTLP_PORT}` },
     );
     expect(run.result.startError).toBeNull();
+    // the child's socket record does record: every other test asserts it holds nothing stray
+    expect(run.result.sockets.some((socket) => socket.port === DEFAULT_OTLP_PORT)).toBe(true);
     const spans = trap.spans().map((s) => s.name);
     // this test is the one that may use the trap; leave it clean for the others
     expect(drainTrap(trap).length).toBeGreaterThan(0);

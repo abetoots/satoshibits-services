@@ -164,9 +164,10 @@ function resolveEndpoint(
 ): string | undefined {
   const specificName = `OTEL_EXPORTER_OTLP_${SIGNAL_VAR[signal]}_ENDPOINT`;
   const specific = read(env, specificName);
-  // a signal-specific endpoint is used as given
+  // a signal-specific endpoint is used as given, in its canonical spelling: a URL parses
+  // from other spellings too (`http:\\host`), which nothing downstream would know for a URL
   if (specific !== undefined) {
-    return parseEndpoint(specific, specificName, problems) && specific;
+    return parseEndpoint(specific, specificName, problems)?.href;
   }
   if (general === undefined) return undefined;
   // the general one gets the signal path, appended to its path (a query string stays a query string)
