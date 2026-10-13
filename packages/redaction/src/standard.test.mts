@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { PolicyParts } from "./policy.mjs";
 
+import { exactKeys } from "./keys.mjs";
 import { REDACTED } from "./masks.mjs";
 import { createFieldsRedactor, createPolicy } from "./policy.mjs";
 import {
@@ -61,6 +62,8 @@ describe("the standard policy on an attribute set", () => {
       "client_secret",
       "access_token",
       "refreshToken",
+      "Password1",
+      "newPassword2",
       "aws.credentials",
       "tls.private_key",
       "db.connection_string",
@@ -94,8 +97,18 @@ describe("the standard policy on an attribute set", () => {
       ["url.full", "https://api.example.com/v1/users?email=a%40b.com", "https://api.example.com/v1/users"],
       ["http.target", "/v1/users?token=abc", "/v1/users"],
       ["http.target", "/search?q=two words&k=v", "/search"],
+      // no scheme: no text mask sees a URL here, so only the rule for the key cuts it
+      ["http.url", "/v1/users?token=abc", "/v1/users"],
+      ["url.full", "/v1/users?token=abc#top", "/v1/users"],
     ])("removes the query string from %j", (key, given, expected) => {
       expect(attributes({ [key]: given })).toEqual({ [key]: expected });
+    });
+
+    it("leaves a value under such a key that is not a text to the rules for any value", () => {
+      expect(attributes({ "url.full": ["https://h.example/a?k=v", 3], "http.target": 7 })).toEqual({
+        "url.full": ["https://h.example/a", 3],
+        "http.target": 7,
+      });
     });
 
     it("drops url.query", () => {
@@ -172,7 +185,16 @@ describe("the standard policy on a text", () => {
   });
 
   it("leaves a clean text as it is", () => {
-    for (const clean of ["GET /health", "db.find users", "worker:send-email", "Cannot read properties of undefined"]) {
+    for (const clean of [
+      "GET /health",
+      "db.find users",
+      "worker:send-email",
+      "Cannot read properties of undefined",
+      // names that start like a key and are not one
+      "api_getUserProfileSettings",
+      "auth_middlewareHandlerV2 failed",
+      "token_expirationtimestamp",
+    ]) {
       expect(standardPolicy.text("span.name", clean)).toBe(clean);
     }
   });
@@ -377,6 +399,34 @@ describe("redactFields: the standard policy over a logger's fields", () => {
     expect(result).not.toContain("a@b.io");
   });
 
+  it("follows 32 levels and no more", () => {
+    const nested = (levels: number): unknown => {
+      let value: unknown = "a@b.io";
+      for (let level = 0; level < levels; level++) value = { next: value };
+      return value;
+    };
+    const innermost = (value: unknown): unknown => {
+      let current = value;
+      while (typeof current === "object" && current !== null) current = (current as { next: unknown }).next;
+      return current;
+    };
+    expect(innermost(redactFields(nested(32)))).toBe("[EMAIL]");
+    expect(innermost(redactFields(nested(33)))).toBe("[TOO_DEEP]");
+  });
+
+  it("walks an object that is reached by many paths once", () => {
+    // each level holds the one below twice: 2^40 paths to the bottom
+    let shared: Record<string, unknown> = { email: "a@b.io", password: SECRET };
+    for (let level = 0; level < 30; level++) shared = { left: shared, right: shared };
+    const before = performance.now();
+    const result = redactFields(shared) as { left: unknown; right: unknown };
+    expect(performance.now() - before).toBeLessThan(250);
+    expect(result.left).toBe(result.right);
+    let bottom: unknown = result;
+    while (typeof bottom === "object" && bottom !== null && "left" in bottom) bottom = bottom.left;
+    expect(bottom).toEqual({ email: "[EMAIL]", password: REDACTED });
+  });
+
   it("does not change what it is given", () => {
     const given = { user: { password: SECRET, emails: ["a@b.io"] } };
     redactFields(given);
@@ -391,12 +441,14 @@ describe("a policy of one's own, from the parts", () => {
     "client.address": "203.0.113.7",
     "url.query": "k=v",
     "url.full": "https://h.example/a?k=v",
+    "http.target": "/a?k=v",
     note: "to a@b.io",
   };
   const standard = {
     password: REDACTED,
     access_token: REDACTED,
     "url.full": "https://h.example/a",
+    "http.target": "/a",
     note: "to [EMAIL]",
   };
   const withParts = (changed: Partial<PolicyParts>): Record<string, unknown> =>
@@ -432,8 +484,8 @@ describe("a policy of one's own, from the parts", () => {
     [
       "the rule for URL attributes",
       { urlKeys: [] },
-      // still a text with a URL in it, which the text masks cut
-      { ...standard, "url.full": "https://h.example/a" },
+      // a full URL is still a text with a URL in it, which the text masks cut; a path with a query is not
+      { ...standard, "url.full": "https://h.example/a", "http.target": "/a?k=v" },
     ],
     [
       "the email mask",
@@ -443,7 +495,7 @@ describe("a policy of one's own, from the parts", () => {
     [
       "the URL mask and the rule for URL attributes",
       { urlKeys: [], textMasks: standardParts.textMasks.filter((mask) => mask !== standardMasks.urls) },
-      { ...standard, "url.full": "https://h.example/a?k=v" },
+      { ...standard, "url.full": "https://h.example/a?k=v", "http.target": "/a?k=v" },
     ],
   ])("without %s, it behaves as the standard one minus that", (_what, changed, expected) => {
     expect(withParts(changed)).toEqual(expected);
@@ -459,6 +511,28 @@ describe("a policy of one's own, from the parts", () => {
       "url.full": "https://h.example/a?k=v",
       note: "to a@b.io",
     });
+  });
+
+  it("an allowed key is kept on a span's exception event too", () => {
+    const policy = createPolicy({ ...standardParts, allowKeys: ["exception.message"] });
+    expect(
+      policy.spanEvent({
+        name: "exception",
+        attributes: { "exception.message": "to a@b.io", "exception.stacktrace": "s" },
+      }),
+    ).toEqual({ name: "exception", attributes: { "exception.message": "to a@b.io" } });
+  });
+
+  it("decides a key that several rules name in one order: dropped, then redacted, then cut", () => {
+    const named = exactKeys("k");
+    const order = (parts: Partial<PolicyParts>): Record<string, unknown> =>
+      createPolicy({ ...standardParts, redactKeys: [], dropKeys: [], urlKeys: [], ...parts }).attributes("span", {
+        k: "/p?q=1",
+      });
+    expect(order({ dropKeys: [named], redactKeys: [named], urlKeys: [named] })).toEqual({});
+    expect(order({ redactKeys: [named], urlKeys: [named] })).toEqual({ k: REDACTED });
+    expect(order({ urlKeys: [named] })).toEqual({ k: "/p" });
+    expect(order({})).toEqual({ k: "/p?q=1" });
   });
 
   it("allows a key exactly as written", () => {

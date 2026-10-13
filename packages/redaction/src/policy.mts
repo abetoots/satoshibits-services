@@ -131,32 +131,46 @@ function createEngine(parts: PolicyParts): Engine {
     return decision;
   };
 
-  // the objects being walked, from the outermost in: one found again contains itself
-  const walk = (given: unknown, ancestors: object[]): unknown => {
+  /**
+   * One walk of one value. `ancestors` are the objects being walked, from the
+   * outermost in: one found again contains itself. `walked` remembers what
+   * each object became, so one that is reached by several paths is walked
+   * once and not once per path (which doubles the work at every level of a
+   * structure that shares its parts).
+   */
+  const walk = (
+    given: unknown,
+    ancestors: object[],
+    walked: Map<object, unknown>,
+  ): unknown => {
     if (typeof given === "string") return text(given);
     const isArray = Array.isArray(given);
     // anything that is neither is left as given: a number, a date, a buffer, an error
     if (!isArray && !isPlainObject(given)) return given;
     if (ancestors.includes(given)) return CIRCULAR;
+    if (walked.has(given)) return walked.get(given);
     if (ancestors.length >= MAX_DEPTH) return TOO_DEEP;
     ancestors.push(given);
-    const walked = isArray
-      ? given.map((item) => walk(item, ancestors))
-      : walkEntries(given, ancestors);
+    const result = isArray
+      ? given.map((item) => walk(item, ancestors, walked))
+      : walkEntries(given, ancestors, walked);
     ancestors.pop();
-    return walked;
+    walked.set(given, result);
+    return result;
   };
 
   const walkEntries = (
     given: Record<string, unknown>,
     ancestors: object[],
+    walked: Map<object, unknown>,
     without?: ReadonlySet<string>,
   ): Record<string, unknown> => {
     const kept: [string, unknown][] = [];
     for (const key of Object.keys(given)) {
-      if (without?.has(key) === true) continue;
       const decision = decide(key);
+      // an allowed key is kept whatever else would remove it
       if (decision === "drop") continue;
+      if (decision !== "allow" && without?.has(key) === true) continue;
       const value = given[key];
       kept.push([
         key,
@@ -169,7 +183,7 @@ function createEngine(parts: PolicyParts): Engine {
               : parts.replacement
             : decision === "url" && typeof value === "string"
               ? text(cutUrl(value))
-              : walk(value, ancestors),
+              : walk(value, ancestors, walked),
       ]);
     }
     // from entries, so that a key named "__proto__" is a key and nothing more
@@ -178,8 +192,8 @@ function createEngine(parts: PolicyParts): Engine {
 
   return {
     text,
-    entries: (given, without) => walkEntries(given, [given], without),
-    value: (given) => walk(given, []),
+    entries: (given, without) => walkEntries(given, [given], new Map(), without),
+    value: (given) => walk(given, [], new Map()),
   };
 }
 

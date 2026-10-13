@@ -11,7 +11,9 @@ describe("wordsOfKey: a key as segments, each as its words", () => {
     ["accessToken", [["access", "token"]]],
     ["APIKey", [["api", "key"]]],
     ["userID", [["user", "id"]]],
-    ["OAuth2Token", [["o", "auth2", "token"]]],
+    ["OAuth2Token", [["o", "auth", "2", "token"]]],
+    ["Password1", [["password", "1"]]],
+    ["sha256sum", [["sha", "256", "sum"]]],
     ["set-cookie", [["set", "cookie"]]],
     ["a..b", [["a"], [], ["b"]]],
     ["with space", [["with", "space"]]],
@@ -48,6 +50,8 @@ describe("keyWords: a word, or words in a row, anywhere in a key", () => {
     "apiKey",
     "http.request.header.authorization",
     "http.request.header.proxy-authorization",
+    "Password1",
+    "newPassword2",
   ])("matches %j", (key) => {
     expect(rule(key)).toBe(true);
   });

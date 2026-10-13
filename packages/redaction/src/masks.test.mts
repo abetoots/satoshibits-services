@@ -17,6 +17,7 @@ import {
   maskProviderKeys,
   maskSsns,
   maskUuids,
+  maskVendorKeys,
   REDACTED,
 } from "./masks.mjs";
 
@@ -142,6 +143,37 @@ describe("the masks kept from the library's sanitizer", () => {
   it("takes the replacement it is given", () => {
     expect(maskCardNumbers("#")("4111111111111111")).toBe("#");
     expect(maskPasswordPairs("#")("pwd: x")).toBe("pwd: #");
+  });
+
+  it("uses a replacement as written: a dollar sign in it means a dollar sign", () => {
+    for (const replacement of ["$$", "$&", "$1", "$`"]) {
+      expect(maskCardNumbers(replacement)("card 4111111111111111")).toBe(`card ${replacement}`);
+      expect(maskPasswordPairs(replacement)("pwd: x")).toBe(`pwd: ${replacement}`);
+      expect(maskJwts(replacement)("eyJa.b.c")).toBe(replacement);
+      expect(maskEmails(replacement)("a@b.io")).toBe(replacement);
+    }
+  });
+
+  describe("maskVendorKeys: maskApiKeys without the shape an ordinary name has", () => {
+    it.each([
+      "sk_live_abcdefghijklmnopqrstuvwx",
+      "AKIAIOSFODNN7EXAMPLE",
+      `ghp_${"a".repeat(36)}`,
+      "xoxb-1234567890-abc",
+      "SG.abcdefgh.ijklmnop",
+      `sk-ant-${"a".repeat(20)}`,
+    ])("masks %j, as maskApiKeys does", (key) => {
+      expect(maskVendorKeys()(key)).toBe(REDACTED);
+      expect(maskApiKeys()(key)).toBe(REDACTED);
+    });
+
+    it.each(["api_getUserProfileSettings", "auth_middlewareHandlerV2", "token_expirationtimestamp", "key_abcdefghijklmnop"])(
+      "leaves %j, which maskApiKeys takes for a key",
+      (name) => {
+        expect(maskVendorKeys()(name)).toBe(name);
+        expect(maskApiKeys()(name)).toBe(REDACTED);
+      },
+    );
   });
 });
 
@@ -290,6 +322,7 @@ describe("the time a mask takes", () => {
     ["maskIpv4Addresses", maskIpv4Addresses()],
     ["maskUuids", maskUuids()],
     ["maskApiKeys", maskApiKeys()],
+    ["maskVendorKeys", maskVendorKeys()],
     ["maskLongDigits", maskLongDigits()],
     ["maskGroupedDigits", maskGroupedDigits()],
     ["maskProviderKeys", maskProviderKeys()],

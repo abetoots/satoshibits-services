@@ -13,15 +13,14 @@
   "private": false,
   "sideEffects": false,
   "scripts": {
-    "build": "rm -rf dist && tsc",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "lint": "pnpm exec eslint .",
     "prepublishOnly": "npm run build",
     "pre-commit": "pnpm exec lint-staged -c ./.lintstagedrc.mjs --concurrent false",
     "test": "vitest --run"
   },
   "files": [
-    "./dist/**/*",
-    "!./dist/**/*.test.*"
+    "dist"
   ],
   "keywords": [
     "redaction",

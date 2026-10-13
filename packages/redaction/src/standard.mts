@@ -16,12 +16,12 @@ import type { PolicyParts } from "./policy.mjs";
 
 import { exactKeys, keyEndsWith, keyWords } from "./keys.mjs";
 import {
-  maskApiKeys,
   maskBearerTokens,
   maskEmails,
   maskJwts,
   maskPasswordPairs,
   maskProviderKeys,
+  maskVendorKeys,
   REDACTED,
 } from "./masks.mjs";
 import { createFieldsRedactor, createPolicy } from "./policy.mjs";
@@ -34,7 +34,8 @@ export const standardMasks = Object.freeze({
   emails: maskEmails(),
   bearerTokens: maskBearerTokens(),
   jwts: maskJwts(),
-  apiKeys: maskApiKeys(),
+  /** keys with a vendor's prefix; a name such as `api_getUserProfile` is not one */
+  vendorKeys: maskVendorKeys(),
   providerKeys: maskProviderKeys(),
   passwordPairs: maskPasswordPairs(),
 }) satisfies Readonly<Record<string, Mask>>;

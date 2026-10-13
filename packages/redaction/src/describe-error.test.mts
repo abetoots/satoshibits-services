@@ -125,6 +125,13 @@ describe("describeError", () => {
       expect(describeError(new Anonymous("x")).name).toBe("Error");
     });
 
+    it("is not used when the error names itself Error", () => {
+      class Deliberate extends Error {
+        override name = "Error";
+      }
+      expect(describeError(new Deliberate("x")).name).toBe("Error");
+    });
+
     it("is not used for a plain Error", () => {
       expect(describeError(new Error("x")).name).toBe("Error");
     });
@@ -220,6 +227,30 @@ describe("describeError", () => {
         message: "x",
         stack: expect.any(String) as unknown,
       });
+    });
+
+    it("does not throw for a cause that is a revoked proxy, or one that refuses every question", () => {
+      const { proxy, revoke } = Proxy.revocable({}, {});
+      revoke();
+      const refuse = (): never => {
+        throw new Error("trap");
+      };
+      const hostile = new Proxy({}, { get: refuse, getPrototypeOf: refuse, has: refuse, getOwnPropertyDescriptor: refuse });
+      for (const cause of [proxy, hostile]) {
+        expect(describeError(new Error("x", { cause }))).toStrictEqual({
+          name: "Error",
+          message: "x",
+          stack: expect.any(String) as unknown,
+        });
+      }
+    });
+
+    it("does not throw for an error that refuses to say which properties are its own", () => {
+      const refuse = (): never => {
+        throw new Error("trap");
+      };
+      const error = new Proxy(new Error("x"), { getOwnPropertyDescriptor: refuse });
+      expect(describeError(error)).toMatchObject({ name: "Error", message: "x" });
     });
 
     it("does not throw for a proxy that refuses every question", () => {
