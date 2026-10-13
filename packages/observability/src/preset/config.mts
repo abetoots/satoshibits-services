@@ -66,6 +66,8 @@ export interface PresetConfigOptions {
 export interface ResolveContext {
   /** a test supplied an exporter, so something is exported whatever the environment says */
   testExporters?: boolean;
+  /** keys of `resourceAttributes` whose value was a promise where a value belongs */
+  deferredResourceAttributes?: readonly string[];
 }
 
 export type SignalOffReason =
@@ -457,6 +459,12 @@ export function resolveConfig(
     logBatch: batchTuning(env, "OTEL_BLRP", warnings),
     warnings,
   };
+
+  // a resource attribute is a value. The SDK would wait for a promise and export what it
+  // settled to, which no policy would have seen
+  for (const key of context.deferredResourceAttributes ?? []) {
+    problems.push(`a resource attribute is a promise, not a value: ${shown(key)}`);
+  }
 
   // no policy, no export: checked here, with everything else, so nothing has been registered
   const exporting =

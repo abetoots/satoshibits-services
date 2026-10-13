@@ -77,7 +77,7 @@ import {
   wrapSpanExporter,
 } from "./exporters.mjs";
 import { createRedactor, isPlainObject } from "./redaction.mjs";
-import { buildResource } from "./resource.mjs";
+import { buildResource, deferredAttributes } from "./resource.mjs";
 
 /**
  * Exporters a test supplies in place of the network. Each sits behind the
@@ -509,8 +509,10 @@ const snapshot = (status: PresetStatus): PresetStatus => structuredClone(status)
  * Start telemetry for this process. Call it once, from a module loaded with
  * `node --import`, before any application module is imported.
  *
- * Throws `PresetConfigError` for an invalid configuration, before anything
- * is registered, and throws when called a second time.
+ * Throws `PresetConfigError` for an invalid configuration and throws when
+ * called a second time. A configuration error leaves nothing registered:
+ * most are found before anything is, and the rest (instrumentation settings,
+ * found when the instrumentations are built) are undone before it is thrown.
  * With `OTEL_SDK_DISABLED=true` it registers nothing and returns.
  */
 export function start(options: StartOptions = {}): PresetStatus {
@@ -520,9 +522,13 @@ export function start(options: StartOptions = {}): PresetStatus {
     );
   }
 
+  // first of all, whatever else this start comes to: a promise passed as a resource
+  // attribute is given a handler here, so that it cannot reject unheard on any path out
+  const deferredResourceAttributes = deferredAttributes(options.resourceAttributes);
   const testExporters = readTestExporters(options.testExporters);
   const resolution = resolveConfig(options, process.env, {
     testExporters: Object.keys(testExporters).length > 0,
+    deferredResourceAttributes,
   });
   if (resolution.disabled) {
     handle = {

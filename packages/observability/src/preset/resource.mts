@@ -63,16 +63,29 @@ const IDENTITY_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The keys of an attribute set whose value is a promise, each promise having
+ * been given a handler so that none is left to reject unheard. Called on what
+ * the caller passed before anything else looks at it: before a setting can
+ * replace a key, before the SDK is found disabled, before validation can fail.
+ */
+export function deferredAttributes(attributes: unknown): string[] {
+  if (typeof attributes !== "object" || attributes === null) return [];
+  const deferred = Object.entries(attributes).filter(([, value]) => isThenable(value));
+  for (const [, value] of deferred) abandon(value);
+  return deferred.map(([key]) => key);
+}
+
+/**
  * The SDK takes a promise for an attribute's value and waits for it: such a
  * value would be exported without the policy ever having seen it. A resource
  * attribute is a value. Every promise found is first given a handler, so that
  * none is left to reject unheard once the set is refused.
  */
 function refuseDeferred(attributes: Attributes, what: string): void {
-  const deferred = Object.entries(attributes).filter(([, value]) => isThenable(value));
-  if (deferred.length === 0) return;
-  for (const [, value] of deferred) abandon(value);
-  throw new TypeError(`${what} is a promise, not a value: ${deferred[0]![0]}`);
+  const [first] = deferredAttributes(attributes);
+  if (first !== undefined) {
+    throw new TypeError(`${what} is a promise, not a value: ${first}`);
+  }
 }
 
 export function buildResource(config: ResolvedConfig, redactor: Redactor): Resource {
@@ -95,8 +108,8 @@ export function buildResource(config: ResolvedConfig, redactor: Redactor): Resou
     ...config.environmentAttributes,
   };
 
-  // checked on everything gathered, before any key is dropped: a promise under a key that
-  // is about to be dropped would otherwise be let go of with nobody listening to it
+  // the caller's own were refused in validation; this is everything gathered, checked again
+  // before any key is dropped
   refuseDeferred(merged, "a resource attribute");
 
   // everything that will be exported goes to the policy, the two identity keys aside,
