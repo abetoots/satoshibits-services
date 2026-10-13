@@ -105,6 +105,20 @@ function failureReporter(signal: Signal, context: ExporterContext) {
 }
 
 /**
+ * The error of a failed export. Anything that is not an `Error` (a string
+ * from the far end, an object that cannot be printed) is replaced by one with
+ * a fixed text: its content is never read, so it can neither leak nor throw.
+ */
+const asError = (value: unknown): Error =>
+  value instanceof Error
+    ? value
+    : new Error(
+        value === undefined || value === null
+          ? "export failed"
+          : "export failed with a value that is not an error",
+      );
+
+/**
  * Run one export. A throw from redaction or from the exporter itself is
  * reported like any failed export and answered with a failed result, so the
  * processor that called is never left waiting and never sees an exception.
@@ -123,16 +137,19 @@ function guarded(
     if (settled) return;
     settled = true;
     // an answer that is no result at all is a failed export
-    let result: ExportResult = given ?? { code: ExportResultCode.FAILED };
-    if (result.code !== ExportResultCode.SUCCESS) {
-      // a failure without an error is given one, so the processor passes this
-      // (marked) object on to the SDK's error handler and not one of its own
-      const given: unknown = result.error;
-      const error =
-        given instanceof Error
+    let result: ExportResult;
+    try {
+      result =
+        given?.code === ExportResultCode.SUCCESS
           ? given
-          : new Error(given === undefined || given === null ? "export failed" : "export failed with a value that is not an error");
-      result = { ...result, error };
+          : // a failure always carries an error, so the processor passes this (marked)
+            // object on to the SDK's error handler and not one of its own
+            { code: ExportResultCode.FAILED, error: asError(given?.error) };
+    } catch {
+      // an answer that cannot even be read
+      result = { code: ExportResultCode.FAILED, error: asError(undefined) };
+    }
+    if (result.code !== ExportResultCode.SUCCESS) {
       try {
         report(result.error);
       } catch {
@@ -156,15 +173,15 @@ function guarded(
     }
   };
   const failed = (error: unknown) => {
-    once({
-      code: ExportResultCode.FAILED,
-      error: error instanceof Error ? error : new Error(String(error)),
-    });
+    once({ code: ExportResultCode.FAILED, error: asError(error) });
   };
   try {
-    // `export` returns nothing, but an exporter written as an async function returns a promise
-    const returned: unknown = send(once);
-    if (returned instanceof Promise) returned.then(undefined, failed);
+    // `export` returns nothing, but an exporter written as an async function returns a
+    // promise (or something like one, from another realm or a promise library)
+    const returned = send(once) as { then?: unknown } | null | undefined;
+    if (typeof returned?.then === "function") {
+      Promise.resolve(returned).then(undefined, failed);
+    }
   } catch (error) {
     failed(error);
   }

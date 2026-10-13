@@ -252,9 +252,10 @@ describe("failure visibility", () => {
 
     const registered = await runChild({ start: "register" }, env);
     expect(registered.code).toBe(0);
-    expect(String(registered.stderrLines[0]?.reason)).toContain(
+    // the problem alone, as its own line: not the whole error message with its heading
+    expect(registered.stderrLines.map((line) => line.reason)).toEqual([
       "OTEL_EXPORTER_OTLP_ENDPOINT is not a valid URL",
-    );
+    ]);
     expect(registered.result.status.state).toBe("not-started");
   });
 });

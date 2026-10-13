@@ -23,7 +23,7 @@ try {
   const reasons =
     error instanceof PresetConfigError
       ? [...new Set(error.problems)]
-      : [error instanceof Error ? error.message : String(error)];
+      : [error instanceof Error ? error.message : "start() threw a value that is not an error"];
   for (const reason of reasons) {
     diagnostics.report({
       level: "error",

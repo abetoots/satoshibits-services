@@ -174,23 +174,46 @@ describe("diagnostics", () => {
   });
 
   it.each([
-    ["trailing dots", `http://h.example/${".".repeat(15_000)}a`],
-    ["no whitespace at all", "a-".repeat(8_000)],
-    ["scheme characters before every marker", "ab.".repeat(2_000) + "://x ".repeat(2_000)],
-  ])("stays quick on text built to make a pattern backtrack: %s", (_what, text) => {
-    const started = performance.now();
-    scrubUrls(text);
-    // linear work on 16k characters takes well under a millisecond; a backtracking pattern took seconds
-    expect(performance.now() - started).toBeLessThan(250);
+    ["trailing dots", (n: number) => `http://h.example/${".".repeat(n)}a`],
+    ["no whitespace at all", (n: number) => "a-".repeat(n / 2)],
+    ["bare markers, no whitespace", (n: number) => "://".repeat(n / 3)],
+    ["digits where a scheme would be", (n: number) => "1://".repeat(n / 4)],
+  ])("does work in proportion to the text, however it is built: %s", (_what, build) => {
+    // called directly: the diagnostics logger bounds its input, the function does not rely on that.
+    // One pass over 96k characters takes a few milliseconds. Work that grows with the square of
+    // the length takes seconds here (the pattern this replaced: 4 to 7 s; a rescan per marker: 30 s).
+    const text = build(96_000);
+    const fastest = Math.min(
+      ...[1, 2, 3].map(() => {
+        const started = performance.now();
+        scrubUrls(text);
+        return performance.now() - started;
+      }),
+    );
+    expect(fastest).toBeLessThan(1000);
+  });
+
+  it("ends a URL at a raw space inside it: the rest is ordinary text, left to the redactor", () => {
+    // the limit of the whitespace rule, pinned so the policy work that follows knows this tail is its job
+    expect(scrubUrls("x https://h.example/p?q=a b&token=T y")).toBe("x https://h.example b&token=T y");
+    const events: DiagnosticsEvent[] = [];
+    const diagnostics = createDiagnostics({
+      sinkFactory: () => (event) => events.push(event),
+      redactText: (text) => text.replaceAll("token=T", "token=[redacted]"),
+    });
+    diagnostics.activate();
+    diagnostics.diagLogger.error("x https://h.example/p?q=a b&token=T y");
+    expect(events[0]!.message).toBe("x https://h.example b&token=[redacted] y");
   });
 
   it("survives an argument that cannot be described", () => {
     const { events, diagnostics } = collecting();
     diagnostics.activate();
     const hostile = new Proxy({}, { ownKeys: () => { throw new Error("boom"); } });
-    expect(() => diagnostics.diagLogger.error("m", hostile)).not.toThrow();
+    expect(() => diagnostics.diagLogger.error("m", hostile, "kept")).not.toThrow();
     diagnostics.diagLogger.error("still reporting");
-    expect(events.map((e) => e.message)).toEqual(["still reporting"]);
+    // the rest of the line is kept
+    expect(events.map((e) => e.message)).toEqual(["m [unreadable] kept", "still reporting"]);
   });
 
   it("sanitizes the whole text before cutting it: a long user-info never passes for a host", () => {
