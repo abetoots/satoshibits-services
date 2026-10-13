@@ -11,6 +11,14 @@
  * scheme and host, and objects the SDK passes along (a whole export batch, at
  * debug level) are described by their shape, never dumped.
  *
+ * One limit: the SDK quotes a variable's value when it cannot use it
+ * (`Unknown value '…' for OTEL_…`, `Propagator "…" … is unavailable`), in
+ * several forms and in messages this module does not write. Such a value is
+ * free text here, so it passes the redaction the application named and
+ * nothing more: a credential pasted into the wrong variable can be printed.
+ * The preset's own configuration messages never quote such a value
+ * ({@link shown}).
+ *
  * A project can supply its own sink through a factory. The factory is called
  * lazily, on the first event after {@link Diagnostics.activate}, so a logger
  * library is never imported before instrumentation is in place. Events
