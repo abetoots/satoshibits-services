@@ -11,12 +11,15 @@ import {
 } from "@opentelemetry/api";
 import { logs } from "@opentelemetry/api-logs";
 import { globalErrorHandler } from "@opentelemetry/core";
+import { InMemorySpanExporter } from "@opentelemetry/sdk-trace";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TestTelemetry } from "../../testing/in-memory.mjs";
 
-import { getStatus, shutdown } from "../../preset.mjs";
+import { getStatus, shutdown, start } from "../../preset.mjs";
+import { defaultInstrumentationConfig } from "../../preset/runtime.mjs";
 import { startTestTelemetry } from "../../testing/in-memory.mjs";
+import { createProbePolicy } from "./probe-policy.mjs";
 
 let telemetry: TestTelemetry | undefined;
 
@@ -72,12 +75,19 @@ describe("startTestTelemetry", () => {
     expect(records[0]!.spanContext?.traceId).toBe(parent.spanContext().traceId);
   });
 
-  it("shows records as a backend would receive them: redacted", async () => {
+  it("exports as given unless the test names a policy, and then shows what a backend would receive", async () => {
     telemetry = startTestTelemetry();
     trace.getTracer("scope dave.sentinel@example.com").startSpan("s").end();
+    expect((await telemetry.spans())[0]!.instrumentationScope.name).toBe(
+      "scope dave.sentinel@example.com",
+    );
+    await telemetry.stop();
 
-    const [span] = await telemetry.spans();
-    expect(span!.instrumentationScope.name).toBe("scope d***@example.com");
+    telemetry = startTestTelemetry({ redaction: createProbePolicy() });
+    trace.getTracer("scope dave.sentinel@example.com").startSpan("s").end();
+    expect((await telemetry.spans())[0]!.instrumentationScope.name).toBe(
+      "[probe:scope.name] scope dave.sentinel@example.com",
+    );
   });
 
   it("reports the latest collection, so a counter is not counted twice", async () => {
@@ -179,19 +189,19 @@ describe("startTestTelemetry", () => {
     expect(span!.resource.attributes["service.name"]).toBe("test");
   });
 
-  it("never masks the service name or the instance id, whatever the redaction options", async () => {
+  it("never passes the service name or the instance id to the policy", async () => {
     telemetry = startTestTelemetry({
-      serviceName: "billing 0f8fad5b-d9cb-469f-a165-70867728950e",
-      redaction: { sanitizer: { maskUUIDs: true } },
-      resourceAttributes: { "other.id": "0f8fad5b-d9cb-469f-a165-70867728950e" },
+      serviceName: "billing",
+      redaction: createProbePolicy(),
+      resourceAttributes: { "other.id": "0f8fad5b" },
     });
     trace.getTracer("kit").startSpan("s").end();
     const [span] = await telemetry.spans();
     const attributes = span!.resource.attributes;
-    expect(attributes["service.name"]).toBe("billing 0f8fad5b-d9cb-469f-a165-70867728950e");
+    expect(attributes["service.name"]).toBe("billing");
     expect(attributes["service.instance.id"]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4/);
-    // the positive control: the option does mask other values
-    expect(attributes["other.id"]).toBe("********-****-****-****-************");
+    // the positive control: the policy did see the rest of the resource
+    expect(attributes["other.id"]).toBe("[probe:resource] 0f8fad5b");
   });
 
   it("honours parent-based sampling: an unsampled remote parent is followed, a sampled one too", async () => {
@@ -212,18 +222,44 @@ describe("startTestTelemetry", () => {
     expect((await telemetry.spans()).map((s) => s.name)).toEqual(["under-sampled"]);
   });
 
-  it("gives diagnostics the same redaction as exported data, and scrubs URLs", () => {
+  const SDK_SAID =
+    "export failed for frank.sentinel@example.com at https://u:SENTINEL-PW@h.example/p?t=SENTINEL-Q";
+
+  it("passes diagnostics text to the named policy as its own surface, after cutting URLs", () => {
     const events: { message: string }[] = [];
     telemetry = startTestTelemetry({
       diagnostics: () => (event) => events.push(event),
+      redaction: createProbePolicy(),
     });
     // any SDK component may log through the API's diagnostics logger
-    diag.warn(
-      "export failed for frank.sentinel@example.com at https://u:SENTINEL-PW@h.example/p?t=SENTINEL-Q",
-    );
+    diag.warn(SDK_SAID);
     expect(events.map((e) => e.message)).toEqual([
-      "export failed for f***@example.com at https://h.example",
+      "[probe:diagnostics] export failed for frank.sentinel@example.com at https://h.example",
     ]);
+  });
+
+  it("still cuts URLs in diagnostics under redaction: false, and changes nothing else", () => {
+    const events: { message: string }[] = [];
+    telemetry = startTestTelemetry({ diagnostics: () => (event) => events.push(event) });
+    diag.warn(SDK_SAID);
+    expect(events.map((e) => e.message)).toEqual([
+      "export failed for frank.sentinel@example.com at https://h.example",
+    ]);
+  });
+
+  it("withholds a diagnostics text the policy threw on, and keeps reporting", () => {
+    const events: { message: string }[] = [];
+    telemetry = startTestTelemetry({
+      diagnostics: () => (event) => events.push(event),
+      redaction: {
+        ...createProbePolicy(),
+        text: () => {
+          throw new Error("the policy is broken");
+        },
+      },
+    });
+    diag.warn(SDK_SAID);
+    expect(events.map((e) => e.message)).toEqual(["(text withheld: the redaction policy threw)"]);
   });
 
   it("refuses to answer after stop(), instead of reporting that nothing was emitted", async () => {
@@ -268,6 +304,45 @@ describe("startTestTelemetry", () => {
     trace.getTracer("kit").startSpan("seen by the newer kit").end();
     expect((await telemetry.spans()).map((s) => s.name)).toEqual(["seen by the newer kit"]);
   });
+
+  it("start() refuses a test exporter with no redaction named, and registers nothing", async () => {
+    expect(() =>
+      start({
+        serviceName: "no-policy",
+        instrumentations: false,
+        loaderHook: false,
+        testExporters: { spanExporter: new InMemorySpanExporter() },
+      }),
+    ).toThrow(/no redaction policy: pass `redaction` to start\(\)/);
+
+    expect(getStatus().state).toBe("not-started");
+    expect(trace.getTracer("t").startSpan("s").isRecording()).toBe(false);
+    // and the next start is not blocked by it
+    telemetry = startTestTelemetry();
+    trace.getTracer("t").startSpan("works").end();
+    expect((await telemetry.spans()).map((s) => s.name)).toEqual(["works"]);
+  });
+
+  it.each([
+    ["on", true, false],
+    ["off", false, true],
+  ])(
+    "sends pino, winston and bunyan lines over OTLP only when logs are exported: logs %s",
+    (_state, logsExported, disableLogSending) => {
+      const config = defaultInstrumentationConfig(logsExported);
+      for (const logger of ["pino", "winston", "bunyan"]) {
+        expect(config[`@opentelemetry/instrumentation-${logger}` as keyof typeof config]).toEqual({
+          disableLogSending,
+        });
+      }
+      // and the noisy three stay off either way
+      for (const noisy of ["fs", "net", "dns"]) {
+        expect(config[`@opentelemetry/instrumentation-${noisy}` as keyof typeof config]).toEqual({
+          enabled: false,
+        });
+      }
+    },
+  );
 
   it("refuses a second start while one is running", () => {
     telemetry = startTestTelemetry();

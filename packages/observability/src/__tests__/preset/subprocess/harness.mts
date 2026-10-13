@@ -29,7 +29,15 @@ export interface ChildScenario {
   /** `start` calls start(options) (default); `register` imports the register entry; `none` does neither */
   start?: "start" | "register" | "none";
   /** merged over `{ instrumentations: false }` */
-  options?: Omit<StartOptions, "diagnostics" | "testExporters">;
+  options?: Omit<StartOptions, "diagnostics" | "testExporters" | "redaction">;
+  /**
+   * The `redaction` option the child passes to start(). A policy is a set of
+   * functions and cannot travel in this JSON, so it is named: `false` (the
+   * default: export as given), `probe` (the child builds the probe policy),
+   * or `none` (the option is left out, to meet the no-policy rule).
+   * The register entry takes no options; this is ignored for it.
+   */
+  redaction?: "probe" | false | "none";
   /** collect diagnostics events into the result; `throwing` also makes the sink throw */
   collectDiagnostics?: boolean | "throwing";
   /** scope name for the tracer, meter and logger (default `preset-child`) */

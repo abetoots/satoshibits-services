@@ -42,7 +42,6 @@ import type {
 } from "./config.mjs";
 import type { Diagnostics, DiagnosticsSink } from "./diagnostics.mjs";
 import type { ExporterContext } from "./exporters.mjs";
-import type { RedactionOptions } from "./redaction.mjs";
 import type { InstrumentationConfigMap } from "@opentelemetry/auto-instrumentations-node";
 import type { Instrumentation } from "@opentelemetry/instrumentation";
 import type {
@@ -89,8 +88,9 @@ export interface TestExporters {
 export interface StartOptions extends PresetConfigOptions {
   /**
    * Per-instrumentation settings, merged over the preset's defaults (the Node
-   * auto-instrumentation bundle with `fs`, `net` and `dns` off and log sending
-   * off for pino, winston and bunyan). `false` installs no instrumentation.
+   * auto-instrumentation bundle with `fs`, `net` and `dns` off; pino, winston
+   * and bunyan lines are sent over OTLP when the logs signal is on, and not
+   * otherwise). `false` installs no instrumentation.
    */
   instrumentations?: InstrumentationConfigMap | false;
   /**
@@ -105,7 +105,6 @@ export interface StartOptions extends PresetConfigOptions {
    * application's logger.
    */
   diagnostics?: () => DiagnosticsSink;
-  redaction?: RedactionOptions;
   testExporters?: TestExporters;
 }
 
@@ -181,8 +180,29 @@ const describeSampler = (sampler: ResolvedConfig["sampler"]): string =>
     ? `${sampler.type}(${sampler.ratio})`
     : sampler.type;
 
+/**
+ * The preset's settings for the auto-instrumentation bundle, before the
+ * caller's own are merged over them.
+ */
+export function defaultInstrumentationConfig(
+  logsExported: boolean,
+): InstrumentationConfigMap {
+  return {
+    // noisy, and rarely what anyone looks at
+    "@opentelemetry/instrumentation-fs": { enabled: false },
+    "@opentelemetry/instrumentation-net": { enabled: false },
+    "@opentelemetry/instrumentation-dns": { enabled: false },
+    // trace ids are always added to log lines. Sending the lines over OTLP follows
+    // the logs signal: with it off there is nowhere for them to go
+    "@opentelemetry/instrumentation-pino": { disableLogSending: !logsExported },
+    "@opentelemetry/instrumentation-winston": { disableLogSending: !logsExported },
+    "@opentelemetry/instrumentation-bunyan": { disableLogSending: !logsExported },
+  };
+}
+
 function buildInstrumentations(
   option: StartOptions["instrumentations"],
+  logsExported: boolean,
 ): Instrumentation[] {
   if (option === false) return [];
   // loaded on demand: the bundle pulls in every instrumentation package, which
@@ -191,14 +211,7 @@ function buildInstrumentations(
     "@opentelemetry/auto-instrumentations-node",
   ) as typeof import("@opentelemetry/auto-instrumentations-node");
   return getNodeAutoInstrumentations({
-    // noisy, and rarely what anyone looks at
-    "@opentelemetry/instrumentation-fs": { enabled: false },
-    "@opentelemetry/instrumentation-net": { enabled: false },
-    "@opentelemetry/instrumentation-dns": { enabled: false },
-    // keep the trace ids on log lines; do not also ship the lines over OTLP
-    "@opentelemetry/instrumentation-pino": { disableLogSending: true },
-    "@opentelemetry/instrumentation-winston": { disableLogSending: true },
-    "@opentelemetry/instrumentation-bunyan": { disableLogSending: true },
+    ...defaultInstrumentationConfig(logsExported),
     ...option,
   });
 }
@@ -432,7 +445,12 @@ export function start(options: StartOptions = {}): PresetStatus {
     );
   }
 
-  const resolution = resolveConfig(options, process.env);
+  const resolution = resolveConfig(options, process.env, {
+    // by its keys alone: the exporters themselves are first read when the pipelines are built
+    testExporters:
+      options.testExporters !== undefined &&
+      Object.keys(options.testExporters).length > 0,
+  });
   if (resolution.disabled) {
     handle = {
       status: {
@@ -446,11 +464,19 @@ export function start(options: StartOptions = {}): PresetStatus {
   }
   const { config } = resolution;
 
-  const redactor = createRedactor(options.redaction);
+  // validation has passed: `redaction` is absent only when nothing is exported
+  const redactor = createRedactor(options.redaction ?? false);
   const diagnostics = createDiagnostics({
     logLevel: process.env.OTEL_LOG_LEVEL,
     sinkFactory: options.diagnostics,
-    redactText: redactor.text,
+    redactText: (text) => {
+      try {
+        return redactor.text("diagnostics", text);
+      } catch {
+        // a policy that throws must neither silence diagnostics nor let the text out as it was
+        return "(text withheld: the redaction policy threw)";
+      }
+    },
   });
 
   // from here on things are registered. The diagnostics logger goes first: the
@@ -471,7 +497,11 @@ export function start(options: StartOptions = {}): PresetStatus {
   try {
     const resource = buildResource(config, redactor);
     const sampler = buildSampler(config.sampler);
-    const instrumentations = buildInstrumentations(options.instrumentations);
+    const instrumentations = buildInstrumentations(
+      options.instrumentations,
+      config.signals.logs.enabled ||
+        options.testExporters?.logRecordExporter !== undefined,
+    );
     pipelines = buildPipelines(config, options, { diagnostics, redactor });
     if (options.loaderHook !== false) installLoaderHook();
     const built = pipelines;

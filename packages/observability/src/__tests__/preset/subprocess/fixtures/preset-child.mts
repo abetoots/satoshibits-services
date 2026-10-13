@@ -22,6 +22,7 @@ import type { ChildResult, ChildScenario } from "../harness.mjs";
 import type { DiagnosticsEvent } from "../../../../preset/diagnostics.mjs";
 
 import { forceFlush, getStatus, shutdown, start } from "../../../../preset.mjs";
+import { createProbePolicy } from "../../probe-policy.mjs";
 
 const scenario = JSON.parse(
   process.env.OBS_CHILD_SCENARIO ?? "{}",
@@ -77,6 +78,9 @@ if (scenario.start === "register") {
     start({
       instrumentations: false,
       ...scenario.options,
+      ...(scenario.redaction !== "none" && {
+        redaction: scenario.redaction === "probe" ? createProbePolicy() : false,
+      }),
       ...(scenario.collectDiagnostics && {
         diagnostics: () => {
           // a tracer provider is registered by the same call that installs instrumentation

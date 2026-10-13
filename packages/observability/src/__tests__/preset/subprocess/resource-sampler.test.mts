@@ -10,7 +10,6 @@ import type { OtlpSink } from "../../../testing/otlp-sink.mjs";
 import { runChild, useSinks } from "./harness.mjs";
 
 const sinks = useSinks();
-const JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJTRU5USU5FTCJ9.c2lnbmF0dXJlLXNlbnRpbmVs";
 
 let sink: OtlpSink;
 beforeEach(() => {
@@ -110,31 +109,36 @@ describe("resource", () => {
     }
   });
 
-  it("redacts a secret-valued attribute and an email address given through OTEL_RESOURCE_ATTRIBUTES, on every signal", async () => {
+  // the resource is a surface of the policy the application named; the preset decides nothing itself
+  const RESOURCE_VALUES =
+    "api_key=SENTINEL-RESOURCE-SECRET,owner.contact=alice.sentinel@example.com,plain.key=plain-value";
+
+  it("hands the resource to the named policy as the resource surface, on every signal, identity keys aside", async () => {
     const run = await runChild(
-      {},
-      allSignals({
-        OTEL_RESOURCE_ATTRIBUTES:
-          "api_key=SENTINEL-RESOURCE-SECRET,owner.contact=alice.sentinel@example.com,plain.key=plain-value," +
-          // a secret under a key that gives nothing away: caught by its shape
-          `deploy.note=${JWT}`,
-      }),
+      { redaction: "probe" },
+      allSignals({ OTEL_RESOURCE_ATTRIBUTES: RESOURCE_VALUES }),
     );
 
     expect(run.result.startError).toBeNull();
+    expect(Object.keys(resourcesBySignal()).sort()).toEqual(["logs", "metrics", "traces"]);
     for (const [signal, resource] of Object.entries(resourcesBySignal())) {
-      expect(resource.api_key, signal).toBe("[REDACTED]");
-      expect(resource["owner.contact"], signal).toBe("a***@example.com");
-      expect(resource["plain.key"], signal).toBe("plain-value");
-      expect(resource["deploy.note"], signal).toBe("[REDACTED]");
+      expect(resource.api_key, signal).toBe("[probe:resource] SENTINEL-RESOURCE-SECRET");
+      expect(resource["owner.contact"], signal).toBe("[probe:resource] alice.sentinel@example.com");
+      expect(resource["plain.key"], signal).toBe("[probe:resource] plain-value");
+      // the two identity keys never pass the policy: a changed name would merge services
+      expect(resource["service.name"], signal).toBe("resource-test");
+      expect(String(resource["service.instance.id"]), signal).not.toContain("[probe");
     }
-    expect(sink.requests.map((r) => r.path).sort()).toEqual(
-      expect.arrayContaining(["/v1/logs", "/v1/metrics", "/v1/traces"]),
-    );
-    for (const request of sink.requests) {
-      expect(request.bodyText, request.path).not.toContain("SENTINEL-RESOURCE-SECRET");
-      expect(request.bodyText, request.path).not.toContain("alice.sentinel");
-      expect(request.bodyText, request.path).not.toContain(JWT);
+  });
+
+  it("exports the resource as given under redaction: false (the preset masks nothing by default)", async () => {
+    const run = await runChild({}, allSignals({ OTEL_RESOURCE_ATTRIBUTES: RESOURCE_VALUES }));
+
+    expect(run.result.startError).toBeNull();
+    for (const [signal, resource] of Object.entries(resourcesBySignal())) {
+      expect(resource.api_key, signal).toBe("SENTINEL-RESOURCE-SECRET");
+      expect(resource["owner.contact"], signal).toBe("alice.sentinel@example.com");
+      expect(resource["plain.key"], signal).toBe("plain-value");
     }
   });
 
@@ -150,43 +154,45 @@ describe("resource", () => {
     );
   });
 
-  it("keeps an allow-listed key readable", async () => {
-    await runChild(
-      { options: { redaction: { allowKeys: ["owner.contact"] } } },
-      allSignals({ OTEL_RESOURCE_ATTRIBUTES: "owner.contact=bob@example.com" }),
-    );
-    expect(sink.spans()[0]!.resource["owner.contact"]).toBe("bob@example.com");
+  const SCOPE = {
+    scopeName: "scope carol.sentinel@example.com",
+    scopeAttributes: { api_key: "SENTINEL-SCOPE-SECRET", plain: "kept" },
+  };
+  const scopesSeen = () => ({
+    span: sink.spans().find((s) => s.name === "child-span-0")?.scope,
+    metric: sink.metrics().find((m) => m.name === "child_counter")?.scope,
+    // the body is a log-record surface, which this batch does not yet pass to the policy
+    log: sink.logRecords().find((r) => String(r.body).includes("child-log-line"))?.scope,
   });
 
-  it("redacts a sentinel in a scope name and in a scope attribute, on every signal that can carry one", async () => {
-    const run = await runChild(
-      {
-        scopeName: "scope carol.sentinel@example.com",
-        scopeAttributes: { api_key: "SENTINEL-SCOPE-SECRET", plain: "kept" },
-      },
-      allSignals(),
-    );
+  it("hands a scope's name and attributes to the named policy, on every signal that carries one", async () => {
+    const run = await runChild({ ...SCOPE, redaction: "probe" }, allSignals());
 
     expect(run.result.startError).toBeNull();
-    const span = sink.spans().find((s) => s.name === "child-span-0");
-    const metric = sink.metrics().find((m) => m.name === "child_counter");
-    const log = sink.logRecords().find((r) => r.body === "child-log-line");
-    // each record arrives with its expected shape...
-    expect(span?.scope.name).toBe("scope c***@example.com");
-    expect(metric?.scope.name).toBe("scope c***@example.com");
-    expect(metric?.points).toEqual([{ attributes: {}, value: 1 }]);
-    expect(log?.scope.name).toBe("scope c***@example.com");
-    // ...and the logger's scope attributes (the API gives tracers and meters none)
-    expect(log?.scope.attributes).toEqual({ api_key: "[REDACTED]", plain: "kept" });
-    // ...and without its sentinel
-    for (const path of ["/v1/traces", "/v1/metrics", "/v1/logs"]) {
-      const requests = sink.requestsTo(path);
-      expect(requests, path).not.toHaveLength(0);
-      for (const request of requests) {
-        expect(request.bodyText, path).not.toContain("carol.sentinel");
-        expect(request.bodyText, path).not.toContain("SENTINEL-SCOPE-SECRET");
-      }
-    }
+    const { span, metric, log } = scopesSeen();
+    expect(span?.name).toBe("[probe:scope.name] scope carol.sentinel@example.com");
+    expect(metric?.name).toBe("[probe:scope.name] scope carol.sentinel@example.com");
+    expect(log?.name).toBe("[probe:scope.name] scope carol.sentinel@example.com");
+    // the logger's scope attributes (the API gives tracers and meters none)
+    expect(log?.attributes).toEqual({
+      api_key: "[probe:scope] SENTINEL-SCOPE-SECRET",
+      plain: "[probe:scope] kept",
+    });
+    // metric attributes are not a surface: labels are exported as the code set them
+    expect(sink.metrics().find((m) => m.name === "child_counter")?.points).toEqual([
+      { attributes: {}, value: 1 },
+    ]);
+  });
+
+  it("exports a scope as given under redaction: false", async () => {
+    const run = await runChild(SCOPE, allSignals());
+
+    expect(run.result.startError).toBeNull();
+    const { span, metric, log } = scopesSeen();
+    expect(span?.name).toBe(SCOPE.scopeName);
+    expect(metric?.name).toBe(SCOPE.scopeName);
+    expect(log?.name).toBe(SCOPE.scopeName);
+    expect(log?.attributes).toEqual(SCOPE.scopeAttributes);
   });
 
   it("gives each process its own instance id, which the environment cannot pin", async () => {

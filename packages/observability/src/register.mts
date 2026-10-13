@@ -4,6 +4,12 @@
  * A preload for `node --import`: starts the preset from the environment
  * alone (`OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`, …).
  *
+ * It names no redaction policy yet, and the preset exports nothing without
+ * one: with an endpoint configured this entry reports "no redaction policy"
+ * and sends nothing. It will pass the redaction package's standard policy
+ * once that package exists; until then, export from a preload of your own
+ * that calls `start({ redaction })`.
+ *
  * A configuration error is reported on stderr and the process carries on
  * without telemetry: a mistyped variable must not stop a service from booting.
  */

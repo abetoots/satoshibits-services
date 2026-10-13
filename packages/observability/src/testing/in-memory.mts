@@ -2,8 +2,9 @@
  * The preset with in-memory exporters, for a consumer's own tests.
  *
  * It runs the real pipeline: the same `start()`, the same processors and the
- * same redacting wrapper in front of each exporter. A test therefore sees
- * what a backend would receive, not what the code handed to the API.
+ * same wrapper in front of each exporter. Telemetry is exported as given
+ * (`redaction: false`) unless the test names a policy; a test that wants to
+ * see what a backend would receive passes the application's own.
  *
  * Spans and log records are handed out as exported: read-through views of the
  * SDK's records. Read their properties; do not spread, serialize or
@@ -84,6 +85,8 @@ export function startTestTelemetry(
     loaderHook: false,
     ...options,
     serviceName: options.serviceName ?? "test",
+    // exported as given unless the test names a policy: what a test asserts on is what its code emitted
+    redaction: options.redaction ?? false,
     testExporters: { spanExporter, metricExporter, logRecordExporter },
   });
 

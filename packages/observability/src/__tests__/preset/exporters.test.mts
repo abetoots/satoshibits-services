@@ -49,6 +49,7 @@ function startWith(testExporters: TestExporters) {
     instrumentations: false,
     loaderHook: false,
     diagnostics: () => (event) => events.push(event),
+    redaction: false,
     testExporters,
   });
   return events;
@@ -101,7 +102,7 @@ describe("exporter wrapper", () => {
     const reports: DiagnosticsEvent[] = [];
     const context = {
       diagnostics: createDiagnostics({ sinkFactory: () => (e) => reports.push(e) }),
-      redactor: createRedactor(),
+      redactor: createRedactor(false),
     };
     context.diagnostics.activate();
 
@@ -171,7 +172,7 @@ describe("exporter wrapper", () => {
       const reports: DiagnosticsEvent[] = [];
       const diagnostics = createDiagnostics({ sinkFactory: () => (e) => reports.push(e) });
       diagnostics.activate();
-      return { reports, context: { diagnostics, redactor: createRedactor() } };
+      return { reports, context: { diagnostics, redactor: createRedactor(false) } };
     }
     const throwingCallback = () => {
       let calls = 0;
@@ -241,7 +242,7 @@ describe("exporter wrapper", () => {
     it("still answers when reporting the failure itself throws", () => {
       const answers: ExportResult[] = [];
       const diagnostics = createDiagnostics();
-      const context = { diagnostics, redactor: createRedactor() };
+      const context = { diagnostics, redactor: createRedactor(false) };
       vi.spyOn(diagnostics, "report").mockImplementation(() => {
         throw new Error("diagnostics is broken");
       });
@@ -253,7 +254,7 @@ describe("exporter wrapper", () => {
 
     it("lets nothing out when the callback throws and reporting that throws too", () => {
       const diagnostics = createDiagnostics();
-      const context = { diagnostics, redactor: createRedactor() };
+      const context = { diagnostics, redactor: createRedactor(false) };
       vi.spyOn(diagnostics, "report").mockImplementation(() => {
         throw new Error("diagnostics is broken");
       });
@@ -800,6 +801,7 @@ describe("a start that fails part-way", () => {
         instrumentations: false,
         loaderHook: false,
         diagnostics: () => (event) => events.push(event),
+        redaction: false,
         testExporters: {
           get metricExporter(): never {
             diag.warn("held before the failure");

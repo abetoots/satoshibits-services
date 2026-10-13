@@ -7,14 +7,17 @@
  * one JSON line per event to stderr.
  *
  * Diagnostics are a way out of the process like any exporter, so everything
- * passes a sanitizing step first: free text is redacted, URLs are cut down to
- * scheme and host, and objects the SDK passes along (a whole export batch, at
- * debug level) are described by their shape, never dumped.
+ * passes a sanitizing step first: URLs are cut down to scheme and host, free
+ * text then passes the policy the application named (as the `diagnostics`
+ * surface), and objects the SDK passes along (a whole export batch, at debug
+ * level) are described by their shape, never dumped. Under `redaction: false`
+ * the application has said nothing needs redacting, and free text is printed
+ * with its URLs cut and nothing else.
  *
  * One limit: the SDK quotes a variable's value when it cannot use it
  * (`Unknown value '…' for OTEL_…`, `Propagator "…" … is unavailable`), in
  * several forms and in messages this module does not write. Such a value is
- * free text here, so it passes the redaction the application named and
+ * free text here, so it passes the policy the application named and
  * nothing more: a credential pasted into the wrong variable can be printed.
  * The preset's own configuration messages never quote such a value
  * ({@link shown}).
@@ -143,7 +146,7 @@ function scrubbedUrl(token: string): string {
  *
  * The limits of that rule. A URL that holds raw whitespace (a space, a tab,
  * a line break) ends there, and what follows is ordinary text here; that text
- * still passes the redaction the application named, like all other text. And
+ * still passes the policy the application named, like all other text. And
  * only the `scheme://` spelling is recognised: the preset hands its own
  * endpoints on in that spelling alone.
  *
@@ -248,7 +251,7 @@ export interface CreateDiagnosticsOptions {
   logLevel?: string;
   /** returns the project's sink; called once, lazily, after `activate()` */
   sinkFactory?: () => DiagnosticsSink;
-  /** redacts free text (the same redaction exported data gets); URLs are always scrubbed */
+  /** applied to free text after its URLs are cut (the application's policy); absent, nothing more is done */
   redactText?: (text: string) => string;
 }
 
