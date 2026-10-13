@@ -334,9 +334,10 @@ describe("rejected configuration", () => {
       const env = {
         ...NAME,
         OTEL_LOGS_EXPORTER: "otlp",
+        // (not in the order the preset restores them in: the check must not depend on it)
+        OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: `\u00a0http:/user:SENTINEL@127.0.0.1:${sink.port}/custom/v1/logs`,
         OTEL_EXPORTER_OTLP_ENDPOINT: `http:\\\\user:SENTINEL@127.0.0.1:${sink.port} `,
         OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: `\u00a0http:\\\\user:SENTINEL@127.0.0.1:${sink.port}/custom/v1/metrics`,
-        OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: `\u00a0http:/user:SENTINEL@127.0.0.1:${sink.port}/custom/v1/logs`,
       };
       const run = await runChild({ start, spans: 1 }, env);
 
