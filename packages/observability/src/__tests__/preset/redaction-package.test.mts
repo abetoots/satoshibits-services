@@ -151,7 +151,7 @@ describe("the pino wiring in the redaction package's README", () => {
     }
   });
 
-  it("covers what the README says it covers: a line's fields, at any depth, and its errors", () => {
+  it("redacts what the README says it does: the fields passed to a log call, at any depth, and an error under err", () => {
     logger.info(
       {
         to: "a@b.io",
@@ -169,7 +169,8 @@ describe("the pino wiring in the redaction package's README", () => {
       err: { name: "Error", message: "no mailbox [EMAIL]" },
       msg: "sent",
     });
-    // the stack too: the address is nowhere in the line
+    // the stack is kept, and masked like the message
+    expect((line.err as { stack: string }).stack).toContain("Error: no mailbox [EMAIL]");
     for (const address of ["a@b.io", "c@d.io", "jane@example.com"]) expect(lines.at(-1)).not.toContain(address);
   });
 
@@ -178,7 +179,7 @@ describe("the pino wiring in the redaction package's README", () => {
     expect(lines.at(-1)).toContain('"id":9007199254740993');
   });
 
-  // the two facts about pino the README states; if pino changes either, the README is wrong
+  // the facts about pino the README states, each as pino behaves; if pino changes one, the README is wrong
   it("redacting in formatters.log alone would let an error's text pass: pino runs it before serializers", () => {
     const plain: string[] = [];
     pino(
@@ -191,8 +192,35 @@ describe("the pino wiring in the redaction package's README", () => {
     expect(plain[0]).toContain("jane@example.com");
   });
 
-  it("does not cover the message, as the README says", () => {
+  it("does not redact a message given as an argument, or what is put into it, as the README says", () => {
     logger.info("sent to %s", "jane@example.com");
     expect(logged().msg).toBe("sent to jane@example.com");
+    logger.info({ n: 1 }, "sent to jane@example.com");
+    expect(logged().msg).toBe("sent to jane@example.com");
+  });
+
+  it("does not redact the message pino makes of an error logged with none, as the README says", () => {
+    logger.error(new Error("bare jane@example.com"));
+    expect(logged().msg).toBe("bare jane@example.com");
+    expect((logged().err as { message: string }).message).toBe("bare [EMAIL]");
+    // with a message of one's own, nothing of the error's is copied
+    logger.error({ err: new Error("bare jane@example.com") }, "send failed");
+    expect(logged().msg).toBe("send failed");
+    expect(lines.at(-1)).not.toContain("jane@example.com");
+  });
+
+  it("does not redact a child logger's bindings or the base fields, as the README says", () => {
+    logger.child({ owner: "jane@example.com", password: "s3cr3t-value" }).info("m");
+    expect(logged()).toMatchObject({ owner: "jane@example.com", password: "s3cr3t-value" });
+
+    const based: string[] = [];
+    pino(
+      {
+        base: { who: "jane@example.com" },
+        formatters: { log: (fields) => redactFields(fields) as Record<string, unknown> },
+      },
+      { write: (line: string) => based.push(line) },
+    ).info("m");
+    expect(JSON.parse(based[0]!)).toMatchObject({ who: "jane@example.com" });
   });
 });

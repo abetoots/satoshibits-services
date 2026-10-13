@@ -165,27 +165,31 @@ The key rules look at each key by itself, at every level. A rule written for a d
 (`client.address`, `url.full`) matches that spelling: in `{ client: { address } }` the key is `address`,
 and no standard rule names it.
 
-Where to call it is your logger's business, and this package knows no logger. Two things about pino
-are worth knowing before you wire it, because both let a value past a wiring that looks complete:
+Where to call it is your logger's business, and this package knows no logger. Three things about pino
+are worth knowing before you wire it, because each lets a value past a wiring that looks complete:
 
 - pino runs `formatters.log` **before** its serializers. Redacting the fields there does not reach an
   error's message and stack; redact the error's description in the serializer.
-- the message (`msg`), and anything interpolated into it, is not a field and passes neither.
+- the message given as an argument of its own, with anything interpolated into it, is not passed to
+  `formatters.log`. And when an error is logged with no message, pino copies the error's message into
+  `msg` as it is.
+- a child logger's bindings, and the `base` fields, are not passed to `formatters.log` either.
 
 ```typescript
 import pino from "pino";
 import { describeError, redactFields } from "@satoshibits/redaction";
 
 const logger = pino({
-  // an error: described, then redacted, here
+  // an error under `err`: described, then redacted, here
   serializers: { err: (error) => redactFields(describeError(error)) },
-  // every other field of the line
+  // the fields passed to a log call
   formatters: { log: (fields) => redactFields(fields) as Record<string, unknown> },
 });
 ```
 
-That covers a line's fields and its errors. It does not cover the message: keep values out of messages
-and put them in fields, where the policy sees them.
+That redacts the fields passed to a log call, at any depth, and an error under `err`. It does not
+redact the message, a child logger's bindings or the `base` fields: keep values out of those, give a
+message of your own when you log an error, and put what varies in the fields of the call.
 
 ## Describing an error
 
