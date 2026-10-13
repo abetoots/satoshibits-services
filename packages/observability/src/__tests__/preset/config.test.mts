@@ -254,6 +254,25 @@ describe("rejected settings", () => {
     ]);
   });
 
+  it("never echoes a value that is not a short plain token (a URL pasted into the wrong variable)", () => {
+    const pasted = "https://user:SENTINEL-PW@collector.example/v1/traces?token=SENTINEL-Q";
+    const all = [
+      ...problems({ ...ENDPOINT, OTEL_EXPORTER_OTLP_PROTOCOL: pasted }),
+      ...problems({ ...ENDPOINT, OTEL_TRACES_EXPORTER: pasted }),
+      ...problems({ ...ENDPOINT, OTEL_TRACES_SAMPLER: pasted }),
+      ...problems({
+        ...ENDPOINT,
+        OTEL_TRACES_SAMPLER: "traceidratio",
+        OTEL_TRACES_SAMPLER_ARG: pasted,
+      }),
+      ...resolved({ ...ENDPOINT, OTEL_BSP_SCHEDULE_DELAY: pasted }).warnings,
+    ];
+    expect(all).toHaveLength(7);
+    expect(all.join("\n")).not.toContain("SENTINEL");
+    expect(all.join("\n")).not.toContain("collector.example");
+    expect(all.filter((p) => p.includes("(a value that is not shown)"))).toHaveLength(7);
+  });
+
   it("reports every problem at once", () => {
     expect(
       problems({

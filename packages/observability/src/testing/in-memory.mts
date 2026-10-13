@@ -82,7 +82,19 @@ export function startTestTelemetry(
     testExporters: { spanExporter, metricExporter, logRecordExporter },
   });
 
+  // after stop() the exporters are empty and flushing does nothing, so an
+  // accessor would report "nothing was emitted" for any test: refuse instead
+  let stopped = false;
+  const live = () => {
+    if (stopped) {
+      throw new Error(
+        "@satoshibits/observability/testing: this test telemetry was stopped; start a new one",
+      );
+    }
+  };
+
   const metrics = async (): Promise<MetricData[]> => {
+    live();
     metricExporter.reset();
     await forceFlush();
     return metricExporter
@@ -94,6 +106,7 @@ export function startTestTelemetry(
   return {
     status,
     spans: async () => {
+      live();
       await forceFlush();
       return spanExporter.getFinishedSpans();
     },
@@ -104,6 +117,7 @@ export function startTestTelemetry(
         .flatMap((metric) => metric.dataPoints as TestMetricPoint[])
         .map(({ attributes, value }) => ({ attributes, value })),
     logRecords: async () => {
+      live();
       await forceFlush();
       return logRecordExporter.getFinishedLogRecords();
     },
@@ -112,6 +126,9 @@ export function startTestTelemetry(
       metricExporter.reset();
       logRecordExporter.reset();
     },
-    stop: resetForTesting,
+    stop: () => {
+      stopped = true;
+      return resetForTesting();
+    },
   };
 }

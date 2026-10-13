@@ -122,6 +122,18 @@ const SIGNAL_VAR: Record<Signal, string> = {
   logs: "LOGS",
 };
 
+/**
+ * A setting's value as it may appear in a message. Only a short, plain token
+ * is quoted. Anything else is not shown: a value pasted into the wrong
+ * variable can be a URL with credentials in it.
+ */
+const shown = (value: unknown): string =>
+  typeof value === "number" && Number.isFinite(value)
+    ? String(value)
+    : typeof value === "string" && /^[A-Za-z0-9_.,/-]{1,40}$/.test(value)
+      ? `"${value}"`
+      : "(a value that is not shown)";
+
 const nonBlank = (value: string | undefined): string | undefined => {
   const trimmed = value?.trim();
   return trimmed === undefined || trimmed === "" ? undefined : trimmed;
@@ -189,7 +201,7 @@ function resolveProtocol(
   problems.push(
     value === "grpc"
       ? `${name}=grpc is not supported: use http/protobuf or http/json`
-      : `${name}="${value}" is not a known protocol: use http/protobuf or http/json`,
+      : `${name}=${shown(value)} is not a known protocol: use http/protobuf or http/json`,
   );
   return "http/protobuf";
 }
@@ -209,7 +221,7 @@ function resolveSignal(
 
   if (exporter !== undefined && exporter !== "otlp" && exporter !== "none") {
     problems.push(
-      `${exporterName}="${exporter}" is not supported: use "otlp" or "none"`,
+      `${exporterName}=${shown(exporter)} is not supported: use "otlp" or "none"`,
     );
     return { enabled: false, reason: "exporter-none" };
   }
@@ -256,13 +268,13 @@ function resolveSampler(
     if (option === undefined) return fallback;
     if (!SAMPLER_TYPES.includes(option.type)) {
       problems.push(
-        `sampler.type "${String(option.type)}" is not one of ${SAMPLER_TYPES.join(", ")}`,
+        `sampler.type ${shown(option.type)} is not one of ${SAMPLER_TYPES.join(", ")}`,
       );
       return fallback;
     }
     const ratio = option.ratio ?? 1;
     if (!(ratio >= 0 && ratio <= 1)) {
-      problems.push(`sampler.ratio ${String(option.ratio)} is not a number from 0 to 1`);
+      problems.push(`sampler.ratio ${shown(option.ratio)} is not a number from 0 to 1`);
       return fallback;
     }
     return { type: option.type, ratio, source: "option" };
@@ -270,7 +282,7 @@ function resolveSampler(
 
   if (!SAMPLER_TYPES.includes(name as SamplerType)) {
     problems.push(
-      `OTEL_TRACES_SAMPLER="${name}" is not one of ${SAMPLER_TYPES.join(", ")}`,
+      `OTEL_TRACES_SAMPLER=${shown(name)} is not one of ${SAMPLER_TYPES.join(", ")}`,
     );
     return fallback;
   }
@@ -285,7 +297,7 @@ function resolveSampler(
     ratio = Number(arg);
     if (!(ratio >= 0 && ratio <= 1)) {
       problems.push(
-        `OTEL_TRACES_SAMPLER_ARG="${arg}" is not a number from 0 to 1`,
+        `OTEL_TRACES_SAMPLER_ARG=${shown(arg)} is not a number from 0 to 1`,
       );
       return fallback;
     }
@@ -318,7 +330,7 @@ function tuning(
     (kind === "millis" || Number.isInteger(value));
   if (!usable) {
     warnings.push(
-      `${name}="${raw}" is not a positive ${kind === "count" ? "whole number" : "number"}; using the default`,
+      `${name}=${shown(raw)} is not a positive ${kind === "count" ? "whole number" : "number"}; using the default`,
     );
     return undefined;
   }

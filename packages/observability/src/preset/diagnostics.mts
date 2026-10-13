@@ -81,11 +81,14 @@ export const stderrSink: DiagnosticsSink = (event) => {
  */
 export function scrubUrls(text: string): string {
   return text.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, (match) => {
+    // punctuation that ends the sentence or closes a bracket is not part of the URL
+    const trailing = /[.,;:!?)\]}]+$/.exec(match)?.[0] ?? "";
+    const candidate = match.slice(0, match.length - trailing.length);
     try {
-      const url = new URL(match);
-      return `${url.protocol}//${url.host}`;
+      const url = new URL(candidate);
+      return `${url.protocol}//${url.host}${trailing}`;
     } catch {
-      return "[url]";
+      return `[url]${trailing}`;
     }
   });
 }

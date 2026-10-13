@@ -80,7 +80,8 @@ describe("resource", () => {
       allSignals({
         OTEL_RESOURCE_ATTRIBUTES:
           "host.name=box-from-env,process.command_line=node%20secret-arg,process.command_args=arg-from-env," +
-          "process.executable.path=/opt/from-env,process.owner=owner-from-env,kept.key=kept-value",
+          "process.executable.path=/opt/from-env,process.owner=owner-from-env," +
+          "process.user.name=user-from-env,process.real_user.id=1000,kept.key=kept-value",
       }),
     );
 
@@ -102,6 +103,7 @@ describe("resource", () => {
         "arg-from-env",
         "/opt/from-env",
         "owner-from-env",
+        "user-from-env",
       ]) {
         expect(request.bodyText, `${request.path} contains ${value}`).not.toContain(value);
       }

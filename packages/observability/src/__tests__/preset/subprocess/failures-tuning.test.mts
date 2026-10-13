@@ -331,26 +331,24 @@ describe("tuning variables", () => {
       ...NAME,
       OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: `${sink.url}/v1/metrics`,
       OTEL_TRACES_EXPORTER: "none",
-      OTEL_METRIC_EXPORT_INTERVAL: "1000",
+      OTEL_METRIC_EXPORT_INTERVAL: "2000",
     };
-    const timeoutLines = (run: ChildRun) =>
-      run.stderrLines
-        .map((line) => JSON.stringify(line))
-        .filter((line) => /timed out|timeout/i.test(line));
+    const timeoutMessages = (run: ChildRun) =>
+      run.stderrLines.map((line) => String(line.msg)).filter((msg) => /timed out/i.test(msg));
 
     // without the variable the reader's timeout equals the interval: the export that
-    // starts at 1000 ms would be given up at 2000 ms, which this run does not reach
-    const patient = await runChild({ lingerMillis: 1600, finish: "none" }, env);
+    // starts at 2 s would be given up at 4 s. This run ends at 3 s: a second of margin each side
+    const patient = await runChild({ lingerMillis: 3000, finish: "none" }, env);
     expect(sink.requestsTo("/v1/metrics").length).toBeGreaterThan(0);
-    expect(timeoutLines(patient)).toEqual([]);
+    expect(timeoutMessages(patient)).toEqual([]);
 
     const impatient = await runChild(
-      { lingerMillis: 1600, finish: "none" },
+      { lingerMillis: 3000, finish: "none" },
       { ...env, OTEL_METRIC_EXPORT_TIMEOUT: "100" },
     );
-    // given up 100 ms after the export began, well inside the same window
-    expect(timeoutLines(impatient)).toHaveLength(1);
-    expect(timeoutLines(impatient)[0]).toContain("100");
+    // given up 100 ms after the export began at 2 s, most of a second before the run ends
+    expect(timeoutMessages(impatient)).toHaveLength(1);
+    expect(timeoutMessages(impatient)[0]).toMatch(/timed out after 100 ?ms/);
   });
 
   it("a metric timeout above the interval is replaced by the interval, with a warning, and metrics still flow", async () => {

@@ -71,6 +71,9 @@ export default defineConfig({
           name: "preset",
           environment: "node",
           include: ["src/__tests__/preset/*.test.mts"],
+          // these tests start the real preset in-process; a variable set in the
+          // developer's shell or by CI must not change what they see
+          setupFiles: ["./src/__tests__/preset/scrub-env.mts"],
         },
       },
       // the preset in child processes. They bind the specification's default
