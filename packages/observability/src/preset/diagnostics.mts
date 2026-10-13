@@ -217,7 +217,10 @@ function describeArgument(argument: unknown): string {
  */
 function shapeOf(value: unknown): string {
   try {
-    return types.isNativeError(value) ? "[error]" : describeArgument(value);
+    // native (from any realm), or made to pass for one the old way, by its prototype
+    return types.isNativeError(value) || value instanceof Error
+      ? "[error]"
+      : describeArgument(value);
   } catch {
     return "[unreadable]";
   }

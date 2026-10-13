@@ -329,18 +329,27 @@ describe("rejected configuration", () => {
   it.each(["start", "register"] as const)(
     "%s keeps an endpoint's password out of stderr when the SDK would have quoted the variable",
     async (start) => {
-      // accepted by the preset (it trims; a URL parses from this spelling), but the SDK's own
-      // reading of the variable does not parse, and its warning quotes the whole value
-      const run = await runChild(
-        { start, spans: 1 },
-        { ...NAME, OTEL_EXPORTER_OTLP_ENDPOINT: `http:\\\\user:SENTINEL@127.0.0.1:${sink.port} ` },
-      );
+      // each is accepted by the preset (it trims, and a URL parses from these spellings), but the
+      // SDK's own reading of the variable does not parse, and its warning quotes the whole value
+      const env = {
+        ...NAME,
+        OTEL_LOGS_EXPORTER: "otlp",
+        OTEL_EXPORTER_OTLP_ENDPOINT: `http:\\\\user:SENTINEL@127.0.0.1:${sink.port} `,
+        OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: `\u00a0http:\\\\user:SENTINEL@127.0.0.1:${sink.port}/custom/v1/metrics`,
+        OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: `\u00a0http:/user:SENTINEL@127.0.0.1:${sink.port}/custom/v1/logs`,
+      };
+      const run = await runChild({ start, spans: 1 }, env);
 
-      // the endpoint is in use: the span arrived
+      // every endpoint is in use: the general one for traces, its own for each of the others
       expect(sink.spans().map((s) => s.name)).toContain("child-span-0");
+      expect(new Set(sink.requests.map((request) => request.path))).toEqual(
+        new Set(["/v1/traces", "/custom/v1/metrics", "/custom/v1/logs"]),
+      );
       expect(run.stderr).not.toContain("SENTINEL");
-      // and the SDK said nothing about a URL it was never asked to read
+      // the SDK said nothing about a URL it was never asked to read
       expect(run.stderrLines.filter((line) => String(line.msg).startsWith("Configuration:"))).toEqual([]);
+      // and the variables are the process's again, as they were set
+      expect(run.result.endpointVariablesRestored).toBe(true);
     },
   );
 

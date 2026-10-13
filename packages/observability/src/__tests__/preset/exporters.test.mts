@@ -10,6 +10,7 @@ import {
   AggregationTemporality,
   InMemoryMetricExporter,
 } from "@opentelemetry/sdk-metrics";
+import { OTLPTraceExporter as ProtoTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { DiagnosticsEvent } from "../../preset/diagnostics.mjs";
@@ -19,6 +20,9 @@ import type { ExportResult } from "@opentelemetry/core";
 import { getStatus } from "../../preset.mjs";
 import { createDiagnostics } from "../../preset/diagnostics.mjs";
 import {
+  createLogRecordExporter,
+  createMetricExporter,
+  createSpanExporter,
   wasReportedByExporter,
   wrapLogRecordExporter,
   wrapMetricExporter,
@@ -511,6 +515,39 @@ describe("exporter wrapper", () => {
       expect(unhandled).toEqual([]);
     });
 
+    it("is not thrown by a thenable that fulfils, however it calls back", async () => {
+      const { reports, context } = collecting();
+      const answers: ExportResult[] = [];
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on("unhandledRejection", onUnhandled);
+      try {
+        // an awaitable written by hand: it calls its first argument without checking it
+        const awaitable = {
+          then: (resolve: () => void, reject: (reason: unknown) => void) => {
+            void Promise.resolve().then(() => {
+              resolve();
+            }, reject);
+          },
+        };
+        wrap(
+          ((_records: unknown, given: Callback) => {
+            given({ code: ExportResultCode.SUCCESS });
+            return awaitable;
+          }) as unknown as InnerExport,
+          context,
+        )((result) => answers.push(result));
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+      } finally {
+        process.off("unhandledRejection", onUnhandled);
+      }
+
+      expect(answers.map((a) => a.code)).toEqual([ExportResultCode.SUCCESS]);
+      expect(reports).toEqual([]);
+      expect(unhandled).toEqual([]);
+    });
+
     it("names a callback's error by a plain name only", () => {
       const { reports, context } = collecting();
       const odd = Object.assign(new Error("m"), { name: { url: "http://u:SENTINEL@h.example/p" } });
@@ -612,6 +649,61 @@ describe("exporter wrapper", () => {
       .flatMap((metric) => metric.dataPoints.map((point) => point.value));
     // cumulative, the reader's default without the pass-through, would give [1, 2]
     expect(values).toEqual([1, 1]);
+  });
+});
+
+describe("building the SDK's own exporters", () => {
+  const VARIABLES = {
+    OTEL_EXPORTER_OTLP_ENDPOINT: "http:\\\\user:SENTINEL@general.example ",
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "\u00a0http:\\\\user:SENTINEL@traces.example/t",
+    OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "\u00a0http:\\\\user:SENTINEL@metrics.example/m",
+    OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "\u00a0http:\\\\user:SENTINEL@logs.example/l",
+  };
+  const now = () => Object.fromEntries(Object.keys(VARIABLES).map((name) => [name, process.env[name]]));
+  const FACTORIES = [
+    ["traces", createSpanExporter],
+    ["metrics", createMetricExporter],
+    ["logs", createLogRecordExporter],
+  ] as const;
+  const CASES = FACTORIES.flatMap(([signal, create]) =>
+    (["http/protobuf", "http/json"] as const).map((protocol) => [signal, protocol, create] as const),
+  );
+
+  function listening() {
+    const said: string[] = [];
+    const note = (...parts: unknown[]) => said.push(parts.map(String).join(" "));
+    diag.setLogger({ error: note, warn: note, info: note, debug: note, verbose: note });
+    return said;
+  }
+
+  it.each(CASES)(
+    "%s over %s: the endpoint variables are out of the SDK's sight, and back afterwards",
+    (_signal, protocol, create) => {
+      for (const [name, value] of Object.entries(VARIABLES)) vi.stubEnv(name, value);
+      const said = listening();
+
+      create({ enabled: true, url: "http://collector.example/v1/x", protocol }, undefined);
+
+      // each of these values makes the SDK warn, with the value quoted, when it does read it
+      expect(said).toEqual([]);
+      expect(now()).toEqual(VARIABLES);
+    },
+  );
+
+  it.each(CASES)("%s over %s: the variables are back when the SDK refuses to build", (_signal, protocol, create) => {
+    for (const [name, value] of Object.entries(VARIABLES)) vi.stubEnv(name, value);
+    listening();
+
+    expect(() => create({ enabled: true, url: "not a url", protocol }, undefined)).toThrow();
+    expect(now()).toEqual(VARIABLES);
+  });
+
+  it("the SDK does quote such a value when the variables are left in its sight", () => {
+    // the control for the cases above: without it they would pass on an SDK that had stopped warning
+    for (const [name, value] of Object.entries(VARIABLES)) vi.stubEnv(name, value);
+    const said = listening();
+    new ProtoTraceExporter({ url: "http://collector.example/v1/x" });
+    expect(said.join("\n")).toContain("SENTINEL");
   });
 });
 

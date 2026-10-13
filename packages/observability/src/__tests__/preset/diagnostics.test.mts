@@ -173,6 +173,8 @@ describe("diagnostics", () => {
         nothing: null,
         // an error's message is content too: unlike a logger argument, it is not printed
         thrown: new TypeError("SENTINEL at http://u:SENTINEL@h.example/p"),
+        // an error made the old way: not native, but one by its prototype
+        legacy: Object.assign(Object.create(Error.prototype) as Error, { message: "SENTINEL" }),
         missing: undefined,
         big: 10n,
         call: () => "SENTINEL",
@@ -186,6 +188,7 @@ describe("diagnostics", () => {
       list: "[array of 1]",
       nothing: "null",
       thrown: "[error]",
+      legacy: "[error]",
       missing: "undefined",
       big: "[bigint]",
       call: "[function]",

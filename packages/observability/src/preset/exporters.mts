@@ -212,9 +212,11 @@ function guarded(
     // read once: what is called is what was examined
     const then: unknown = returned?.then;
     if (typeof then === "function") {
-      (then as (this: unknown, onFulfilled: undefined, onRejected: typeof failed) => unknown).call(
+      // a fulfilment says nothing here (the answer comes through the callback), but a
+      // hand-written thenable may call its first argument without checking it is one
+      (then as (this: unknown, onFulfilled: () => void, onRejected: typeof failed) => unknown).call(
         returned,
-        undefined,
+        () => undefined,
         failed,
       );
     }
