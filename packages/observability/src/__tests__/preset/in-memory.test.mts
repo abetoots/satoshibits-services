@@ -10,6 +10,7 @@ import {
   trace,
 } from "@opentelemetry/api";
 import { logs } from "@opentelemetry/api-logs";
+import { globalErrorHandler } from "@opentelemetry/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TestTelemetry } from "../../testing/in-memory.mjs";
@@ -234,6 +235,18 @@ describe("startTestTelemetry", () => {
     await expect(stopped.metrics()).rejects.toThrow(/was stopped/);
     await expect(stopped.metricPoints("x")).rejects.toThrow(/was stopped/);
     await expect(stopped.logRecords()).rejects.toThrow(/was stopped/);
+  });
+
+  it("gives the diagnostics logger and the error handler back when stopped", async () => {
+    const events: { message: string }[] = [];
+    const stopped = startTestTelemetry({ diagnostics: () => (event) => events.push(event) });
+    diag.warn("while running");
+    await stopped.stop();
+
+    diag.warn("after the stop");
+    globalErrorHandler(new Error("after the stop"));
+    // (the handler the SDK is given back logs through the logger, which is gone too)
+    expect(events.map((e) => e.message)).toEqual(["while running"]);
   });
 
   it("refuses to answer after the preset's own shutdown() too", async () => {

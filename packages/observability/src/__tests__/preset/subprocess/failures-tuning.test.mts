@@ -261,7 +261,7 @@ describe("failure visibility", () => {
 
 describe("tuning variables", () => {
   // These children neither shut down nor flush: only the timers can send anything.
-  // A control lingers briefly (the default it relies on is seconds or a minute away);
+  // A control lingers briefly where the default it relies on is seconds or a minute away;
   // a positive run lingers long, so a slow machine has time for the timers and requests.
   const CONTROL_LINGER = 600;
   const POSITIVE_LINGER = 2500;
@@ -298,10 +298,11 @@ describe("tuning variables", () => {
     };
     // the default delay is a second. The control sets a long one and outlasts the default,
     // so a delay that never reached the processor would send here and fail this
-    await runChild(
+    const quiet = await runChild(
       { lingerMillis: POSITIVE_LINGER, finish: "none" },
       { ...env, OTEL_BLRP_SCHEDULE_DELAY: "10000" },
     );
+    expect(quiet.result.startError).toBeNull();
     expect(sink.requestsTo("/v1/logs")).toEqual([]);
 
     await runChild(
