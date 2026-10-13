@@ -991,6 +991,14 @@ describe("startTestTelemetry", () => {
       );
     });
 
+    it("names the instrumentation so that a line break in the name cannot pass for another problem", () => {
+      const attempt = () =>
+        instrumentationConfigFor(logsOff, {}, { 'a\n  - forged "problem"': false } as never);
+      expect(attempt).toThrow(
+        'instrumentations: the settings for "a\\n  - forged \\"problem\\"" must be an object, such as { enabled: false }',
+      );
+    });
+
     it.each([
       ["null", null],
       ["true", true],
