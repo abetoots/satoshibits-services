@@ -219,15 +219,21 @@ export function startDefaultAddressTrap(): Promise<OtlpSink> {
 /** where a sink listens; a socket to one of its ports on any other host is still a leak */
 const LOOPBACK: ReadonlySet<string> = new Set(["127.0.0.1", "::1", "localhost"]);
 
+/** the sockets that went anywhere but loopback on one of `ports` */
+export function straySockets(
+  sockets: ChildResult["sockets"],
+  ports: ReadonlySet<number>,
+): ChildResult["sockets"] {
+  return sockets.filter((socket) => !(ports.has(socket.port) && LOOPBACK.has(socket.host)));
+}
+
 /** the child's outbound sockets that did not go to one of the given sinks */
 export function socketsOutside(
   run: ChildRun,
   ...sinks: OtlpSink[]
 ): ChildResult["sockets"] {
   const ports = new Set(sinks.map((sink) => sink.port));
-  return run.result.sockets.filter(
-    (socket) => !(ports.has(socket.port) && LOOPBACK.has(socket.host)),
-  );
+  return straySockets(run.result.sockets, ports);
 }
 
 /**
@@ -236,11 +242,7 @@ export function socketsOutside(
  * test started, closed ones included). Call it from `afterEach`.
  */
 export function strayRecentSockets(allowedPorts: ReadonlySet<number>): ChildResult["sockets"] {
-  return takeRecentRuns().flatMap((run) =>
-    run.result.sockets.filter(
-      (socket) => !(allowedPorts.has(socket.port) && LOOPBACK.has(socket.host)),
-    ),
-  );
+  return takeRecentRuns().flatMap((run) => straySockets(run.result.sockets, allowedPorts));
 }
 
 /**

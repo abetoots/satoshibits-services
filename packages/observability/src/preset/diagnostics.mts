@@ -131,7 +131,11 @@ function scrubbedUrl(token: string): string {
  * A URL is taken to run from its scheme to the next whitespace, whatever is
  * in between (a password or a query may hold a quote or an angle bracket),
  * less the punctuation at its very end. Text glued to a URL without a space
- * is therefore lost with it; no part of a URL is ever kept.
+ * is therefore lost with it, and no part of such a URL is kept.
+ *
+ * The limit of that rule: a URL that holds a raw space ends at the space,
+ * and what follows it is ordinary text here. That text still passes the
+ * redaction the application named, like all other text.
  *
  * One pass over the text, with no backtracking: it runs on text of any size
  * inside whatever called the diagnostics logger.
@@ -148,13 +152,14 @@ export function scrubUrls(text: string): string {
     const floor = Math.max(copied, marker - MAX_SCHEME_LENGTH);
     while (start > floor && isSchemeChar(text[start - 1]!)) start--;
     while (start < marker && !/[a-z]/i.test(text[start]!)) start++;
-    let end = marker + 3;
-    while (end < text.length && !isWhitespace(text[end]!)) end++;
     if (start === marker) {
-      // "://" with no scheme before it is not a URL
+      // "://" with no scheme before it is not a URL. Decided before the walk
+      // forward, or a run of such markers would walk the same text every time
       search = marker + 3;
       continue;
     }
+    let end = marker + 3;
+    while (end < text.length && !isWhitespace(text[end]!)) end++;
     out += text.slice(copied, start) + scrubbedUrl(text.slice(start, end));
     copied = end;
     search = end;
@@ -199,6 +204,15 @@ function describeArgument(argument: unknown): string {
     return `{${shown}${keys.length > 8 ? ", …" : ""}}`;
   }
   return `[${typeof argument}]`;
+}
+
+/** an argument that cannot even be inspected (a throwing proxy) costs its own place, not the line */
+function described(argument: unknown): string {
+  try {
+    return describeArgument(argument);
+  } catch {
+    return "[unreadable]";
+  }
 }
 
 export interface CreateDiagnosticsOptions {
@@ -267,15 +281,11 @@ export function createDiagnostics(
   const fromApi =
     (level: DiagnosticsLevel) =>
     (message: string, ...args: unknown[]) => {
-      try {
-        // typed as a string, but instrumentations do pass errors and objects
-        report({
-          level,
-          message: [message, ...args].map(describeArgument).join(" "),
-        });
-      } catch {
-        // an argument that cannot even be described must not throw into the caller
-      }
+      // typed as a string, but instrumentations do pass errors and objects
+      report({
+        level,
+        message: [message, ...args].map(described).join(" "),
+      });
     };
 
   return {

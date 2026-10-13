@@ -284,9 +284,91 @@ describe("exporter wrapper", () => {
         context,
       )((result) => answers.push(result));
 
+      expect(answers.map((a) => a.code)).toEqual([ExportResultCode.FAILED]);
       expect(answers[0]!.error).toBeInstanceOf(Error);
       expect(wasReportedByExporter(answers[0]!.error)).toBe(true);
+      expect(reports.map((r) => [r.message, r.fields?.error])).toEqual([
+        [`${signal} export failed`, "Error"],
+      ]);
       expect(JSON.stringify([reports, answers[0]!.error!.message])).not.toContain("SENTINEL");
+    });
+
+    // values an exporter may throw or reject with that are not errors: one with text that must
+    // not travel, and one that cannot be turned into text at all
+    const NOT_ERRORS: [string, () => unknown][] = [
+      ["a string", () => "SENTINEL from the far end"],
+      ["an object that cannot be printed", () => Object.create(null) as unknown],
+    ];
+
+    it.each(NOT_ERRORS)("answers once, with a marked error, when the exporter throws %s", (_what, value) => {
+      const { reports, context } = collecting();
+      const answers: ExportResult[] = [];
+      const exportIt = wrap(() => {
+        throw value();
+      }, context);
+
+      expect(() => exportIt((result) => answers.push(result))).not.toThrow();
+      expect(answers.map((a) => [a.code, a.error?.message])).toEqual([
+        [ExportResultCode.FAILED, "export failed with a value that is not an error"],
+      ]);
+      expect(wasReportedByExporter(answers[0]!.error)).toBe(true);
+      expect(reports.map((r) => r.message)).toEqual([`${signal} export failed`]);
+    });
+
+    it.each(NOT_ERRORS)("answers once, with a marked error, when the exporter rejects with %s", async (_what, value) => {
+      const { reports, context } = collecting();
+      const answers: ExportResult[] = [];
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- a non-error rejection is the case under test
+      wrap((() => Promise.reject(value())) as unknown as InnerExport, context)((result) =>
+        answers.push(result),
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(answers.map((a) => [a.code, a.error?.message])).toEqual([
+        [ExportResultCode.FAILED, "export failed with a value that is not an error"],
+      ]);
+      expect(reports.map((r) => r.message)).toEqual([`${signal} export failed`]);
+    });
+
+    it("hears a rejection from something that is only like a promise", async () => {
+      const { reports, context } = collecting();
+      const answers: ExportResult[] = [];
+      const thenable = {
+        then: (_resolve: unknown, reject: (reason: unknown) => void) => reject(new RangeError("rejected")),
+      };
+      wrap((() => thenable) as unknown as InnerExport, context)((result) => answers.push(result));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(answers.map((a) => [a.code, a.error?.name])).toEqual([
+        [ExportResultCode.FAILED, "RangeError"],
+      ]);
+      expect(reports.map((r) => r.message)).toEqual([`${signal} export failed`]);
+    });
+
+    it("lets a rejection that follows a success pass quietly: no second answer, nothing unhandled", async () => {
+      const { reports, context } = collecting();
+      const answers: ExportResult[] = [];
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on("unhandledRejection", onUnhandled);
+      try {
+        wrap(
+          ((_records: unknown, given: Callback) => {
+            given({ code: ExportResultCode.SUCCESS });
+            // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- a non-error rejection is the case under test
+            return Promise.reject(Object.create(null));
+          }) as unknown as InnerExport,
+          context,
+        )((result) => answers.push(result));
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+      } finally {
+        process.off("unhandledRejection", onUnhandled);
+      }
+
+      expect(answers.map((a) => a.code)).toEqual([ExportResultCode.SUCCESS]);
+      expect(reports).toEqual([]);
+      expect(unhandled).toEqual([]);
     });
 
     it("gives a failure that came without an error one it has marked as reported", () => {
