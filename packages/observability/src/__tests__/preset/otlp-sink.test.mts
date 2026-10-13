@@ -387,6 +387,39 @@ describe("OTLP sink", () => {
     expect(() => sink!.spans()).toThrow(/could not decode/);
   });
 
+  it("answers 500 and says so when a test's responder throws", async () => {
+    sink = await startOtlpSink();
+    sink.respondWith(() => {
+      throw new Error("responder is broken");
+    });
+    const exporter = new ProtoTraceExporter({ url: `${sink.url}/v1/traces` });
+    closers.push(() => exporter.shutdown());
+    const span = new BasicTracerProvider({ resource }).getTracer("t").startSpan("s");
+    span.end();
+    const result = await new Promise<{ code: ExportResultCode }>((resolve) =>
+      exporter.export([span as never], resolve),
+    );
+    expect(result.code).toBe(ExportResultCode.FAILED);
+    expect(() => sink!.spans()).toThrow(/respondWith threw/);
+    expect(() => sink!.requestsTo("/v1/traces")).toThrow(/respondWith threw/);
+  });
+
+  it("refuses a scalar field that arrives with the wrong wire type", async () => {
+    sink = await startOtlpSink();
+    // ResourceSpans(1) > ScopeSpans(2) > Span(2) > name(5) sent as a varint, not a string
+    const span = [0x28, 0x01];
+    const scopeSpans = [0x12, span.length, ...span];
+    const resourceSpans = [0x12, scopeSpans.length, ...scopeSpans];
+    const body = new Uint8Array([0x0a, resourceSpans.length, ...resourceSpans]);
+    const response = await fetch(`${sink.url}/v1/traces`, {
+      method: "POST",
+      headers: { "content-type": "application/x-protobuf" },
+      body,
+    });
+    expect(response.status).toBe(400);
+    expect(sink.undecodable[0]!.error).toMatch(/arrived with wire type 0/);
+  });
+
   it("waitFor rejects, rather than throwing elsewhere, when its condition throws", async () => {
     sink = await startOtlpSink();
     // the expectation is attached before the request, so the rejection always has a handler

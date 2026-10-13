@@ -97,6 +97,17 @@ describe("diagnostics", () => {
     expect(JSON.stringify(events)).not.toContain("SENTINEL");
   });
 
+  it("leaves the punctuation after a URL in place", () => {
+    const { events, diagnostics } = collecting();
+    diagnostics.activate();
+    diagnostics.diagLogger.warn(
+      "failed at http://u:SENTINEL@h.example/p?q=SENTINEL, retrying (see https://docs.example/x). Done",
+    );
+    expect(events[0]!.message).toBe(
+      "failed at http://h.example, retrying (see https://docs.example). Done",
+    );
+  });
+
   it("applies the redaction it is given to every message and text field", () => {
     const events: DiagnosticsEvent[] = [];
     const diagnostics = createDiagnostics({

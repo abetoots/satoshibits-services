@@ -20,6 +20,8 @@ import { startTestTelemetry } from "../../testing/in-memory.mjs";
 let telemetry: TestTelemetry | undefined;
 
 afterEach(async () => {
+  // first, so a failed assertion cannot leave the variable set for the next test
+  vi.unstubAllEnvs();
   await telemetry?.stop();
   telemetry = undefined;
 });
@@ -137,17 +139,18 @@ describe("startTestTelemetry", () => {
 
     // a start that follows at once must stay started
     telemetry = startTestTelemetry();
-    await Promise.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    // let every pending microtask and timer of the refused start run before emitting
+    await new Promise((resolve) => setImmediate(resolve));
     trace.getTracer("kit").startSpan("after-restart").end();
     expect((await telemetry.spans()).map((s) => s.name)).toEqual(["after-restart"]);
   });
 
   it("a stop that is not awaited does not undo the start that follows it", async () => {
     telemetry = startTestTelemetry({ serviceName: "first" });
-    void telemetry.stop();
+    const stopping = telemetry.stop();
     telemetry = startTestTelemetry({ serviceName: "second" });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    // wait for the first one's shutdown itself, however long it takes, not for a guessed delay
+    await stopping;
     trace.getTracer("kit").startSpan("kept").end();
     expect((await telemetry.spans()).map((s) => s.name)).toEqual(["kept"]);
   });
@@ -220,6 +223,17 @@ describe("startTestTelemetry", () => {
     expect(events.map((e) => e.message)).toEqual([
       "export failed for f***@example.com at https://h.example",
     ]);
+  });
+
+  it("refuses to answer after stop(), instead of reporting that nothing was emitted", async () => {
+    const stopped = startTestTelemetry();
+    trace.getTracer("kit").startSpan("s").end();
+    await stopped.stop();
+
+    await expect(stopped.spans()).rejects.toThrow(/was stopped/);
+    await expect(stopped.metrics()).rejects.toThrow(/was stopped/);
+    await expect(stopped.metricPoints("x")).rejects.toThrow(/was stopped/);
+    await expect(stopped.logRecords()).rejects.toThrow(/was stopped/);
   });
 
   it("refuses a second start while one is running", () => {

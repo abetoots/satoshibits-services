@@ -39,6 +39,8 @@ const DROPPED_KEY_PATTERNS: readonly RegExp[] = [
   /^process\.command/,
   /^process\.executable\./,
   /^process\.owner$/,
+  // the newer spellings of the OS user
+  /^process\.(user|real_user|saved_user)\./,
 ];
 
 export const isDroppedResourceKey = (key: string): boolean =>

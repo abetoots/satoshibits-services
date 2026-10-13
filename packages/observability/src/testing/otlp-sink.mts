@@ -157,7 +157,21 @@ export async function startOtlpSink(
           decoded,
         };
         requests.push(request);
-        const { status = 200, hang = false, delayMs = 0 } = respond(request);
+        let response: SinkResponse;
+        try {
+          response = respond(request);
+        } catch (error) {
+          // a test's responder threw: answer 500 and let the accessors say so
+          undecodable.push({
+            path,
+            contentType,
+            error: `respondWith threw: ${String(error)}`,
+          });
+          res.writeHead(500).end();
+          notify();
+          return;
+        }
+        const { status = 200, hang = false, delayMs = 0 } = response;
         if (hang) {
           openResponses.add(res);
         } else {
@@ -216,8 +230,12 @@ export async function startOtlpSink(
     connections,
     requests,
     undecodable,
-    requestsTo: (suffix) =>
-      requests.filter((r) => r.path.split("?")[0]!.endsWith(suffix)),
+    // throws like spans() when something arrived that could not be read, so
+    // "nothing was sent to this path" cannot pass on an unreadable request
+    requestsTo: (suffix) => {
+      decoded();
+      return requests.filter((r) => r.path.split("?")[0]!.endsWith(suffix));
+    },
     spans: () => decoded().flatMap((d) => d.spans),
     metrics: () => decoded().flatMap((d) => d.metrics),
     logRecords: () => decoded().flatMap((d) => d.logRecords),

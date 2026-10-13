@@ -310,6 +310,20 @@ describe("rejected configuration", () => {
     expect(sink.connections).toEqual([]);
   });
 
+  it("neither start() nor register echoes a value pasted into the wrong variable", async () => {
+    const pasted = "https://user:SENTINEL-PW@collector.example/v1/traces?token=SENTINEL-Q";
+    const env = { ...endpoint(), OTEL_EXPORTER_OTLP_PROTOCOL: pasted };
+
+    const started = await runChild({}, env);
+    expect(started.result.startError).toContain("OTEL_EXPORTER_OTLP_PROTOCOL=");
+    expect(started.result.startError).not.toContain("SENTINEL");
+
+    const registered = await runChild({ start: "register" }, env);
+    expect(registered.stderrLines).toHaveLength(1);
+    expect(registered.stderr).not.toContain("SENTINEL");
+    expect(registered.stderr).not.toContain("collector.example");
+  });
+
   it("the register entry starts from the environment alone", async () => {
     const run = await runChild({ start: "register" }, endpoint());
     expect(run.result.status.state).toBe("shut-down");

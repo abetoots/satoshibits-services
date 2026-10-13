@@ -153,12 +153,23 @@ function readVarint(buf: Buffer, at: number): [bigint, number] {
   }
 }
 
-const VARINT_TYPES: ReadonlySet<Scalar> = new Set(["varint", "bool"]);
+/** the protobuf wire type each declared scalar type must arrive with */
+const WIRE_TYPE: Record<Scalar, number> = {
+  varint: 0,
+  bool: 0,
+  fixed64: 1,
+  sfixed64: 1,
+  double: 1,
+  string: 2,
+  bytes: 2,
+  base64: 2,
+  fixed32: 5,
+};
 
-function scalar(type: Scalar, raw: Buffer | bigint): unknown {
+function scalar(type: Scalar, raw: Buffer | bigint, wireType: number): unknown {
   // a field arriving with the wrong wire type means the schema here, or the sender, is wrong
-  if ((typeof raw === "bigint") !== VARINT_TYPES.has(type)) {
-    throw new Error(`wire type does not fit declared type ${type}`);
+  if (WIRE_TYPE[type] !== wireType) {
+    throw new Error(`field of type ${type} arrived with wire type ${wireType}`);
   }
   if (typeof raw === "bigint") {
     if (type === "bool") return raw === 1n;
@@ -220,7 +231,7 @@ function decodeMessage(buf: Buffer, schemaName: string): Json {
     if (!field) continue;
     let value: unknown;
     if (typeof field.type === "string") {
-      value = scalar(field.type, raw);
+      value = scalar(field.type, raw, wireType);
     } else {
       if (wireType !== 2) {
         throw new Error(`field ${field.name} is a message but has wire type ${wireType}`);

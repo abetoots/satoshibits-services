@@ -67,6 +67,7 @@ import {
   createSpanExporter,
   FAILURE_REPORT_INTERVAL_MILLIS,
   hostOf,
+  wasReportedByExporter,
   wrapLogRecordExporter,
   wrapMetricExporter,
   wrapSpanExporter,
@@ -361,9 +362,10 @@ function withoutLogLevelVariable<T>(construct: () => T): T {
  * error of each kind and then at most one of that kind per interval, so an
  * outage neither floods the log nor hides an unrelated error behind it.
  *
- * A rejected or undeliverable export arrives here as an `OTLPExporterError`
- * or a network error; the exporter wrapper has already reported it, by
- * signal, so it is not reported again.
+ * A rejected or undeliverable export also arrives here; the exporter wrapper
+ * has already reported it, by signal, and marked the error, so it is not
+ * reported again. Nothing else is skipped: an error with a code that the
+ * wrapper never saw (a file error from an instrumentation, say) is reported.
  */
 function installErrorHandler(diagnostics: Diagnostics): void {
   const limiters = new Map<string, ReturnType<typeof createRateLimiter>>();
@@ -376,8 +378,14 @@ function installErrorHandler(diagnostics: Diagnostics): void {
       ) as { name?: unknown; message?: unknown; code?: unknown };
       const name = typeof detail.name === "string" ? detail.name : "Error";
       const message = typeof detail.message === "string" ? detail.message : "";
-      // reported per signal by the wrapper: an HTTP rejection, or a socket error (which carries a code)
-      if (name === "OTLPExporterError" || typeof detail.code === "string") return;
+      // already reported, per signal, by the exporter wrapper: that exact error object, or the
+      // metric reader's rewrapping of one (the reader's own timeout goes through the diag logger)
+      if (
+        wasReportedByExporter(error) ||
+        message.startsWith("PeriodicExportingMetricReader: metrics export failed")
+      ) {
+        return;
+      }
       // one limit per kind of error; the kinds are few (the SDK's own classes)
       let limit = limiters.get(name);
       if (limit === undefined) {

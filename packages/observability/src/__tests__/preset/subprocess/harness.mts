@@ -118,7 +118,7 @@ const SCRUBBED_ENV_NAMES = new Set([
 ]);
 
 /** a child that has printed nothing by then is killed and the run rejected */
-const CHILD_DEADLINE_MILLIS = 25_000;
+const CHILD_DEADLINE_MILLIS = 20_000;
 
 /** every run since the last call, for a check shared by all tests of a file */
 const recentRuns: ChildRun[] = [];
@@ -157,11 +157,22 @@ export async function runChild(
     child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
     child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
     child.on("error", reject);
+    let killed = false;
     const deadline = setTimeout(() => {
+      killed = true;
       child.kill("SIGKILL");
     }, CHILD_DEADLINE_MILLIS);
     child.on("close", (code) => {
       clearTimeout(deadline);
+      if (killed) {
+        // a child that printed its result and then hung is still a failure
+        reject(
+          new Error(
+            `child did not exit within ${CHILD_DEADLINE_MILLIS} ms and was killed\nstdout: ${stdout}\nstderr: ${stderr}`,
+          ),
+        );
+        return;
+      }
       const line = stdout.split("\n").find((l) => l.startsWith("RESULT "));
       if (!line) {
         reject(
@@ -285,9 +296,11 @@ export function useSinks(): {
     await settle();
     const reachedTrap = trap ? drainTrap(trap) : [];
     const stray = strayRecentSockets(ports);
+    const unreadable = [trap, sink, ...extras].flatMap((s) => s?.undecodable.splice(0) ?? []);
     await Promise.all([sink, ...extras].map((s) => s?.close().catch(() => undefined)));
     expect(reachedTrap, "connections to localhost:4318").toEqual([]);
     expect(stray, "sockets to a port that is not one of the test's sinks").toEqual([]);
+    expect(unreadable, "requests a sink could not decode").toEqual([]);
   });
 
   return {

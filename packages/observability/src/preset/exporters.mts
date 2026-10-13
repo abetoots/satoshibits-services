@@ -52,11 +52,35 @@ export function hostOf(url: string): string {
   return new URL(url).host;
 }
 
+/**
+ * Errors this module has reported, by signal. The SDK hands the same error
+ * objects to its global error handler, which skips these so one failure is
+ * not reported twice (and skips nothing else).
+ */
+const reported = new WeakSet<object>();
+
+export const wasReportedByExporter = (error: unknown): boolean =>
+  typeof error === "object" && error !== null && reported.has(error);
+
+/** a reason this module can state itself, from the SDK's own fixed error texts */
+function localReason(message: unknown): string | undefined {
+  if (typeof message !== "string") return undefined;
+  if (/timed? ?out/i.test(message)) return "timeout";
+  return undefined;
+}
+
 function failureReporter(signal: Signal, context: ExporterContext) {
   const limit = createRateLimiter(FAILURE_REPORT_INTERVAL_MILLIS);
   return (error: unknown) => {
+    // marked whether or not the line below is let through by the limit
+    if (typeof error === "object" && error !== null) reported.add(error);
     limit((suppressed) => {
-      const detail = (error ?? {}) as { name?: unknown; code?: unknown };
+      const detail = (error ?? {}) as {
+        name?: unknown;
+        code?: unknown;
+        message?: unknown;
+      };
+      const reason = localReason(detail.message);
       context.diagnostics.report({
         level: "error",
         message: `${signal} export failed`,
@@ -68,6 +92,8 @@ function failureReporter(signal: Signal, context: ExporterContext) {
           ...(typeof detail.code === "number" && { status: detail.code }),
           ...(typeof detail.code === "string" && { code: detail.code }),
           error: typeof detail.name === "string" ? detail.name : "Error",
+          // a request that timed out carries neither status nor code
+          ...(reason !== undefined && { reason }),
           ...(context.endpointHost !== undefined && {
             endpoint: context.endpointHost,
           }),
@@ -98,14 +124,21 @@ function guarded(
   resultCallback: (result: ExportResult) => void,
   send: (observed: (result: ExportResult) => void) => void,
 ): void {
+  // exactly one answer per export: an exporter that answers and then throws
+  // (or a callback that itself throws) must not be answered a second time
+  let settled = false;
+  const once = (result: ExportResult) => {
+    if (settled) return;
+    settled = true;
+    resultCallback(result);
+  };
   try {
-    send(observing(report, resultCallback));
+    send(observing(report, once));
   } catch (error) {
-    report(error);
-    resultCallback({
-      code: ExportResultCode.FAILED,
-      error: error instanceof Error ? error : new Error(String(error)),
-    });
+    if (settled) return;
+    const failure = error instanceof Error ? error : new Error(String(error));
+    report(failure);
+    once({ code: ExportResultCode.FAILED, error: failure });
   }
 }
 
