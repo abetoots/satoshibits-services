@@ -208,6 +208,7 @@ function decodeMessage(buf: Buffer, schemaName: string): Json {
     [tag, pos] = readVarint(buf, pos);
     const fieldNumber = Number(tag >> 3n);
     const wireType = Number(tag & 7n);
+    if (fieldNumber === 0) throw new Error("protobuf field number 0 is not valid");
     let raw: Buffer | bigint;
     if (wireType === 0) {
       [raw, pos] = readVarint(buf, pos);
@@ -297,8 +298,17 @@ export interface DecodedExport {
 const text = (value: unknown): string =>
   typeof value === "string" ? value : "";
 
-const list = (value: unknown): Json[] =>
-  Array.isArray(value) ? (value as Json[]) : [];
+const isObject = (value: unknown): value is Json =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** a repeated message field: absent, or an array of objects; anything else is not OTLP */
+function list(value: unknown): Json[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || !value.every(isObject)) {
+    throw new Error("a repeated OTLP field is not an array of objects");
+  }
+  return value;
+}
 
 function plainValue(anyValue: unknown): unknown {
   if (anyValue === null || typeof anyValue !== "object") return undefined;
@@ -349,7 +359,8 @@ function numberPoint(point: Json): number {
   return Number.NaN;
 }
 
-function simplify(request: Json): DecodedExport {
+function simplify(request: unknown): DecodedExport {
+  if (!isObject(request)) throw new Error("an OTLP request is not an object");
   const result: DecodedExport = { spans: [], metrics: [], logRecords: [] };
 
   for (const block of list(request.resourceSpans)) {
@@ -462,7 +473,7 @@ export function decodeOtlpRequest(
   }
   const encoding = encodingOf(contentType);
   if (encoding === "json") {
-    return simplify(JSON.parse(body.toString("utf8")) as Json);
+    return simplify(JSON.parse(body.toString("utf8")));
   }
   if (encoding === "protobuf") {
     return simplify(decodeMessage(body, ROOT_SCHEMA[suffix]!));

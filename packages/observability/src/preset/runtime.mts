@@ -321,12 +321,8 @@ function buildPipelines(
 
 function reportStartup(
   diagnostics: Diagnostics,
-  config: ResolvedConfig,
   signals: Record<Signal, SignalStatus>,
 ): void {
-  for (const warning of config.warnings) {
-    diagnostics.report({ level: "warn", message: warning });
-  }
   for (const signal of SIGNALS) {
     const status = signals[signal];
     if (!status.enabled && status.reason === "no-endpoint") {
@@ -387,11 +383,12 @@ function installErrorHandler(diagnostics: Diagnostics): void {
         return;
       }
       // one limit per kind of error; the kinds are few (the SDK's own classes)
-      let limit = limiters.get(name);
+      // (a program that invents error names without end shares one limit past the first few)
+      const key = limiters.has(name) || limiters.size < 32 ? name : "";
+      let limit = limiters.get(key);
       if (limit === undefined) {
-        if (limiters.size >= 32) return;
         limit = createRateLimiter(FAILURE_REPORT_INTERVAL_MILLIS);
-        limiters.set(name, limit);
+        limiters.set(key, limit);
       }
       limit((suppressed) => {
         diagnostics.report({
@@ -402,7 +399,8 @@ function installErrorHandler(diagnostics: Diagnostics): void {
             // some SDK errors quote the exporter's error, whose text comes from the far end
             ...(message !== "" &&
               !message.includes("OTLPExporterError") && {
-                detail: message.slice(0, 200),
+                // whole: diagnostics sanitizes it and only then cuts it to length
+                detail: message,
               }),
             ...(suppressed > 0 && { suppressed }),
           },
@@ -451,6 +449,7 @@ export function start(options: StartOptions = {}): PresetStatus {
     logLevel: process.env.OTEL_LOG_LEVEL,
     sinkFactory: options.diagnostics,
     redactText: redactor.text,
+    environment: process.env,
   });
 
   // from here on things are registered. The diagnostics logger goes first: the
@@ -461,6 +460,10 @@ export function start(options: StartOptions = {}): PresetStatus {
     suppressOverrideMessage: true,
   });
   installErrorHandler(diagnostics);
+  // held with everything else, so a start that fails below still shows them
+  for (const warning of config.warnings) {
+    diagnostics.report({ level: "warn", message: warning });
+  }
 
   let sdk: NodeSDK;
   let pipelines: Pipelines;
@@ -493,7 +496,7 @@ export function start(options: StartOptions = {}): PresetStatus {
     throw error;
   }
   diagnostics.activate();
-  reportStartup(diagnostics, config, pipelines.signals);
+  reportStartup(diagnostics, pipelines.signals);
 
   handle = {
     sdk,
@@ -575,8 +578,9 @@ export function getStatus(): PresetStatus {
 }
 
 /**
- * Test support, reached through the `/testing` entry: stop what is running and
- * forget it, so the next test can call `start()` again in the same process.
+ * Test support, used by the `/testing` kit's `stop()` (it is not exported
+ * itself): stop what is running and forget it, so the next test can start
+ * telemetry again in the same process.
  * It clears the API's global registrations, whoever made them.
  *
  * Everything global is undone synchronously, before the first await, so a

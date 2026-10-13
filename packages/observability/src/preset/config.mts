@@ -12,6 +12,8 @@
 
 import type { Attributes } from "@opentelemetry/api";
 
+import { shown } from "./diagnostics.mjs";
+
 export type Signal = "traces" | "metrics" | "logs";
 export const SIGNALS: readonly Signal[] = ["traces", "metrics", "logs"];
 
@@ -121,18 +123,6 @@ const SIGNAL_VAR: Record<Signal, string> = {
   metrics: "METRICS",
   logs: "LOGS",
 };
-
-/**
- * A setting's value as it may appear in a message. Only a short, plain token
- * is quoted. Anything else is not shown: a value pasted into the wrong
- * variable can be a URL with credentials in it.
- */
-const shown = (value: unknown): string =>
-  typeof value === "number" && Number.isFinite(value)
-    ? String(value)
-    : typeof value === "string" && /^[A-Za-z0-9_.,/-]{1,40}$/.test(value)
-      ? `"${value}"`
-      : "(a value that is not shown)";
 
 const nonBlank = (value: string | undefined): string | undefined => {
   const trimmed = value?.trim();

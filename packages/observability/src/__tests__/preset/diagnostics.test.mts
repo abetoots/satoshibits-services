@@ -1,3 +1,5 @@
+import { inspect } from "node:util";
+
 import { DiagLogLevel } from "@opentelemetry/api";
 import { describe, expect, it, vi } from "vitest";
 
@@ -6,6 +8,8 @@ import type { DiagnosticsEvent } from "../../preset/diagnostics.mjs";
 import {
   createDiagnostics,
   createRateLimiter,
+  scrubUrls,
+  shown,
   stderrSink,
 } from "../../preset/diagnostics.mjs";
 
@@ -106,6 +110,90 @@ describe("diagnostics", () => {
     expect(events[0]!.message).toBe(
       "failed at http://h.example, retrying (see https://docs.example). Done",
     );
+  });
+
+  it("keeps the bracket that closes an IPv6 host, and still leaves sentence punctuation", () => {
+    expect(scrubUrls("connect http://[::1]")).toBe("connect http://[::1]");
+    expect(scrubUrls("(see http://u:SENTINEL@[::1]:4318/p).")).toBe("(see http://[::1]:4318).");
+    expect(scrubUrls("[http://h.example/p]")).toBe("[http://h.example]");
+  });
+
+  it("sanitizes the whole text before cutting it: a long user-info never passes for a host", () => {
+    const { events, diagnostics } = collecting();
+    diagnostics.activate();
+    const url = `http://${"u".repeat(600)}:SENTINEL-PW@collector.example/path`;
+    diagnostics.diagLogger.error(`failed ${url}`, new Error(`again ${url}`));
+    diagnostics.report({ level: "error", message: "m", fields: { detail: `at ${url}` } });
+
+    expect(events[0]!.message).toBe(
+      "failed http://collector.example Error: again http://collector.example",
+    );
+    expect(events[1]!.fields).toEqual({ detail: "at http://collector.example" });
+  });
+
+  it("cuts what is left to a bounded length", () => {
+    const { events, diagnostics } = collecting();
+    diagnostics.activate();
+    diagnostics.report({ level: "error", message: "m".repeat(501), fields: { detail: "d".repeat(501) } });
+    expect(events[0]!.message).toBe(`${"m".repeat(500)}…`);
+    expect(events[0]!.fields).toEqual({ detail: `${"d".repeat(500)}…` });
+  });
+
+  it("never prints the value of a telemetry variable, however the SDK quotes it", () => {
+    const events: DiagnosticsEvent[] = [];
+    const header = " Basic SENTINEL-HEADER-VALUE ";
+    const quoted = `SENTINEL "it's"\nmultiline`;
+    const diagnostics = createDiagnostics({
+      sinkFactory: () => (event) => events.push(event),
+      environment: {
+        OTEL_EXPORTER_OTLP_TIMEOUT: header,
+        OTEL_EXPORTER_OTLP_COMPRESSION: quoted,
+        OBS_SOMETHING: "SENTINEL-OBS value",
+        OTEL_EXPORTER_OTLP_PROTOCOL: "http/jsonn",
+        UNRELATED: "an unrelated value",
+      },
+    });
+    diagnostics.activate();
+    // the three shapes the SDK uses: inspected, trimmed in quotes, and as an argument
+    diagnostics.diagLogger.warn(
+      `Unknown value ${inspect(header)} for OTEL_EXPORTER_OTLP_TIMEOUT, expected a number, using defaults`,
+    );
+    diagnostics.diagLogger.warn(
+      `Configuration: OTEL_EXPORTER_OTLP_TIMEOUT is invalid (actual: '${header.trim()}')`,
+    );
+    diagnostics.diagLogger.warn(`Unknown value ${inspect(quoted)} for X`, new Error(quoted));
+    diagnostics.report({ level: "warn", message: "m", fields: { detail: "SENTINEL-OBS value" } });
+    diagnostics.diagLogger.warn("protocol 'http/jsonn' and an unrelated value are left alone");
+
+    expect(JSON.stringify(events)).not.toContain("SENTINEL");
+    expect(events.map((e) => e.message)).toEqual([
+      "Unknown value '(a value that is not shown)' for OTEL_EXPORTER_OTLP_TIMEOUT, expected a number, using defaults",
+      "Configuration: OTEL_EXPORTER_OTLP_TIMEOUT is invalid (actual: '(a value that is not shown)')",
+      expect.stringMatching(/^Unknown value .\(a value that is not shown\). for X Error: \(a value that is not shown\)$/),
+      "m",
+      "protocol 'http/jsonn' and an unrelated value are left alone",
+    ]);
+    expect(events[3]!.fields).toEqual({ detail: "(a value that is not shown)" });
+  });
+
+  it("quotes a setting's value only when it is a plain token of at most 24 characters", () => {
+    expect(shown("parentbased_traceidratio")).toBe('"parentbased_traceidratio"');
+    expect(shown("a".repeat(24))).toBe(`"${"a".repeat(24)}"`);
+    expect(shown("a".repeat(25))).toBe("(a value that is not shown)");
+    expect(shown("")).toBe("(a value that is not shown)");
+    expect(shown("has space")).toBe("(a value that is not shown)");
+    expect(shown("a:b")).toBe("(a value that is not shown)");
+    expect(shown(0.5)).toBe("0.5");
+    expect(shown(Number.NaN)).toBe("(a value that is not shown)");
+    expect(shown({})).toBe("(a value that is not shown)");
+  });
+
+  it("describes a message that is not a string by its shape, like any argument", () => {
+    const { events, diagnostics } = collecting();
+    diagnostics.activate();
+    diagnostics.diagLogger.error({ secret: "SENTINEL" } as never);
+    diagnostics.diagLogger.error(new TypeError("bad") as never);
+    expect(events.map((e) => e.message)).toEqual(["{secret}", "TypeError: bad"]);
   });
 
   it("applies the redaction it is given to every message and text field", () => {

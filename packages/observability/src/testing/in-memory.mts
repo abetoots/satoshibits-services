@@ -27,7 +27,12 @@ import type { ReadableLogRecord } from "@opentelemetry/sdk-logs";
 import type { MetricData } from "@opentelemetry/sdk-metrics";
 import type { ReadableSpan } from "@opentelemetry/sdk-trace";
 
-import { forceFlush, resetForTesting, start } from "../preset/runtime.mjs";
+import {
+  forceFlush,
+  getStatus,
+  resetForTesting,
+  start,
+} from "../preset/runtime.mjs";
 
 export interface TestMetricPoint {
   attributes: Attributes;
@@ -82,11 +87,12 @@ export function startTestTelemetry(
     testExporters: { spanExporter, metricExporter, logRecordExporter },
   });
 
-  // after stop() the exporters are empty and flushing does nothing, so an
-  // accessor would report "nothing was emitted" for any test: refuse instead
+  // once stopped (by stop(), or by the preset's own shutdown()) the exporters
+  // are empty and flushing does nothing, so an accessor would report "nothing
+  // was emitted" for any test: refuse instead
   let stopped = false;
   const live = () => {
-    if (stopped) {
+    if (stopped || getStatus().state !== "running") {
       throw new Error(
         "@satoshibits/observability/testing: this test telemetry was stopped; start a new one",
       );
@@ -127,6 +133,8 @@ export function startTestTelemetry(
       logRecordExporter.reset();
     },
     stop: () => {
+      // a second call must not stop the telemetry a later test has started
+      if (stopped) return Promise.resolve();
       stopped = true;
       return resetForTesting();
     },

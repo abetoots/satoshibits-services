@@ -8,13 +8,17 @@
  * without telemetry: a mistyped variable must not stop a service from booting.
  */
 
-import { stderrSink } from "./preset/diagnostics.mjs";
+import { createDiagnostics } from "./preset/diagnostics.mjs";
 import { start } from "./preset/runtime.mjs";
 
 try {
   start();
 } catch (error) {
-  stderrSink({
+  // through diagnostics, so the reason is sanitized like any other text: an
+  // error from below the preset can quote a URL or a variable's value
+  const diagnostics = createDiagnostics({ environment: process.env });
+  diagnostics.activate();
+  diagnostics.report({
     level: "error",
     message: "telemetry was not started",
     fields: { reason: error instanceof Error ? error.message : String(error) },

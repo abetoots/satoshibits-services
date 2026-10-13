@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TestTelemetry } from "../../testing/in-memory.mjs";
 
-import { getStatus } from "../../preset.mjs";
+import { getStatus, shutdown } from "../../preset.mjs";
 import { startTestTelemetry } from "../../testing/in-memory.mjs";
 
 let telemetry: TestTelemetry | undefined;
@@ -234,6 +234,26 @@ describe("startTestTelemetry", () => {
     await expect(stopped.metrics()).rejects.toThrow(/was stopped/);
     await expect(stopped.metricPoints("x")).rejects.toThrow(/was stopped/);
     await expect(stopped.logRecords()).rejects.toThrow(/was stopped/);
+  });
+
+  it("refuses to answer after the preset's own shutdown() too", async () => {
+    telemetry = startTestTelemetry();
+    trace.getTracer("kit").startSpan("s").end();
+    await shutdown();
+
+    await expect(telemetry.spans()).rejects.toThrow(/was stopped/);
+    await expect(telemetry.metrics()).rejects.toThrow(/was stopped/);
+    await expect(telemetry.logRecords()).rejects.toThrow(/was stopped/);
+  });
+
+  it("a second stop() of an old kit leaves a newer kit running", async () => {
+    const old = startTestTelemetry();
+    await old.stop();
+    telemetry = startTestTelemetry();
+    await old.stop();
+
+    trace.getTracer("kit").startSpan("seen by the newer kit").end();
+    expect((await telemetry.spans()).map((s) => s.name)).toEqual(["seen by the newer kit"]);
   });
 
   it("refuses a second start while one is running", () => {
