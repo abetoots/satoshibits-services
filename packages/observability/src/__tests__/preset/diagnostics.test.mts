@@ -1,3 +1,5 @@
+import { runInNewContext } from "node:vm";
+
 import { DiagLogLevel } from "@opentelemetry/api";
 import { describe, expect, it, vi } from "vitest";
 
@@ -293,6 +295,16 @@ describe("diagnostics", () => {
     expect(shown(0.5)).toBe("0.5");
     expect(shown(Number.NaN)).toBe("(a value that is not shown)");
     expect(shown({})).toBe("(a value that is not shown)");
+  });
+
+  it("prints an error from another realm like any other error argument, sanitized", () => {
+    const { events, diagnostics } = collecting();
+    diagnostics.activate();
+    // not an `instanceof` this realm's Error, as an error from a vm context or another worker is not
+    const foreign: unknown = runInNewContext('new TypeError("bad http://u:SENTINEL@h.example/p")');
+    expect(foreign instanceof Error).toBe(false);
+    diagnostics.diagLogger.error("export failed", foreign);
+    expect(events.map((e) => e.message)).toEqual(["export failed TypeError: bad http://h.example"]);
   });
 
   it("describes a message that is not a string by its shape, like any argument", () => {
