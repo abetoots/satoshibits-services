@@ -25,6 +25,8 @@
  * raised earlier are held (bounded) and delivered then.
  */
 
+import { types } from "node:util";
+
 import { DiagLogLevel } from "@opentelemetry/api";
 
 import type { DiagLogger } from "@opentelemetry/api";
@@ -209,6 +211,18 @@ function describeArgument(argument: unknown): string {
   return `[${typeof argument}]`;
 }
 
+/**
+ * A field's value by shape alone. Unlike a logger argument, an error here is
+ * not free text the SDK chose to print: its message is content, and is left out.
+ */
+function shapeOf(value: unknown): string {
+  try {
+    return types.isNativeError(value) ? "[error]" : describeArgument(value);
+  } catch {
+    return "[unreadable]";
+  }
+}
+
 /** an argument that cannot even be inspected (a throwing proxy) costs its own place, not the line */
 function described(argument: unknown): string {
   try {
@@ -252,7 +266,7 @@ export function createDiagnostics(
           // numbers and flags as they are; text sanitized; anything else by shape, never by content
           typeof value === "number" || typeof value === "boolean"
             ? value
-            : clean(typeof value === "string" ? value : described(value)),
+            : clean(typeof value === "string" ? value : shapeOf(value)),
         ]),
       ),
     }),

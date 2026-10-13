@@ -326,6 +326,24 @@ describe("rejected configuration", () => {
     expect(registered.stderr).not.toContain("collector.example");
   });
 
+  it.each(["start", "register"] as const)(
+    "%s keeps an endpoint's password out of stderr when the SDK would have quoted the variable",
+    async (start) => {
+      // accepted by the preset (it trims; a URL parses from this spelling), but the SDK's own
+      // reading of the variable does not parse, and its warning quotes the whole value
+      const run = await runChild(
+        { start, spans: 1 },
+        { ...NAME, OTEL_EXPORTER_OTLP_ENDPOINT: `http:\\\\user:SENTINEL@127.0.0.1:${sink.port} ` },
+      );
+
+      // the endpoint is in use: the span arrived
+      expect(sink.spans().map((s) => s.name)).toContain("child-span-0");
+      expect(run.stderr).not.toContain("SENTINEL");
+      // and the SDK said nothing about a URL it was never asked to read
+      expect(run.stderrLines.filter((line) => String(line.msg).startsWith("Configuration:"))).toEqual([]);
+    },
+  );
+
   it("the register entry starts from the environment alone", async () => {
     const run = await runChild({ start: "register" }, endpoint());
     expect(run.result.status.state).toBe("shut-down");

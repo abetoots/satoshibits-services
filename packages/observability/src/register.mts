@@ -36,8 +36,12 @@ try {
     }
   } catch {
     // an error that cannot even be read; the process still carries on
-    process.stderr.write(
-      '{"level":"error","source":"opentelemetry","msg":"telemetry was not started"}\n',
-    );
+    try {
+      process.stderr.write(
+        '{"level":"error","source":"opentelemetry","msg":"telemetry was not started"}\n',
+      );
+    } catch {
+      // nothing left to say it with
+    }
   }
 }

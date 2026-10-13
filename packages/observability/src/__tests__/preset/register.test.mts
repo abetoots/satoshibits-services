@@ -22,6 +22,55 @@ function captureStderr(): () => Record<string, unknown>[] {
 }
 
 describe("register", () => {
+  const FALLBACK = { level: "error", source: "opentelemetry", msg: "telemetry was not started" };
+  const unreadable = (): unknown =>
+    new Proxy(
+      {},
+      {
+        getPrototypeOf: () => {
+          throw new Error("SENTINEL from a proxy");
+        },
+      },
+    );
+  const startThrows = (thrown: () => unknown) => {
+    vi.resetModules();
+    vi.doMock("../../preset/runtime.mjs", () => ({
+      start: () => {
+        throw thrown();
+      },
+    }));
+  };
+
+  it("says so, and carries on, when what start() threw is not an error", async () => {
+    startThrows(() => "SENTINEL thrown as a string");
+    const lines = captureStderr();
+
+    await expect(import("../../register.mjs")).resolves.toBeDefined();
+
+    expect(lines().map((line) => [line.msg, line.reason])).toEqual([
+      ["telemetry was not started", "start() threw a value that is not an error"],
+    ]);
+  });
+
+  it("falls back to a fixed line, and carries on, when what start() threw cannot even be examined", async () => {
+    startThrows(unreadable);
+    const lines = captureStderr();
+
+    await expect(import("../../register.mjs")).resolves.toBeDefined();
+
+    expect(lines()).toEqual([FALLBACK]);
+  });
+
+  it("carries on even when that line cannot be written either", async () => {
+    startThrows(unreadable);
+    const write = vi.spyOn(process.stderr, "write").mockImplementation(() => {
+      throw new Error("stderr is closed");
+    });
+
+    await expect(import("../../register.mjs")).resolves.toBeDefined();
+    expect(write).toHaveBeenCalled();
+  });
+
   it("reports every problem of a configuration error on a line of its own, once", async () => {
     vi.resetModules();
     const { PresetConfigError } = await import("../../preset/config.mjs");
