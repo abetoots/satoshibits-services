@@ -147,7 +147,7 @@ function nameOf(error: unknown): string {
  *
  * The answer is the result callback. A returned promise that fulfils is not
  * taken for one: an exporter that neither calls back nor rejects is left to
- * the timeout of the processor that called.
+ * the processor that called (its export timeout, where it has one).
  *
  * Run one export. A throw from redaction or from the exporter itself is
  * reported like any failed export and answered with a failed result, so the
