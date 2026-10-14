@@ -13,6 +13,9 @@
  * `RESULT {json}` line. Everything the loggers wrote goes to stdout as one
  * JSON line each.
  *
+ * `OBS_FIXTURE_DNS_LOOKUP=1` also resolves `localhost` by name once, for
+ * the dns instrumentation's partial-override case.
+ *
  * `OBS_FIXTURE_EARLY_LOGGER=1` also logs a line with the logger that
  * fixtures/early-logger.mjs created before start() (a preload of the test's
  * own imports that module first).
@@ -20,6 +23,7 @@
 
 import { shutdown } from "@satoshibits/observability/preset";
 import bunyan from "bunyan";
+import dns from "node:dns";
 import express from "express";
 import http from "node:http";
 import net from "node:net";
@@ -52,6 +56,9 @@ const early =
 
 // a censor of pino's own: the record at the sink must be the line pino finished, not the call's arguments
 const pinoLogger = pino({ redact: { paths: ["note"], censor: "[pino-censored]" } });
+if (process.env.OBS_FIXTURE_DNS_LOOKUP === "1") await dns.promises.lookup("localhost");
+
+// a consumer using winston also needs @opentelemetry/winston-transport for its lines to be sent over OTLP
 const winstonLogger = winston.createLogger({
   format: winston.format.json(),
   transports: [new winston.transports.Console()],
