@@ -721,6 +721,8 @@ describe("startTestTelemetry", () => {
       expect(fieldsOf(marked!.links[0]!.context)).toEqual(fieldsOf(control[0]!.links[0]!.context));
       expect(fieldsOf(marked!.links[0]!.context).traceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
       expect(marked!.links[0]!.context.traceState?.serialize()).toBe("probe=link.traceState,vendor=secret");
+      // fieldsOf() reads an absent key as undefined: the inherited isRemote is carried as a key of its own
+      expect(Object.hasOwn(marked!.links[0]!.context, "isRemote")).toBe(true);
       expect(serialised(policy)).toEqual(serialised(control));
     });
 
@@ -735,6 +737,9 @@ describe("startTestTelemetry", () => {
       expect(fieldsOf(marked!.spanContext())).toEqual(fieldsOf(control[0]!.spanContext()));
       expect(marked!.spanContext().traceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
       expect(marked!.spanContext().traceState?.serialize()).toBe("probe=span.traceState,vendor=secret");
+      // the SDK gives a span's own context no isRemote, and the rebuilt one adds none
+      expect(Object.hasOwn(control[0]!.spanContext(), "isRemote")).toBe(false);
+      expect(Object.hasOwn(marked!.spanContext(), "isRemote")).toBe(false);
       expect(serialised(policy)).toEqual(serialised(control));
     });
 
