@@ -2376,20 +2376,59 @@ describe("forceFlush and shutdown", () => {
     await resetForTesting().catch(() => undefined);
   });
 
-  it.each([
-    ["a negative timeout", -5, "0"],
-    ["NaN", Number.NaN, "10000"],
-    ["a value that is not a number", "abc" as unknown as number, "10000"],
-  ])("forceFlush with %s gives up at the value it is read as, and never says NaN", async (_what, given, shown) => {
+  it.each<[string, unknown, number]>([
+    ["a negative timeout", -5, 0],
+    ["NaN", Number.NaN, 10_000],
+    ["a text that is not a number", "abc", 10_000],
+    ["a text that is a number", "5", 10_000],
+    ["null", null, 10_000],
+    ["false", false, 10_000],
+  ])("forceFlush with %s gives up at the value it is read as, and never says NaN", async (_what, given, millis) => {
     const { exporter } = heldMetricExporter();
     startWith({ metricExporter: exporter });
     metrics.getMeter("m").createCounter("c").add(1);
+    // only the timers: the export is held, so nothing settles but the call's own deadline
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      let error: unknown;
+      const flushing = forceFlush(given as number).catch((caught: unknown) => (error = caught));
+      if (millis > 0) {
+        await vi.advanceTimersByTimeAsync(millis - 1);
+        expect(error).toBeUndefined();
+      }
+      await vi.advanceTimersByTimeAsync(1);
+      await flushing;
+      expect((error as Error).message).toBe(
+        `@satoshibits/observability: forceFlush did not finish within ${millis} ms`,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
-    const error: unknown = await forceFlush(given).catch((caught: unknown) => caught);
-    expect((error as Error).message).toBe(
-      `@satoshibits/observability: forceFlush did not finish within ${shown} ms`,
-    );
-  }, 15_000);
+  it("forceFlush never resolves after its deadline, even when the work finished while the timer was overdue", async () => {
+    const pending: ((result: ExportResult) => void)[] = [];
+    startWith({
+      spanExporter: {
+        export: (_spans: unknown, resultCallback: (result: ExportResult) => void) => {
+          pending.push(resultCallback);
+        },
+        shutdown: () => Promise.resolve(),
+      },
+    });
+    trace.getTracer("t").startSpan("held").end();
+
+    const flushing = forceFlush(10);
+    // synchronous work holds the event loop past the deadline; the export then succeeds before the
+    // overdue timer can run
+    const until = Date.now() + 50;
+    while (Date.now() < until) {
+      // busy
+    }
+    pending.shift()!({ code: ExportResultCode.SUCCESS });
+
+    await expect(flushing).rejects.toThrow(/forceFlush did not finish within 10 ms/);
+  });
 
   it("forceFlush with a timeout larger than a timer can hold waits for the export instead of giving up at once", async () => {
     const { exporter, answer } = heldMetricExporter();
@@ -2484,9 +2523,38 @@ describe("forceFlush and shutdown", () => {
       expect(slow.logRecords().map((record) => record.body)).toEqual(["held line"]);
     });
 
+    it("a shutdown whose wait for a running flush runs out rejects at its deadline, and still shuts the processors down", async () => {
+      await startSlowLogs(600);
+      const processorShutdown = vi.spyOn(BatchLogRecordProcessor.prototype, "shutdown");
+
+      const flushing = forceFlush().catch(() => undefined);
+      const started = Date.now();
+      await expect(shutdown(100)).rejects.toThrow(/shutdown did not finish within 100 ms/);
+      expect(Date.now() - started).toBeLessThan(400);
+
+      await flushing;
+      await vi.waitFor(() => expect(processorShutdown).toHaveBeenCalled());
+      expect(getStatus().state).toBe("shut-down");
+    });
+
+    it("a shutdown that waited for a running flush has only the rest of its deadline for its own work", async () => {
+      await startSlowLogs(600);
+
+      const flushing = forceFlush().catch(() => undefined);
+      // only the shutdown can send this, and the sink holds its answer for 600 ms
+      logs.getLogger("l").emit({ body: "late line" });
+      const started = Date.now();
+      await expect(shutdown(700)).rejects.toThrow(/shutdown did not finish within 700 ms/);
+      const took = Date.now() - started;
+      // about 700 ms in all: not 600 for the flush and then 700 more
+      expect(took).toBeGreaterThanOrEqual(650);
+      expect(took).toBeLessThan(1000);
+      await flushing;
+    });
+
     it("an export that fails while a shutdown waits for a running flush is the shutdown's failure too", async () => {
       const slow = await startSlowLogs(600);
-      slow.respondWith({ status: 500, delayMs: 600 });
+      slow.respondWith({ status: 500, statusText: "Status-Text-SENTINEL", delayMs: 600 });
 
       const flushing = forceFlush().catch((caught: unknown) => caught);
       // the shutdown's call began before the export failed: the failure is its own as well
@@ -2496,6 +2564,7 @@ describe("forceFlush and shutdown", () => {
       const error = await stopping;
       expect(error).toBeInstanceOf(TelemetryExportError);
       expect((error as Error).message).toContain("logs");
+      expect(JSON.stringify(error) + String(error) + (error as Error).stack).not.toContain("SENTINEL");
     });
 
     it("a throwing policy on the log path makes the flush reject with the error's name only", async () => {
