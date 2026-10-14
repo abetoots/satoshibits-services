@@ -7,8 +7,8 @@
  * Failures are injected at each stage by making one of the API's own
  * registration functions throw, after it has registered (the SDK registers
  * the instrumentations first, then the context manager, the propagator and
- * the meter, tracer and logger providers), or by an instrumentation whose
- * enable() throws.
+ * the meter, tracer and logger providers; the preset installs the loader
+ * hook last), or by an instrumentation whose enable() throws.
  */
 
 import { context, diag, DiagLogLevel, metrics, propagation, ProxyTracerProvider, trace } from "@opentelemetry/api";
@@ -19,6 +19,7 @@ import { InMemoryLogRecordExporter, LoggerProvider } from "@opentelemetry/sdk-lo
 import { AggregationTemporality, InMemoryMetricExporter, MeterProvider } from "@opentelemetry/sdk-metrics";
 import { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } from "@opentelemetry/sdk-trace";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 
 import type { DiagnosticsEvent } from "../../preset/diagnostics.mjs";
 import type { Instrumentation, InstrumentationConfig } from "@opentelemetry/instrumentation";
@@ -41,15 +42,14 @@ class ProbeInstrumentation implements Instrumentation {
   readonly instrumentationName = "probe";
   readonly instrumentationVersion = "1.0.0";
   enabled = true;
-  constructor(
-    private readonly faults: { enable?: boolean; disable?: boolean } = {},
-  ) {}
+  readonly enableError = new Error("enable failed");
+  constructor(private readonly faults: { enable?: boolean; disable?: boolean } = {}) {}
   enable(): void {
-    if (this.faults.enable) throw new Error("enable failed");
+    if (this.faults.enable) throw this.enableError;
     this.enabled = true;
   }
   disable(): void {
-    if (this.faults.disable) throw new Error("disable failed");
+    if (this.faults.disable) throw new Error("disable failed SENTINEL");
     this.enabled = false;
   }
   // the providers and settings are of no interest to the probe
@@ -88,10 +88,10 @@ function registrations() {
   };
 }
 
-const startOptions = (events: DiagnosticsEvent[] = []) => ({
+const startOptions = (events: DiagnosticsEvent[] = [], loaderHook = false) => ({
   serviceName: "rollback",
   instrumentations: false as const,
-  loaderHook: false,
+  loaderHook,
   redaction: false as const,
   diagnostics: () => (event: DiagnosticsEvent) => events.push(event),
   // all three, so that every provider is registered
@@ -104,15 +104,102 @@ const startOptions = (events: DiagnosticsEvent[] = []) => ({
 
 const INJECTED = "injected failure";
 
-/** make one registration function register, then throw */
-function failAfter<T extends object, K extends keyof T>(api: T, name: K) {
+/** make one registration function register, then throw `error` */
+function failAfter<T extends object, K extends keyof T>(api: T, name: K, error = new Error(INJECTED)) {
   const original = (api[name] as (...args: unknown[]) => unknown).bind(api);
   return vi.spyOn(api, name as never).mockImplementation(((...args: unknown[]) => {
-    const registered = original(...args);
-    void registered;
-    throw new Error(INJECTED);
+    original(...args);
+    throw error;
   }) as never);
 }
+
+/** make Node's loader-hook registration throw `error` until the returned function is called */
+function failLoaderHook(error: Error): () => void {
+  const nodeModule = createRequire(import.meta.url)("node:module") as { register: unknown };
+  const original = nodeModule.register;
+  nodeModule.register = () => {
+    throw error;
+  };
+  // the ESM bindings of a built-in follow its CommonJS exports only when told to
+  syncBuiltinESMExports();
+  return () => {
+    nodeModule.register = original;
+    syncBuiltinESMExports();
+  };
+}
+
+/** a stage, and how to make the start fail just after it with `error`; returns the error start() throws */
+type Stage = [string, (error: Error, probes: ProbeInstrumentation[]) => { thrown: Error; loaderHook?: boolean }];
+const stages: Stage[] = [
+  [
+    "the instrumentations (one fails to enable)",
+    (_error, probes) => {
+      const failing = new ProbeInstrumentation({ enable: true });
+      probes.push(failing);
+      return { thrown: failing.enableError };
+    },
+  ],
+  ["the context manager", (error) => (failAfter(context, "setGlobalContextManager", error), { thrown: error })],
+  ["the propagator", (error) => (failAfter(propagation, "setGlobalPropagator", error), { thrown: error })],
+  ["the meter provider", (error) => (failAfter(metrics, "setGlobalMeterProvider", error), { thrown: error })],
+  ["the tracer provider", (error) => (failAfter(trace, "setGlobalTracerProvider", error), { thrown: error })],
+  ["the logger provider", (error) => (failAfter(logs, "setGlobalLoggerProvider", error), { thrown: error })],
+  [
+    "the loader hook, the last",
+    (error) => {
+      restoreLoaderHook = failLoaderHook(error);
+      return { thrown: error, loaderHook: true };
+    },
+  ],
+];
+let restoreLoaderHook: (() => void) | undefined;
+afterEach(() => {
+  restoreLoaderHook?.();
+  restoreLoaderHook = undefined;
+});
+
+/** start, failing just after `stage`; returns the probes */
+function failAt(stage: Stage, events: DiagnosticsEvent[] = []): ProbeInstrumentation[] {
+  const probes = [new ProbeInstrumentation()];
+  const { thrown, loaderHook } = stage[1](new Error(INJECTED), probes);
+  instrumentationsForTesting(probes);
+  let caught: unknown;
+  try {
+    start(startOptions(events, loaderHook));
+  } catch (error) {
+    caught = error;
+  }
+  // the caller gets the very error the stage failed with
+  expect(caught).toBe(thrown);
+  vi.restoreAllMocks();
+  restoreLoaderHook?.();
+  restoreLoaderHook = undefined;
+  instrumentationsForTesting(undefined);
+  return probes;
+}
+
+/** someone else's tracer, meter and logger providers, context manager and propagator */
+function registerForeign() {
+  const foreign = {
+    tracerProvider: new TracerProvider({
+      spanProcessors: [new SimpleSpanProcessor({ exporter: new InMemorySpanExporter() })],
+    }),
+    meterProvider: new MeterProvider(),
+    loggerProvider: new LoggerProvider(),
+    contextManager: new AsyncLocalStorageContextManager().enable(),
+    propagator: new W3CTraceContextPropagator(),
+  };
+  trace.setGlobalTracerProvider(foreign.tracerProvider);
+  metrics.setGlobalMeterProvider(foreign.meterProvider);
+  logs.setGlobalLoggerProvider(foreign.loggerProvider);
+  context.setGlobalContextManager(foreign.contextManager);
+  propagation.setGlobalPropagator(foreign.propagator);
+  return foreign;
+}
+
+/** the undo's own reports: what it said about itself */
+const undoReports = (events: DiagnosticsEvent[]) =>
+  events.filter((event) => event.message.includes("failed start"));
 
 /** nothing of the preset's left on the diagnostics API or the error handler */
 function expectDiagnosticsGivenBack(events: DiagnosticsEvent[]): void {
@@ -128,98 +215,57 @@ function expectDiagnosticsGivenBack(events: DiagnosticsEvent[]): void {
 }
 
 describe("a start() that fails part of the way", () => {
-  const stages: [string, () => void][] = [
-    ["the instrumentations (one fails to enable)", () => undefined],
-    ["the context manager", () => failAfter(context, "setGlobalContextManager")],
-    ["the propagator", () => failAfter(propagation, "setGlobalPropagator")],
-    ["the meter provider", () => failAfter(metrics, "setGlobalMeterProvider")],
-    ["the tracer provider", () => failAfter(trace, "setGlobalTracerProvider")],
-    ["the logger provider, the last", () => failAfter(logs, "setGlobalLoggerProvider")],
-  ];
-
-  it.each(stages)("after %s: leaves nothing of its own registered, and can be started again", (stage, inject) => {
-    const enabledBefore = new ProbeInstrumentation();
-    const failing = stage.startsWith("the instrumentations")
-      ? [enabledBefore, new ProbeInstrumentation({ enable: true })]
-      : [enabledBefore];
-    instrumentationsForTesting(failing);
-    inject();
+  it.each(stages)("after %s: leaves nothing of its own registered, and can be started again", async (...stage) => {
     const before = registrations();
     const events: DiagnosticsEvent[] = [];
 
-    expect(() => start(startOptions(events))).toThrow(
-      stage.startsWith("the instrumentations") ? "enable failed" : INJECTED,
-    );
-    vi.restoreAllMocks();
+    const probes = failAt(stage, events);
 
-    expect(registrations()).toEqual(before);
     for (const [key, value] of Object.entries(registrations())) {
       expect(value, key).toBe(before[key as keyof typeof before]);
     }
-    expect(enabledBefore.enabled).toBe(false);
+    expect(probes[0]!.enabled).toBe(false);
     expect(trace.getTracer("t").startSpan("s").isRecording()).toBe(false);
     expectDiagnosticsGivenBack(events);
+    expect(undoReports(events)).toEqual([]);
     expect(getStatus().state).toBe("not-started");
+    expect(getStatus().loaderHook).toBe(false);
 
     // and it can be started again
-    instrumentationsForTesting(undefined);
     const telemetry = startTestTelemetry();
     trace.getTracer("t").startSpan("after").end();
-    return telemetry.spans().then((spans) => {
-      expect(spans.map((s) => s.name)).toEqual(["after"]);
-    });
+    expect((await telemetry.spans()).map((s) => s.name)).toEqual(["after"]);
   });
 
-  it("leaves a tracer provider, context manager and propagator registered by someone else exactly as they were", () => {
-    const foreignTracerProvider = new TracerProvider({
-      spanProcessors: [new SimpleSpanProcessor({ exporter: new InMemorySpanExporter() })],
-    });
-    const foreignContextManager = new AsyncLocalStorageContextManager().enable();
-    const foreignPropagator = new W3CTraceContextPropagator();
-    const foreignMeterProvider = new MeterProvider();
-    const foreignLoggerProvider = new LoggerProvider();
-    metrics.setGlobalMeterProvider(foreignMeterProvider);
-    logs.setGlobalLoggerProvider(foreignLoggerProvider);
-    trace.setGlobalTracerProvider(foreignTracerProvider);
-    context.setGlobalContextManager(foreignContextManager);
-    propagation.setGlobalPropagator(foreignPropagator);
-    const before = registrations();
-    const probe = new ProbeInstrumentation();
-    instrumentationsForTesting([probe]);
-    // watched, called through: what the API answered the SDK
-    const tracerRegistration = vi.spyOn(trace, "setGlobalTracerProvider");
-    failAfter(logs, "setGlobalLoggerProvider");
+  it.each(stages)(
+    "after %s: leaves providers, a context manager and a propagator registered by someone else exactly as they were",
+    (...stage) => {
+      const foreign = registerForeign();
 
-    expect(() => start(startOptions())).toThrow(INJECTED);
+      const probes = failAt(stage);
 
-    // the API refused the SDK's tracer provider: the foreign one was never displaced
-    expect(tracerRegistration.mock.results.map((result): unknown => result.value)).toEqual([false]);
-    vi.restoreAllMocks();
-    expect(registrations().tracerProvider).toBe(foreignTracerProvider);
-    expect(registrations().contextManager).toBe(foreignContextManager);
-    expect(registrations().propagator).toBe(foreignPropagator);
-    expect(metrics.getMeterProvider()).toBe(foreignMeterProvider);
-    expect(logs.getLoggerProvider()).toBe(foreignLoggerProvider);
-    expect(registrations()).toEqual(before);
-    // and what the preset did register is gone
-    expect(probe.enabled).toBe(false);
-  });
+      for (const [key, value] of Object.entries(registrations())) {
+        expect(value, key).toBe(foreign[key as keyof typeof foreign]);
+      }
+      expect(probes[0]!.enabled).toBe(false);
+    },
+  );
 
-  it("when it cannot be fully undone, says so, and every later start() refuses", () => {
-    instrumentationsForTesting([new ProbeInstrumentation({ disable: true })]);
-    failAfter(logs, "setGlobalLoggerProvider");
+  it("when an instrumentation cannot be disabled, says so once, without the error's text, and every later start() refuses", () => {
     const events: DiagnosticsEvent[] = [];
+    const stuck = new ProbeInstrumentation({ disable: true });
+    instrumentationsForTesting([stuck]);
+    failAfter(logs, "setGlobalLoggerProvider");
 
     expect(() => start(startOptions(events))).toThrow(INJECTED);
     vi.restoreAllMocks();
-    expect(events.map((event) => event.message)).toContainEqual(
-      expect.stringContaining("could not be fully undone"),
-    );
-
     instrumentationsForTesting(undefined);
-    expect(() => start(startOptions())).toThrow(
-      /an earlier start\(\) failed and could not be fully undone/,
-    );
+
+    expect(undoReports(events).map((event) => event.message)).toEqual([
+      expect.stringContaining("could not be fully undone"),
+    ]);
+    expect(JSON.stringify(events)).not.toContain("SENTINEL");
+    expect(() => start(startOptions())).toThrow(/an earlier start\(\) failed and could not be fully undone/);
     expect(() => startTestTelemetry()).toThrow(/could not be fully undone/);
   });
 });
@@ -267,11 +313,17 @@ describe("what a failed start built", () => {
       ).toThrow(INJECTED);
       vi.restoreAllMocks();
 
-      // the undo may send what was buffered once; after that, nothing
-      await sleep(400);
-      const settled = sink.requestsTo("/v1/metrics").length;
-      await sleep(400);
-      expect(sink.requestsTo("/v1/metrics").length).toBe(settled);
+      // the positive control: the reader did export (its final collection, as the undo stops it)
+      await sink.waitFor(() => sink.requestsTo("/v1/metrics").length > 0, 5000);
+      // then the count settles: read it until it stops changing, over several export intervals
+      let count = -1;
+      for (let round = 0; round < 10 && count !== sink.requestsTo("/v1/metrics").length; round++) {
+        count = sink.requestsTo("/v1/metrics").length;
+        await sleep(350);
+      }
+      expect(sink.requestsTo("/v1/metrics").length).toBe(count);
+      await sleep(350);
+      expect(sink.requestsTo("/v1/metrics").length).toBe(count);
     } finally {
       await sink.close();
     }
@@ -295,22 +347,31 @@ describe("the API's readers for the context manager and the propagator", () => {
     expect(registrations().propagator).toBe(propagator);
   });
 
-  it("when one is missing, start() does not throw for it; that registration is left alone and the gap reported", () => {
-    // as an API version without the reader would be
-    Object.defineProperty(context, "_getContextManager", { value: undefined, configurable: true });
-    try {
-      failAfter(logs, "setGlobalLoggerProvider");
+  it.each([
+    ["context manager", context, "_getContextManager"],
+    ["propagator", propagation, "_getGlobalPropagator"],
+  ] as const)(
+    "when the %s reader is missing: start() throws its own failure, leaves that one alone and says so",
+    (what, api, reader) => {
+      const before = registrations();
+      // as an API version without the reader would be
+      Object.defineProperty(api, reader, { value: undefined, configurable: true });
       const events: DiagnosticsEvent[] = [];
-
-      expect(() => start(startOptions(events))).toThrow(INJECTED);
-      vi.restoreAllMocks();
-      expect(events.map((event) => event.message)).toContainEqual(
-        expect.stringContaining("context manager"),
-      );
-    } finally {
-      delete (context as unknown as Record<string, unknown>)._getContextManager;
-    }
-    // what could be checked was undone
-    expect(metrics.getMeterProvider()).not.toBeInstanceOf(MeterProvider);
-  });
+      try {
+        failAfter(logs, "setGlobalLoggerProvider");
+        expect(() => start(startOptions(events))).toThrow(INJECTED);
+        vi.restoreAllMocks();
+      } finally {
+        delete (api as unknown as Record<string, unknown>)[reader];
+      }
+      const key = what === "context manager" ? "contextManager" : "propagator";
+      // the SDK's is still registered: it could not be told from someone else's
+      expect(registrations()[key]).not.toBe(before[key]);
+      // what could be checked was undone
+      expect(registrations().meterProvider).toBe(before.meterProvider);
+      expect(undoReports(events).map((event) => event.message)).toEqual([
+        expect.stringContaining(`could not check the ${what}`),
+      ]);
+    },
+  );
 });

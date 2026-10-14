@@ -1694,8 +1694,12 @@ describe("startTestTelemetry", () => {
       const unhandled = await unhandledDuring(async () => {
         metrics.getMeter("a scope").createCounter("c").add(1);
         logs.getLogger("a scope").emit({ body: "a line" });
-        // the metric reader swallows the failed export its flush began; the preset's flush rejects
-        await expect(running.metrics()).rejects.toThrow(/metrics/);
+        // the metric reader swallows the failed export its flush began; the preset's flush rejects,
+        // naming the signal and the error's kind, and nothing of its text
+        const metricsError: unknown = await running.metrics().catch((caught: unknown) => caught);
+        expect(metricsError).toBeInstanceOf(TelemetryExportError);
+        expect((metricsError as Error).message).toContain("metrics");
+        expect(JSON.stringify(metricsError) + String(metricsError)).not.toContain("SENTINEL");
         // a test log record is exported (and failed) as it was emitted, before the read's flush:
         // that flush is not failed by it. It flushes every signal, so the metric export fails again
         const error: unknown = await running.logRecords().catch((caught: unknown) => caught);
@@ -2375,6 +2379,7 @@ describe("forceFlush and shutdown", () => {
   it.each([
     ["a negative timeout", -5, "0"],
     ["NaN", Number.NaN, "10000"],
+    ["a value that is not a number", "abc" as unknown as number, "10000"],
   ])("forceFlush with %s gives up at the value it is read as, and never says NaN", async (_what, given, shown) => {
     const { exporter } = heldMetricExporter();
     startWith({ metricExporter: exporter });
@@ -2479,25 +2484,46 @@ describe("forceFlush and shutdown", () => {
       expect(slow.logRecords().map((record) => record.body)).toEqual(["held line"]);
     });
 
-    it("a flush that timed out is still waited for: a shutdown after it sends what was emitted since", async () => {
+    it("an export that fails while a shutdown waits for a running flush is the shutdown's failure too", async () => {
       const slow = await startSlowLogs(600);
+      slow.respondWith({ status: 500, delayMs: 600 });
 
-      await expect(forceFlush(100)).rejects.toThrow(/forceFlush did not finish within 100 ms/);
-      // the processor is still flushing the first line; only a call made after that is done sends this
-      logs.getLogger("l").emit({ body: "late line" });
-      await expect(shutdown()).resolves.toBeUndefined();
+      const flushing = forceFlush().catch((caught: unknown) => caught);
+      // the shutdown's call began before the export failed: the failure is its own as well
+      const stopping = shutdown().catch((caught: unknown) => caught);
 
-      expect(slow.logRecords().map((record) => record.body)).toEqual(["held line", "late line"]);
+      expect(await flushing).toBeInstanceOf(TelemetryExportError);
+      const error = await stopping;
+      expect(error).toBeInstanceOf(TelemetryExportError);
+      expect((error as Error).message).toContain("logs");
     });
 
-    it("a flush that timed out is still waited for: a forceFlush right after it sends what was emitted since", async () => {
-      const slow = await startSlowLogs(600);
+    it("a throwing policy on the log path makes the flush reject with the error's name only", async () => {
+      sink = await startOtlpSink();
+      vi.stubEnv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", `${sink.url}/v1/logs`);
+      vi.stubEnv("OTEL_LOGS_EXPORTER", "otlp");
+      vi.stubEnv("OTEL_TRACES_EXPORTER", "none");
+      vi.stubEnv("OTEL_METRICS_EXPORTER", "none");
+      vi.stubEnv("OTEL_BLRP_SCHEDULE_DELAY", "60000");
+      start({
+        serviceName: "lifecycle",
+        instrumentations: false,
+        loaderHook: false,
+        diagnostics: () => () => undefined,
+        redaction: {
+          ...createProbePolicy(),
+          logRecord: () => {
+            throw Object.assign(new Error("policy SENTINEL"), { name: "PolicyFault", code: "SENTINEL_CODE" });
+          },
+        },
+      });
+      logs.getLogger("l").emit({ body: "a line" });
 
-      await expect(forceFlush(100)).rejects.toThrow(/forceFlush did not finish within 100 ms/);
-      logs.getLogger("l").emit({ body: "late line" });
-      await expect(forceFlush()).resolves.toBeUndefined();
-
-      expect(slow.logRecords().map((record) => record.body)).toEqual(["held line", "late line"]);
+      const error: unknown = await forceFlush().catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(TelemetryExportError);
+      expect((error as Error).message).toContain("logs: PolicyFault");
+      expect(JSON.stringify(error) + String(error) + (error as Error).stack).not.toContain("SENTINEL");
+      expect(sink.requestsTo("/v1/logs")).toEqual([]);
     });
 
     it("a shutdown that starts while a flush is running waits for it, and then shuts down", async () => {
