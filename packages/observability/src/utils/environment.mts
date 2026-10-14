@@ -2,8 +2,7 @@
 /**
  * Environment detection utilities
  *
- * Provides reliable detection of runtime environment (Node.js vs Browser)
- * to enable the unified SmartClient API.
+ * Provides detection of the runtime environment for the SmartClient API.
  */
 
 // Declare non-standard or environment-specific globals to make TypeScript aware of them.
@@ -11,30 +10,10 @@
 declare const Deno: { version?: { deno?: string } } | undefined;
 
 /**
- * Detect the current runtime environment
+ * Detect the current runtime environment. Node.js is the only runtime the
+ * library supports: the browser entry was removed in 2.0.0.
  */
-export function detectEnvironment(): "browser" | "node" | "unknown" {
-  // Check for browser environment (including test environments with jsdom)
-  if (typeof window !== "undefined" && typeof document !== "undefined") {
-    return "browser";
-  }
-
-  // Check for web workers (browser without window)
-  // Use 'importScripts' in self to check for Web Worker environment
-  if (
-    typeof self !== "undefined" &&
-    typeof self === "object" &&
-    self !== null &&
-    "importScripts" in self
-  ) {
-    return "browser";
-  }
-
-  // Check for test environments that might have navigator but no window
-  if (typeof navigator !== "undefined" && typeof document !== "undefined") {
-    return "browser";
-  }
-
+export function detectEnvironment(): "node" | "unknown" {
   // Check for Node.js environment
   if (typeof process !== "undefined" && process.versions?.node) {
     return "node";
@@ -46,21 +25,12 @@ export function detectEnvironment(): "browser" | "node" | "unknown" {
     return "node"; // Treat Deno as Node-like for now
   }
 
-  // Fallback: if we have global but not window/process, assume Node-like
-  if (typeof global !== "undefined" && typeof window === "undefined") {
+  // Fallback: a runtime with `global` is Node-like
+  if (typeof global !== "undefined") {
     return "node";
   }
 
-  // Last resort: default to browser for unknown environments
-  // This helps with test environments that might not perfectly simulate either
-  return "browser";
-}
-
-/**
- * Check if running in a browser environment
- */
-export function isBrowser(): boolean {
-  return detectEnvironment() === "browser";
+  return "unknown";
 }
 
 /**
@@ -74,9 +44,6 @@ export function isNode(): boolean {
  * Get environment-specific global object
  */
 export function getGlobalObject() {
-  if (isBrowser()) {
-    return typeof window !== "undefined" ? window : self;
-  }
   if (isNode()) {
     return global;
   }
@@ -85,7 +52,7 @@ export function getGlobalObject() {
 }
 
 /**
- * Safe access to process.env (returns empty object in browser)
+ * Safe access to process.env (returns an empty object outside Node.js)
  */
 export function getProcessEnv(): Record<string, string | undefined> {
   if (isNode() && typeof process !== "undefined" && process.env) {
@@ -109,18 +76,18 @@ interface ProcessLike {
 }
 
 /**
- * Safe access to process (returns mock in browser)
+ * Safe access to process (returns a mock outside Node.js)
  */
 export function getProcess(): ProcessLike {
   if (isNode() && typeof process !== "undefined") {
     return process as ProcessLike;
   }
 
-  // Return a mock process for browser
+  // Return a mock process for a runtime without one
   return {
     env: {},
     versions: {},
-    platform: "browser",
+    platform: "unknown",
     on: () => {}, // no-op
     once: () => {}, // no-op
     off: () => {}, // no-op

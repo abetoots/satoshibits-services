@@ -141,7 +141,7 @@ export const SmartClient: SmartClientAPI = {
   /**
    * Initialize the smart observability client (ASYNC)
    * Branded alias for initializeObservability()
-   * Works in both Node.js and browser environments
+   * Node.js only: the browser entry was removed in 2.0.0
    */
   initialize: initializeObservability,
 
@@ -157,10 +157,8 @@ export const SmartClient: SmartClientAPI = {
   shutdown: shutdownObservability,
 };
 
-// Note: Environment-specific SDK helpers are available via
-// '@satoshibits/observability/node' and '@satoshibits/observability/browser'.
-// The universal entrypoint intentionally avoids re-exporting node/browser-only
-// helpers to prevent accidental bundling of environment-specific code.
+// Note: Node-specific SDK helpers are available via '@satoshibits/observability/node'.
+// The root entrypoint intentionally avoids re-exporting them.
 
 // export sanitizers
 export {

@@ -73,17 +73,6 @@ jobs:
       - name: 📥 Download deps
         run: pnpm install --prefer-offline
 
-      - name: ⚡️ Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('packages/observability/package.json') }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-
-
-      - name: 🎭 Install Playwright Browsers for Observability
-        run: pnpm --filter @satoshibits/observability exec playwright install --with-deps chromium
-
       - name: Create Release Pull Request or Publish to npm
         id: changesets
         uses: changesets/action@v1

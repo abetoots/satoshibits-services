@@ -1,13 +1,8 @@
 /**
  * Resource Factory for OpenTelemetry Resource Attributes
  *
- * Centralizes common resource attribute creation for both browser and node SDKs.
- * Each platform can augment the base attributes with platform-specific ones.
- *
- * Why this file exists:
- * - Both browser and node SDKs create identical base resource attributes
- * - This is "essential duplication" - the same logic repeated verbatim
- * - Refactoring accepted by Gemini 2.5 Pro review (see REFACTORING-ADVISOR-SYNTHESIS.md)
+ * Centralizes common resource attribute creation for the Node SDK, which can
+ * augment the base attributes with platform-specific ones.
  */
 
 import { resourceFromAttributes } from "@opentelemetry/resources";
@@ -54,19 +49,11 @@ export function createBaseResourceAttributes(
  * Create a complete OpenTelemetry Resource with base and additional attributes
  *
  * This function creates a resource with base attributes and allows platforms
- * to augment with platform-specific attributes (e.g., browser.page.url for browser,
- * process.pid for node).
+ * to augment with platform-specific attributes (e.g., process.pid).
  *
  * @param baseConfig - Base configuration (service name, version, environment)
  * @param additionalAttributes - Platform-specific attributes to merge
  * @returns OpenTelemetry Resource instance
- *
- * @example
- * // Browser usage
- * const browserResource = createResource(
- *   { serviceName: "my-app", environment: "production" },
- *   { "browser.page.url": window.location.href }
- * );
  *
  * @example
  * // Node usage

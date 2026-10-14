@@ -175,7 +175,7 @@ let globalNodeSDK: NodeSDK | null = null;
 
 /**
  * Initialize the OpenTelemetry SDK (legacy function-based API)
- * Now delegates to NodeSDK class for consistent pattern with BrowserSDK (H2 fix).
+ * Delegates to the NodeSDK class (H2 fix).
  * This should only be called once, typically from index.mts
  */
 export function initializeSdk(config: NodeClientConfig): BaseSDKState {
@@ -186,7 +186,7 @@ export function initializeSdk(config: NodeClientConfig): BaseSDKState {
 
   isInitializing = true;
   try {
-    // Use the class-based SDK for consistency with BrowserSDK (H2 fix)
+    // use the class-based SDK (H2 fix)
     globalNodeSDK = new NodeSDK(config);
     const { shutdown, sanitizer } = globalNodeSDK.start();
 

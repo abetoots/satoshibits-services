@@ -1,8 +1,8 @@
 /**
  * SDK Factory - Environment-aware SDK initialization
  *
- * Detects runtime environment and initializes the appropriate SDK
- * (Node.js or Browser) while maintaining a unified API.
+ * Detects the runtime environment and initializes the Node.js SDK
+ * behind a unified API.
  *
  * Uses centralized SDKStateMachine for coordinated state management.
  * @see sdk-state.mts for state machine implementation
@@ -27,8 +27,7 @@ import { detectEnvironment } from "./utils/environment.mjs";
 
 /**
  * Base SDK interface with configurable return type.
- * Browser SDK is synchronous, Node SDK is asynchronous.
- * @template TConfig - Configuration type (BrowserClientConfig or NodeClientConfig)
+ * @template TConfig - Configuration type (NodeClientConfig)
  * @template TResult - Return type (BaseSDKState for sync, Promise<BaseSDKState> for async)
  */
 export interface BaseSDK<
@@ -41,7 +40,7 @@ export interface BaseSDK<
 }
 
 export interface BaseSDKState {
-  environment: "node" | "browser" | "unknown";
+  environment: "node" | "unknown";
   isInitialized: boolean;
   shutdown: () => Promise<void> | void;
   sanitizer: ReturnType<typeof initializeSanitizer> | null;
@@ -75,7 +74,7 @@ export async function initializeEnvironmentSdkDynamic(
   const environment = detectEnvironment();
 
   // dispatch init start event to state machine (only for known environments)
-  if (environment === "browser" || environment === "node") {
+  if (environment === "node") {
     sdkStateMachine.dispatch({ type: "INIT_START", environment });
   }
 
@@ -84,16 +83,7 @@ export async function initializeEnvironmentSdkDynamic(
 
   const initPromise = (async () => {
     try {
-      if (environment === "browser") {
-        const browserSdk = await import("./sdk-wrapper-browser.mjs");
-        const browserConfig =
-          config.environment === "browser"
-            ? config
-            : { ...config, environment: "browser" as const };
-
-        resultState =
-          await browserSdk.BrowserSDKWrapper.initializeSdk(browserConfig);
-      } else if (environment === "node") {
+      if (environment === "node") {
         const nodeSdk = await import("./sdk-wrapper-node.mjs");
         const nodeConfig =
           config.environment === "node"
@@ -168,10 +158,7 @@ export async function shutdownEnvironmentSdk(): Promise<void> {
       await sdkStateMachine.runCleanups();
 
       // shutdown environment-specific SDK
-      if (currentState.environment === "browser") {
-        const browserSdk = await import("./sdk-wrapper-browser.mjs");
-        await browserSdk.shutdownBrowserSdk();
-      } else if (currentState.environment === "node") {
+      if (currentState.environment === "node") {
         const nodeSdk = await import("./sdk-wrapper-node.mjs");
         await nodeSdk.shutdownSdk();
       }
@@ -220,7 +207,7 @@ export { sdkStateMachine };
 /**
  * Unified client creation function (DYNAMIC IMPORTS)
  * Consolidates all initialization logic with dynamic imports to preserve bundle size
- * Integrates SmartSampler, WebVitals, and DataSanitizer
+ * Integrates SmartSampler and DataSanitizer
  *
  * Supports "Bring Your Own Provider" mode (API Boundary Fix - Issue #5):
  * - `skipSdkInitialization: true` - Skip all SDK setup, use globally registered providers

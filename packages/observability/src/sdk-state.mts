@@ -12,7 +12,7 @@ import type { initializeSanitizer } from "./enrichment/sanitizer.mjs";
 
 /** SDK state data */
 export interface SDKStateData {
-  environment: "node" | "browser" | "unknown";
+  environment: "node" | "unknown";
   isInitialized: boolean;
   shutdown: () => Promise<void>;
   sanitizer: ReturnType<typeof initializeSanitizer> | null;
@@ -20,7 +20,7 @@ export interface SDKStateData {
 
 /** State event types for dispatch interface compatibility */
 export type SDKStateEvent =
-  | { type: "INIT_START"; environment: "node" | "browser" }
+  | { type: "INIT_START"; environment: "node" }
   | {
       type: "INIT_SUCCESS";
       shutdown: () => Promise<void>;
@@ -32,7 +32,7 @@ export type SDKStateEvent =
   | { type: "REGISTER_CLEANUP"; cleanup: () => void | Promise<void> };
 
 // internal state
-let environment: "node" | "browser" | "unknown" = "unknown";
+let environment: "node" | "unknown" = "unknown";
 let isInitialized = false;
 let shutdownFn: () => Promise<void> = async () => {};
 let sanitizerRef: ReturnType<typeof initializeSanitizer> | null = null;

@@ -68,7 +68,7 @@ import {
   withErrorReporting,
 } from "./smart-errors.mjs";
 // Import environment utilities
-import { detectEnvironment, getProcessEnv } from "./utils/environment.mjs";
+import { getProcessEnv } from "./utils/environment.mjs";
 
 // Local lightweight instrument interfaces to avoid unsafe `any`
 interface CounterInstrument {
@@ -214,7 +214,6 @@ export class UnifiedObservabilityClient {
     // @see ARCHITECTURE_MULTI_MODEL_REVIEW.md - Issue C3 resolution
     if (config.enrichContext !== false) {
       const env = getProcessEnv();
-      const environment = detectEnvironment();
 
       // get or create the default enricher, then adopt it
       // this ensures breadcrumbs/user/tags added before init are preserved
@@ -222,8 +221,7 @@ export class UnifiedObservabilityClient {
         {
           release: config.serviceName,
           version: config.serviceVersion ?? "0.0.0",
-          environment: (env.NODE_ENV ??
-            (environment === "browser" ? "production" : "development")) as
+          environment: (env.NODE_ENV ?? "development") as
             | "production"
             | "staging"
             | "development"
@@ -776,7 +774,7 @@ export class UnifiedObservabilityClient {
      *
      * Manages application-level context data including user information, breadcrumbs,
      * tags, and custom context values. This context propagates through AsyncLocalStorage
-     * (Node.js) or Zone.js (browser) and is included in telemetry data.
+     * and is included in telemetry data.
      */
     business: {
       /**
@@ -1109,7 +1107,7 @@ export class UnifiedObservabilityClient {
    *
    * @example
    * ```typescript
-   * const client = await SmartClient.create({ serviceName: 'my-mfe', environment: 'browser' });
+   * const client = await SmartClient.create({ serviceName: 'my-mfe', environment: 'node' });
    *
    * // Use the client...
    *
@@ -1165,6 +1163,5 @@ export {
   type SmartClientAPI,
   type BaseClientConfig,
   type NodeClientConfig,
-  type BrowserClientConfig,
 } from "./config/client-config.mjs";
 export { ScopedInstrument } from "./internal/scoped-instrument.mjs";
