@@ -10,62 +10,63 @@ when the root entry exports a name with no row, when a row names something that 
 
 ## Root entry exports
 
-Every name the root entry exported in 1.x. "unchanged" means it resolves and behaves as in 1.x.
+Every name the root entry exported in 1.x (pinned in `src/__tests__/preset/fixtures/root-exports-1x.json`).
+"unchanged" means it resolves and behaves as in 1.x; a "changed" row gives the 1.x behaviour, the new one and why.
 Each row is checked by the test of the same name in `compatibility.test.mts`.
 
 <!-- root-exports:start -->
-| Export | Kind | Status | Notes |
-| --- | --- | --- | --- |
-| `ApplicationContext` | type | unchanged | |
-| `ContextEnricher` | value | unchanged | |
-| `Meter` | type | unchanged | re-exported from `@opentelemetry/api` |
-| `SanitizerManager` | value | unchanged | its masks are now the redaction package's; their output is as in 1.x |
-| `SanitizerOptions` | type | unchanged | |
-| `SanitizerPresets` | value | unchanged | |
-| `SmartClient` | value | changed | runs on the preset's runtime; see "The facade's config and behaviour" |
-| `SmartContext` | type | unchanged | |
-| `SmartSampler` | value | unchanged | the class itself; the facade no longer installs it (row `sampling`) |
-| `SmartSamplerConfig` | type | unchanged | |
-| `Span` | type | unchanged | re-exported from `@opentelemetry/api` |
-| `SpanKind` | value | unchanged | re-exported from `@opentelemetry/api` |
-| `SpanStatusCode` | value | unchanged | re-exported from `@opentelemetry/api` |
-| `Tracer` | type | unchanged | re-exported from `@opentelemetry/api` |
-| `UnifiedObservabilityClient` | value | unchanged | |
-| `addBreadcrumb` | value | unchanged | |
-| `addTag` | value | unchanged | |
-| `categorizeErrorForObservability` | value | unchanged | |
-| `clearContext` | value | unchanged | |
-| `clearSanitizationCache` | value | unchanged | |
-| `createSmartCounter` | value | unchanged | |
-| `createSmartGauge` | value | unchanged | |
-| `createSmartHistogram` | value | unchanged | |
-| `createSmartSampler` | value | unchanged | |
-| `createSmartUpDownCounter` | value | unchanged | |
-| `extractResultError` | value | unchanged | |
-| `extractResultValue` | value | unchanged | |
-| `getAllInstances` | value | unchanged | |
-| `getCacheStats` | value | unchanged | |
-| `getEnrichedLabels` | value | unchanged | |
-| `getGlobalContext` | value | unchanged | |
-| `getInstanceCount` | value | unchanged | |
-| `getResultAdapter` | value | unchanged | |
-| `getSmartContext` | value | unchanged | |
-| `getUnifiedClientInstance` | value | unchanged | |
-| `initializeObservability` | value | changed | the same function as `SmartClient.initialize` |
-| `isResultFailure` | value | unchanged | |
-| `isResultLike` | value | unchanged | |
-| `isResultSuccess` | value | unchanged | |
-| `mergeBusinessContext` | value | unchanged | |
-| `normalizeHash` | value | unchanged | |
-| `reportError` | value | unchanged | |
-| `runWithBusinessContext` | value | unchanged | |
-| `sanitize` | value | unchanged | |
-| `sanitizeError` | value | unchanged | |
-| `sanitizeObject` | value | unchanged | |
-| `sanitizeString` | value | unchanged | |
-| `setUser` | value | unchanged | |
-| `shutdownObservability` | value | changed | the same function as `SmartClient.shutdown`; see rows `shutdown` and `shutdown-test-mode` |
-| `withErrorReporting` | value | unchanged | |
+| Export | Kind | Status | 1.x | 2.x | Why | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| `ApplicationContext` | type | unchanged | | | | |
+| `ContextEnricher` | value | unchanged | | | | |
+| `Meter` | type | unchanged | | | | re-exported from `@opentelemetry/api` |
+| `SanitizerManager` | value | unchanged | | | | its masks are now the redaction package's; their output is as in 1.x |
+| `SanitizerOptions` | type | unchanged | | | | |
+| `SanitizerPresets` | value | unchanged | | | | |
+| `SmartClient` | value | changed | `initialize` built an OpenTelemetry NodeSDK of its own: all three signals, to `localhost:4318` unless an endpoint was given | `initialize` starts the preset's runtime, or attaches to the one already there; `create` and `shutdown` as before. Each config option is a row of "The facade's config and behaviour" | one runtime per process, exporting only where configured and under the standard redaction policy | |
+| `SmartContext` | type | unchanged | | | | |
+| `SmartSampler` | value | unchanged | | | | the class itself; the facade no longer installs it (row `sampling`) |
+| `SmartSamplerConfig` | type | unchanged | | | | |
+| `Span` | type | unchanged | | | | re-exported from `@opentelemetry/api` |
+| `SpanKind` | value | unchanged | | | | re-exported from `@opentelemetry/api` |
+| `SpanStatusCode` | value | unchanged | | | | re-exported from `@opentelemetry/api` |
+| `Tracer` | type | unchanged | | | | re-exported from `@opentelemetry/api` |
+| `UnifiedObservabilityClient` | value | unchanged | | | | |
+| `addBreadcrumb` | value | unchanged | | | | |
+| `addTag` | value | unchanged | | | | |
+| `categorizeErrorForObservability` | value | unchanged | | | | |
+| `clearContext` | value | unchanged | | | | |
+| `clearSanitizationCache` | value | unchanged | | | | |
+| `createSmartCounter` | value | unchanged | | | | |
+| `createSmartGauge` | value | unchanged | | | | |
+| `createSmartHistogram` | value | unchanged | | | | |
+| `createSmartSampler` | value | unchanged | | | | |
+| `createSmartUpDownCounter` | value | unchanged | | | | |
+| `extractResultError` | value | unchanged | | | | |
+| `extractResultValue` | value | unchanged | | | | |
+| `getAllInstances` | value | unchanged | | | | |
+| `getCacheStats` | value | unchanged | | | | |
+| `getEnrichedLabels` | value | unchanged | | | | |
+| `getGlobalContext` | value | unchanged | | | | |
+| `getInstanceCount` | value | unchanged | | | | |
+| `getResultAdapter` | value | unchanged | | | | |
+| `getSmartContext` | value | unchanged | | | | |
+| `getUnifiedClientInstance` | value | unchanged | | | | |
+| `initializeObservability` | value | unchanged | | | | the same function as `SmartClient.initialize`: one client per process, a second call returns it with a warning; what it starts is in the `SmartClient` row |
+| `isResultFailure` | value | unchanged | | | | |
+| `isResultLike` | value | unchanged | | | | |
+| `isResultSuccess` | value | unchanged | | | | |
+| `mergeBusinessContext` | value | unchanged | | | | |
+| `normalizeHash` | value | unchanged | | | | |
+| `reportError` | value | unchanged | | | | |
+| `runWithBusinessContext` | value | unchanged | | | | |
+| `sanitize` | value | unchanged | | | | |
+| `sanitizeError` | value | unchanged | | | | |
+| `sanitizeObject` | value | unchanged | | | | |
+| `sanitizeString` | value | unchanged | | | | |
+| `setUser` | value | unchanged | | | | |
+| `shutdownObservability` | value | changed | shut the SDK down; a later `initialize` built a new one | shuts the runtime down (one attached to included); outside test mode a later `initialize` attaches to the stopped runtime | a process starts telemetry once; see rows `shutdown` and `shutdown-test-mode` | the same function as `SmartClient.shutdown` |
+| `withErrorReporting` | value | unchanged | | | | |
 <!-- root-exports:end -->
 
 ## Types the sanitizer exports' signatures expose
@@ -92,12 +93,13 @@ What `SmartClient.initialize` does with its Node config, as against 1.x. A "chan
 | `endpoint-v1-traces` | a trailing `/v1/traces` was stripped | the same | unchanged | | `subprocess/facade.test.mts` › strips a trailing /v1/traces from the endpoint, as 1.x did |
 | `default-endpoint` | no endpoint meant `http://localhost:4318` | no endpoint means nothing is exported, with one warning per signal | changed | an address nobody configured must not receive data; set the endpoint in code or `OTEL_EXPORTER_OTLP_ENDPOINT` | `subprocess/facade.test.mts` › exports nothing without an endpoint: the implicit localhost:4318 of 1.x is gone |
 | `logs` | always exported beside traces and metrics | exported only with `OTEL_LOGS_EXPORTER=otlp` | changed | application logs usually have a destination already; logs are opt-in in the preset | `subprocess/facade.test.mts` › exports logs only when OTEL_LOGS_EXPORTER=otlp asks for them, where 1.x always did |
-| `metric-interval` | metrics exported every 10 s | every 60 s, or `OTEL_METRIC_EXPORT_INTERVAL` | changed | the specification's default; the interval is the environment's to set | `facade.test.mts` › builds the metric reader for an endpoint with a 60 s interval, where 1.x used 10 s |
+| `metric-interval` | metrics exported every 10 s | every 60 s, or `OTEL_METRIC_EXPORT_INTERVAL` | changed | the specification's default; the interval is the environment's to set. No public API reads the interval: the test watches what reaches a collector in 11 s | `subprocess/facade.test.mts` › exports metrics every 60 s by default, where 1.x did every 10 s |
 | `serviceName` | on the resource; won over `OTEL_SERVICE_NAME` | the same | unchanged | | `subprocess/facade.test.mts` › puts the service name and version given in code on the resource, and no 1.x defaults |
 | `service-version-default` | `service.version` was `0.0.0` when none was given | not set unless given in code or `OTEL_RESOURCE_ATTRIBUTES` | changed, by design | by design (plan, Design › Resource): `service.version` comes from options or the environment | `subprocess/facade.test.mts` › puts the service name and version given in code on the resource, and no 1.x defaults |
 | `NODE_ENV` | `deployment.environment` from `NODE_ENV` (default `production`) | `deployment.environment.name` from the preset's `deploymentEnvironment` option or `OTEL_RESOURCE_ATTRIBUTES`; `NODE_ENV` is not read | changed, by design | by design (plan, Design › Resource): `deployment.environment.name` comes from options or the environment | `subprocess/facade.test.mts` › takes deployment.environment.name from OTEL_RESOURCE_ATTRIBUTES, not NODE_ENV |
 | `resource-detectors` | host, process, OS and service-instance detectors added `host.*`, `process.*` and `os.*` keys | `host.*`, the process command line, executable path and OS user keys are dropped; of the OS keys only `os.type` is kept | changed, by design | by design (plan, Design › Resource): host, process command line, executable path and OS user keys are dropped, and only the OS type is kept | `subprocess/facade.test.mts` › drops the host, process and OS keys 1.x's detectors added, and keeps only the OS type |
 | `empty-service-name` | started with an empty service name | refused unless `OTEL_SERVICE_NAME` is set: the facade logs the configuration error and runs without telemetry | changed, by design | by design (plan, Design › Resource): `service.name` is required and startup fails without it | `subprocess/facade.test.mts` › refuses an empty service name with no OTEL_SERVICE_NAME, and runs without telemetry |
+| `empty-service-name-env` | the empty name was exported as `service.name`; `OTEL_SERVICE_NAME` was not read | an empty service name gives way to `OTEL_SERVICE_NAME` when that is set | changed, by design | by design (plan, Design › Resource): `service.name` comes from the option or the environment | `subprocess/facade.test.mts` › takes an empty service name's place from OTEL_SERVICE_NAME when it is set |
 | `redaction` | the client's sanitizer masked attributes set through the client's own API; the rest (instrumentation, the raw OTel API) was exported as given | every export also goes through `@satoshibits/redaction`'s standard policy | changed | a 1.x consumer expected redaction by default; the preset redacts at the exporter, where everything passes | `subprocess/facade.test.mts` › exports under the standard redaction policy |
 | `sampling` | installed `SmartSampler` | no effect, with a warning | changed | the preset takes a sampler by name only; use `OTEL_TRACES_SAMPLER` | `facade.test.mts` › warns that sampling no longer has an effect |
 | `OTEL_TRACES_SAMPLER` | honoured | honoured | unchanged | | `facade.test.mts` › honours OTEL_TRACES_SAMPLER, as 1.x did |

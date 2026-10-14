@@ -203,12 +203,49 @@ describe("the facade's config, as against 1.x", () => {
     expect(sink.connections).toEqual([]);
   });
 
+  it("takes an empty service name's place from OTEL_SERVICE_NAME when it is set", async () => {
+    const run = await runChild(
+      { start: "facade", facade: { endpoint: sink.url, serviceName: "" } },
+      { OTEL_SERVICE_NAME: "from-environment" },
+    );
+
+    expect(run.result.statusAfterFacade).toMatchObject({ state: "running", serviceName: "from-environment" });
+    expect(sink.spans()[0]!.resource["service.name"]).toBe("from-environment");
+  });
+
   it("installs the auto-instrumentation unless disableInstrumentation or autoInstrument: false", async () => {
     const on = await runChild({ start: "facade", facade: { disableInstrumentation: false } });
-    const off = await runChild({ start: "facade", facade: { disableInstrumentation: true } });
+    const disabled = await runChild({ start: "facade", facade: { disableInstrumentation: true } });
+    const notAuto = await runChild({
+      start: "facade",
+      facade: { disableInstrumentation: false, autoInstrument: false },
+    });
 
     expect(on.result.httpPatched).toBe(true);
-    expect(off.result.httpPatched).toBe(false);
+    expect(disabled.result.httpPatched).toBe(false);
+    expect(notAuto.result.httpPatched).toBe(false);
+  });
+
+  it("exports metrics every 60 s by default, where 1.x did every 10 s", async () => {
+    // no flush and no shutdown: only the reader's own timer can send metrics within the 11 s
+    const run = await runChild({
+      start: "facade",
+      facade: { endpoint: sink.url },
+      lingerMillis: 11_000,
+      finish: "none",
+    });
+
+    expect(run.result.statusAfterFacade?.signals.metrics).toMatchObject({ enabled: true });
+    expect(sink.metrics()).toEqual([]);
+  });
+
+  it("exports metrics at the interval OTEL_METRIC_EXPORT_INTERVAL sets", async () => {
+    await runChild(
+      { start: "facade", facade: { endpoint: sink.url }, lingerMillis: 1_500, finish: "none" },
+      { OTEL_METRIC_EXPORT_INTERVAL: "300" },
+    );
+
+    expect(sink.metrics().map((metric) => metric.name)).toContain("child_counter");
   });
 
   it("does not start again after a shutdown outside test mode: the second initialize attaches", async () => {

@@ -298,6 +298,8 @@ describe("the facade's config", () => {
     expect(warnings.mock.calls.map(([message]) => String(message))).toContainEqual(
       expect.stringContaining("sampling is configured but has no effect"),
     );
+    // the sampler is the preset's default, as with no sampling given
+    expect(getStatus().sampler).toBe("parentbased_always_on");
   });
 
   it("gives a metric reader passed to initialize the metrics", async () => {
@@ -355,22 +357,24 @@ describe("the facade's config, as against 1.x (in-process)", () => {
       testSpanProcessor: new SimpleSpanProcessor(exporter),
     }) as const;
 
-  it("builds the metric reader for an endpoint with a 60 s interval, where 1.x used 10 s", async () => {
+  it("refuses to install a test hook beside a signal that would still be exported", () => {
     const resolution = resolveConfig(
       { serviceName: "facade", endpoint: "http://127.0.0.1:9", redaction: standardPolicy },
       {},
     );
     if (resolution.disabled) throw new Error("not disabled here");
-    const pipelines = buildPipelines(
-      resolution.config,
-      {},
-      { diagnostics: createDiagnostics(), redactor: createRedactor(standardPolicy), failures: new ExportFailureLog() },
-      true,
-    );
+    const base = {
+      diagnostics: createDiagnostics(),
+      redactor: createRedactor(standardPolicy),
+      failures: new ExportFailureLog(),
+    };
 
-    const reader = pipelines.metricReaders[0] as unknown as { _exportInterval: number };
-    expect(reader._exportInterval).toBe(60_000);
-    await Promise.all(pipelines.spanProcessors.map((processor) => processor.shutdown()));
+    // start() turns the other signals off first; were that skipped, the pipelines would not be built
+    expect(() =>
+      buildPipelines(resolution.config, {}, base, true, {
+        spanProcessor: new SimpleSpanProcessor(new InMemorySpanExporter()),
+      }),
+    ).toThrow("metrics would be exported beside a test hook");
   });
 
   it("gives the test hooks nothing with OTEL_SDK_DISABLED=true", async () => {
