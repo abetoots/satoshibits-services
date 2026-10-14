@@ -40,6 +40,7 @@
   },
   "files": [
     "dist/**/*",
+    "COMPATIBILITY.md",
     "!dist/**/*.test.*",
     "!dist/__tests__/**",
     "!dist/__consumer__/**"
