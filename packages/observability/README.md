@@ -10,14 +10,12 @@ standard `OTEL_*` environment variables, and redacts what it exports.
 
 <!-- illustrative: installs the packages; the tests run against this repository's build -->
 ```sh
-pnpm add @satoshibits/observability
+pnpm add @satoshibits/observability @opentelemetry/api
 ```
 
-It needs Node.js 18.19 or later on the 18 line, or 20.6 or later: the versions with `--import`. Two
-more packages are yours to add when you use them, as dependencies of your own project:
-`@opentelemetry/api`, which your code imports to make spans by hand and which the test kit's example
-below uses (this package depends on it too, but your code imports it directly), and
-`@satoshibits/redaction`, to name a redaction policy of your own.
+`@opentelemetry/api` is a peer dependency: your app installs it, so that your app and this package
+share one copy. It needs Node.js 18.19 or later on the 18 line, or 20.6 or later: the versions with
+`--import`. To name a redaction policy of your own, also add `@satoshibits/redaction`.
 
 ## Quick start
 

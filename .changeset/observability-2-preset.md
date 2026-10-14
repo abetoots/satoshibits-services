@@ -12,7 +12,8 @@ Migrating from 1.x:
 4. **The root entry is deprecated.** `SmartClient.initialize()` and the 1.x helpers still work: `initialize()` starts the preset's runtime under the standard policy, or attaches to the one a preload started. The root entry is removed in 3.0.0.
 5. **The browser entry is removed.** `@satoshibits/observability/browser`, `BrowserClientConfig` and the browser instrumentation presets are gone; 1.3.x stays on npm. For browser telemetry use Grafana Faro, or `@opentelemetry/browser-sdk`, directly.
 6. **`MockObservabilityClient` is removed** from `/testing`, with `createMockClient`, `withMockClient` and the `Recorded*` types. Use `startTestTelemetry()`, which runs the real pipeline with in-memory exporters.
-7. **Other changes** (each with its 1.x behaviour, its 2.0 behaviour and why, in `COMPATIBILITY.md`):
+7. **`@opentelemetry/api` is now a peer dependency.** Add it to your own dependencies (`pnpm add @opentelemetry/api`, 1.x from 1.9.0), so that your app and the library share one copy of the API.
+8. **Other changes** (each with its 1.x behaviour, its 2.0 behaviour and why, in `COMPATIBILITY.md`):
    - a service name given in code now wins over `OTEL_SERVICE_NAME`;
    - `service.version` is no longer `0.0.0` by default;
    - `deployment.environment` no longer comes from `NODE_ENV`; set `deployment.environment.name` in `OTEL_RESOURCE_ATTRIBUTES` or the `deploymentEnvironment` option;

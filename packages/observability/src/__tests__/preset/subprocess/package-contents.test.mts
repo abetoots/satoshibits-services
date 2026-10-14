@@ -43,7 +43,13 @@ const FORBIDDEN = {
 };
 
 let files: string[];
-let manifest: { exports: Record<string, unknown>; main?: string; types?: string };
+let manifest: {
+  exports: Record<string, unknown>;
+  main?: string;
+  types?: string;
+  dependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
+};
 
 beforeAll(async () => {
   // as in preload.test.mts: built here unless the release workflow has just built dist/
@@ -105,5 +111,13 @@ describe("the packed tarball", () => {
     ].map((target) => target.replace(/^\.\//, ""));
     expect(targets.length).toBeGreaterThan(0);
     expect(targets.filter((target) => !files.includes(target))).toEqual([]);
+  });
+});
+
+describe("the manifest", () => {
+  // two copies of the API would split context and the registered providers between the app and the library
+  it("takes @opentelemetry/api as a peer on the 1.x line, never as a dependency of its own", () => {
+    expect(manifest.peerDependencies?.["@opentelemetry/api"]).toMatch(/^\^1\./);
+    expect(manifest.dependencies ?? {}).not.toHaveProperty("@opentelemetry/api");
   });
 });
