@@ -12,6 +12,8 @@ import type {
   RedactionPolicy,
 } from "../../preset/redaction.mjs";
 
+import { isPlainObject } from "../../preset/redaction.mjs";
+
 export const probed = (surface: string, value: string): string =>
   `[probe:${surface}] ${value}`;
 
@@ -24,17 +26,29 @@ const marked = (surface: string, attributes: PolicyAttributes): PolicyAttributes
     ]),
   );
 
+const markedText = (surface: string, value: unknown): unknown =>
+  typeof value === "string" ? probed(surface, value) : value;
+
+/** a string body marked, and the strings one level into an object or an array; anything else as it was */
+const markedBody = (body: unknown): unknown => {
+  if (Array.isArray(body)) return body.map((value) => markedText("log.record", value));
+  if (isPlainObject(body)) return marked("log.record", body);
+  return markedText("log.record", body);
+};
+
 /** one call of the policy: which function, as which surface, and with what */
 export interface ProbeCall {
   fn: keyof RedactionPolicy;
   surface?: string;
-  /** the text handed over (for an event, its name), or the keys of the attribute set */
+  /**
+   * the text handed over (for an event, its name), the keys of the attribute
+   * set, or for a log record the keys of the record itself
+   */
   given: string | string[];
 }
 
 /**
- * @param calls when given, every call of `text`, `attributes`, `spanStatus`
- *   and `spanEvent` is recorded here. The marks show what the policy did to
+ * @param calls when given, every call of the policy is recorded here. The marks show what the policy did to
  *   what was exported; only this shows what it was handed, including anything
  *   the preset replaced afterwards.
  */
@@ -59,13 +73,19 @@ export function createProbePolicy(calls?: ProbeCall[]): RedactionPolicy {
         attributes: marked("span.event", event.attributes),
       };
     },
-    logRecord: (record) => ({
-      ...record,
-      body:
-        typeof record.body === "string"
-          ? probed("log.record", record.body)
-          : record.body,
-      attributes: marked("log.record", record.attributes),
-    }),
+    logRecord: (record) => {
+      calls?.push({ fn: "logRecord", given: Object.keys(record) });
+      return {
+        body: markedBody(record.body),
+        attributes: marked("log.record", record.attributes),
+        // only what the record has: a key added here would be exported
+        ...(record.eventName !== undefined && {
+          eventName: probed("log.record", record.eventName),
+        }),
+        ...(record.severityText !== undefined && {
+          severityText: probed("log.record", record.severityText),
+        }),
+      };
+    },
   };
 }

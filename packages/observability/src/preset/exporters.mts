@@ -307,9 +307,7 @@ export function wrapLogRecordExporter(
       guarded("logs", context, report, resultCallback, (observed) => {
         return inner.export(
           records.map((record) =>
-            viewOf(record, {
-              instrumentationScope: redactor.scope(record.instrumentationScope),
-            }),
+            viewOf<ReadableLogRecord>(record, redactor.logRecord(record)),
           ),
           observed,
         );
