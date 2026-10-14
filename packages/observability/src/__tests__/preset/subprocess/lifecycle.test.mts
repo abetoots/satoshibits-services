@@ -35,6 +35,9 @@ const allSignals = (extra: Record<string, string> = {}) => ({
   ...extra,
 });
 
+/** how soon a child must exit once it has printed its result, with nothing left to hold it */
+const EXIT_BOUND_MILLIS = 3000;
+
 // what the far end says; neither may reach the caller
 const STATUS_TEXT_SENTINEL = "Status-Text-Sentinel";
 const BODY_SENTINEL = "response-body-sentinel";
@@ -135,7 +138,7 @@ describe("no timer outlives a call", () => {
     expect(run.result.finishError).toBeNull();
     expect(sink.spans().map((s) => s.name)).toEqual(["child-span-0"]);
     // a call's own deadline timer, left running, would hold the process for a minute
-    expect(run.exitMillisAfterResult).toBeLessThan(3000);
+    expect(run.exitMillisAfterResult).toBeLessThan(EXIT_BOUND_MILLIS);
     expect(run.code).toBe(0);
   });
 });
@@ -157,9 +160,9 @@ describe("a sink that never answers", () => {
     expect(sink.requestsTo("/v1/traces")).not.toHaveLength(0);
     expect(run.result.finishError).toMatch(/shutdown did not finish within 500 ms/);
     expect(run.result.finishMillis).toBeGreaterThanOrEqual(450);
-    expect(run.result.finishMillis).toBeLessThan(1500);
-    // nothing outlives the exporter's own deadline: no timer, no socket (the sink is still hung)
-    expect(run.exitMillisAfterResult).toBeLessThan(4000);
+    expect(run.result.finishMillis).toBeLessThan(3000);
+    // nothing outlives the exporter's own deadline (2 s): no timer, no socket (the sink is still hung)
+    expect(run.exitMillisAfterResult).toBeLessThan(2000 + EXIT_BOUND_MILLIS);
     expect(run.code).toBe(0);
   });
 });

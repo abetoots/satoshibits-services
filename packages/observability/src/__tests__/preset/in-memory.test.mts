@@ -2315,6 +2315,8 @@ describe("forceFlush and shutdown", () => {
   const startWith = (testExporters: TestExporters) =>
     start({
       serviceName: "lifecycle",
+      // the failures these tests cause are reported; not on the runner's stderr
+      diagnostics: () => () => undefined,
       instrumentations: false,
       loaderHook: false,
       redaction: false,
@@ -2347,6 +2349,42 @@ describe("forceFlush and shutdown", () => {
     expect(shutdown()).toBe(first);
     expect(getStatus().state).toBe("shut-down");
   });
+
+  it("two signals that fail with the same reason are both named", async () => {
+    // a value, not an error object: the same one for both
+    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- the case under test
+    const failingShutdown = () => Promise.reject("Timeout");
+    startWith({
+      spanExporter: { export: (_spans, done) => done({ code: ExportResultCode.SUCCESS }), shutdown: failingShutdown },
+      logRecordExporter: {
+        export: (_records, done) => done({ code: ExportResultCode.SUCCESS }),
+        shutdown: failingShutdown,
+        forceFlush: () => Promise.resolve(),
+      },
+    });
+
+    const error: unknown = await shutdown().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(TelemetryExportError);
+    expect((error as Error).message).toContain("traces");
+    expect((error as Error).message).toContain("logs");
+    // the reset after each test shuts the SDK down again, and the processors hand back the
+    // same rejection: forgotten here, so that it is not the test's failure
+    await resetForTesting().catch(() => undefined);
+  });
+
+  it.each([
+    ["a negative timeout", -5, "0"],
+    ["NaN", Number.NaN, "10000"],
+  ])("forceFlush with %s gives up at the value it is read as, and never says NaN", async (_what, given, shown) => {
+    const { exporter } = heldMetricExporter();
+    startWith({ metricExporter: exporter });
+    metrics.getMeter("m").createCounter("c").add(1);
+
+    const error: unknown = await forceFlush(given).catch((caught: unknown) => caught);
+    expect((error as Error).message).toBe(
+      `@satoshibits/observability: forceFlush did not finish within ${shown} ms`,
+    );
+  }, 15_000);
 
   it("forceFlush with a timeout larger than a timer can hold waits for the export instead of giving up at once", async () => {
     const { exporter, answer } = heldMetricExporter();
@@ -2439,6 +2477,27 @@ describe("forceFlush and shutdown", () => {
 
       await expect(second).resolves.toBeUndefined();
       expect(slow.logRecords().map((record) => record.body)).toEqual(["held line"]);
+    });
+
+    it("a flush that timed out is still waited for: a shutdown after it sends what was emitted since", async () => {
+      const slow = await startSlowLogs(600);
+
+      await expect(forceFlush(100)).rejects.toThrow(/forceFlush did not finish within 100 ms/);
+      // the processor is still flushing the first line; only a call made after that is done sends this
+      logs.getLogger("l").emit({ body: "late line" });
+      await expect(shutdown()).resolves.toBeUndefined();
+
+      expect(slow.logRecords().map((record) => record.body)).toEqual(["held line", "late line"]);
+    });
+
+    it("a flush that timed out is still waited for: a forceFlush right after it sends what was emitted since", async () => {
+      const slow = await startSlowLogs(600);
+
+      await expect(forceFlush(100)).rejects.toThrow(/forceFlush did not finish within 100 ms/);
+      logs.getLogger("l").emit({ body: "late line" });
+      await expect(forceFlush()).resolves.toBeUndefined();
+
+      expect(slow.logRecords().map((record) => record.body)).toEqual(["held line", "late line"]);
     });
 
     it("a shutdown that starts while a flush is running waits for it, and then shuts down", async () => {

@@ -144,6 +144,13 @@ interface Part {
   shutdown: () => Promise<void>;
 }
 
+const partsOf = (signal: Signal, parts: Omit<Part, "signal">[]): Part[] =>
+  parts.map((part) => ({
+    signal,
+    forceFlush: () => part.forceFlush(),
+    shutdown: () => part.shutdown(),
+  }));
+
 interface Handle {
   status: PresetStatus;
   sdk?: NodeSDK;
@@ -153,6 +160,12 @@ interface Handle {
   shutdown?: Promise<void>;
   /** the forceFlush() running now, which a call made meanwhile joins */
   flushing?: Promise<void>;
+  /**
+   * the parts' own work for the latest forceFlush(), until it settles: a call that timed out
+   * has given up waiting, but its parts are still flushing, and the batch log processor
+   * answers any call made meanwhile at once, before sending anything
+   */
+  partsFlushing?: Promise<unknown>;
 }
 
 const HOOK_FLAG = Symbol.for("@satoshibits/observability.loader-hook");
@@ -631,21 +644,14 @@ export function start(options: StartOptions = {}): PresetStatus {
   diagnostics.activate();
   reportStartup(diagnostics, pipelines.signals);
 
-  const partsOf = (
-    signal: Signal,
-    parts: { forceFlush: () => Promise<void>; shutdown: () => Promise<void> }[],
-  ): Part[] =>
-    parts.map((part) => ({
-      signal,
-      forceFlush: () => part.forceFlush(),
-      shutdown: () => part.shutdown(),
-    }));
+  // the processors shut themselves down once; the reader is made to as well (see shutdownOnce)
+  pipelines.metricReaders.forEach(shutdownOnce);
   handle = {
     sdk,
     failures,
     parts: [
       ...partsOf("traces", pipelines.spanProcessors),
-      ...partsOf("metrics", pipelines.metricReaders.map(shutdownOnce)),
+      ...partsOf("metrics", pipelines.metricReaders),
       ...partsOf("logs", pipelines.logRecordProcessors),
     ],
     status: {
@@ -665,12 +671,16 @@ export function start(options: StartOptions = {}): PresetStatus {
  * `shutdown()` awaits each part beside the SDK's own call to it, so the
  * reader is given the processors' behaviour.
  */
-function shutdownOnce(reader: MetricReader): MetricReader {
+function shutdownOnce(reader: MetricReader): void {
   const shutdown = reader.shutdown.bind(reader);
   let once: Promise<void> | undefined;
+  // a later caller's options are ignored: the first call's shutdown is the one there is
   reader.shutdown = (options) => (once ??= shutdown(options));
-  return reader;
 }
+
+/** a timeout as given, or the default for NaN, within what a timer can hold */
+const timeoutOf = (given: number): number =>
+  Number.isNaN(given) ? DEFAULT_TIMEOUT_MILLIS : Math.min(Math.max(0, given), MAX_TIMER_MILLIS);
 
 /**
  * Reject when `work` has not settled within `timeoutMillis`; the timer never outlives the call.
@@ -692,7 +702,7 @@ async function within<T>(
           ),
         );
       },
-      Math.min(timeoutMillis, MAX_TIMER_MILLIS),
+      timeoutOf(timeoutMillis),
     );
   });
   try {
@@ -717,13 +727,17 @@ async function settleAll(
   alongside: Promise<unknown>[] = [],
   /** the timeout the caller gave, for the message, when less than it is left */
   shownMillis = timeoutMillis,
+  /** handed the parts' own work as it starts, which outlasts this call when it times out */
+  started?: (parts: Promise<unknown>) => void,
 ): Promise<void> {
   const call = current.failures?.open();
   let outcomes: PromiseSettledResult<void>[];
   try {
     // async: a part that throws instead of rejecting is still one outcome among the others
     const parts = Promise.allSettled(current.parts.map(async (part) => act(part)));
-    // awaited for its own sake only: what it rejects with, a part rejected with too
+    started?.(parts);
+    // the SDK's shutdown is awaited for timing only; its rejection is dropped, since the
+    // parts reject with the same failures
     await within(Promise.allSettled([parts, ...alongside]), timeoutMillis, what, shownMillis);
     outcomes = await parts;
   } finally {
@@ -733,16 +747,22 @@ async function settleAll(
   // timeout (`exportTimeoutMillis`, 30 s by default). An exporter whose request deadline is
   // longer than that (the OTLP default is 10 s) is abandoned with no result reaching the
   // wrapper, and the call resolves with nothing sent
-  const failures = new Map(call?.failures);
+  const recorded = [...(call?.failures ?? [])];
+  const failures = recorded.map(([, failure]) => failure);
+  // which error each failure came from, so one is not counted twice for its signal
+  const seen = recorded.map(([reason, failure]) => [failure.signal, reason] as const);
   outcomes.forEach((outcome, index) => {
     // a part that rejects says this call failed, whatever its error: the batch span processor
     // for a batch it sent, a simple processor for an export it was still waiting on, or a
-    // processor's own timeout. Stated by identifiers, once per error
-    if (outcome.status === "rejected" && !failures.has(outcome.reason)) {
-      failures.set(outcome.reason, exportFailure(current.parts[index]!.signal, outcome.reason));
-    }
+    // processor's own timeout. Stated by identifiers, once per signal and error (two signals
+    // can reject with the same value)
+    if (outcome.status !== "rejected") return;
+    const { signal } = current.parts[index]!;
+    if (seen.some(([s, reason]) => s === signal && reason === outcome.reason)) return;
+    seen.push([signal, outcome.reason]);
+    failures.push(exportFailure(signal, outcome.reason));
   });
-  if (failures.size > 0) throw new TelemetryExportError([...failures.values()]);
+  if (failures.length > 0) throw new TelemetryExportError(failures);
 }
 
 /**
@@ -753,14 +773,30 @@ async function settleAll(
  * A call made while another runs returns that one's promise (and its
  * timeout): the batch log processor answers a second flush at once, before
  * anything is sent, so a flush of its own would resolve early. What was
- * emitted after the running flush began is left for the next one.
+ * emitted after the running flush began is left for the next one. A call
+ * made after one timed out, while its parts are still flushing, waits for
+ * them (within its own timeout) and then flushes.
  */
 export function forceFlush(timeoutMillis = DEFAULT_TIMEOUT_MILLIS): Promise<void> {
   const current = handle;
   if (current?.status.state !== "running") return Promise.resolve();
   if (current.flushing) return current.flushing;
-  const flushing = settleAll(current, "forceFlush", timeoutMillis, (part) =>
-    part.forceFlush(),
+  const timeout = timeoutOf(timeoutMillis);
+  const flushing = afterPartsFlushed(current, timeout, "forceFlush", (left) =>
+    settleAll(
+      current,
+      "forceFlush",
+      left,
+      (part) => part.forceFlush(),
+      [],
+      timeout,
+      (parts) => {
+        current.partsFlushing = parts;
+        void parts.then(() => {
+          if (current.partsFlushing === parts) current.partsFlushing = undefined;
+        });
+      },
+    ),
   ).finally(() => {
     if (current.flushing === flushing) current.flushing = undefined;
   });
@@ -771,47 +807,49 @@ export function forceFlush(timeoutMillis = DEFAULT_TIMEOUT_MILLIS): Promise<void
 /**
  * Flush and stop telemetry. Rejects with a `TelemetryExportError` when
  * something buffered could not be sent, and when `timeoutMillis` passes;
- * every signal is shut down either way. A flush that is running is waited
- * for first (its outcome is its own caller's), within the same timeout: the
- * processors' shutdown, run during it, would return without sending what was
- * emitted since it began. A second call, during the first or after it,
- * returns the first call's promise. A process shuts down once; `start()`
- * cannot be called again.
+ * every signal is shut down either way. A flush whose parts are still
+ * running (one whose caller is waiting, or one that timed out) is waited for
+ * first, within the same timeout; its outcome is its own caller's. A second
+ * call, during the first or after it, returns the first call's promise. A
+ * process shuts down once; `start()` cannot be called again.
  */
 export function shutdown(timeoutMillis = DEFAULT_TIMEOUT_MILLIS): Promise<void> {
   const current = handle;
   if (current?.shutdown) return current.shutdown;
   if (current?.status.state !== "running" || !current.sdk) return Promise.resolve();
   current.status = { ...current.status, state: "shut-down" };
-  current.shutdown = shutDown(current, current.sdk, timeoutMillis);
+  const { sdk } = current;
+  const timeout = timeoutOf(timeoutMillis);
+  current.shutdown = afterPartsFlushed(current, timeout, "shutdown", (left) => {
+    // the SDK's call goes first: the providers mark themselves shut down and shut down their
+    // parts, and each part, asked again below, hands back that same shutdown's promise
+    const sdkShutdown = sdk.shutdown();
+    return settleAll(current, "shutdown", left, (part) => part.shutdown(), [sdkShutdown], timeout);
+  });
   return current.shutdown;
 }
 
-async function shutDown(current: Handle, sdk: NodeSDK, timeoutMillis: number): Promise<void> {
+/**
+ * Run `then` once the parts have finished the last flush, with what is left
+ * of `timeoutMillis`. The batch log processor answers a flush or shutdown
+ * made while it is flushing at once, without sending what was emitted since,
+ * so nothing is asked of the parts until they are done.
+ */
+async function afterPartsFlushed(
+  current: Handle,
+  timeoutMillis: number,
+  what: string,
+  then: (left: number) => Promise<void>,
+): Promise<void> {
   const started = Date.now();
-  const flushing = current.flushing;
-  if (flushing) {
+  if (current.partsFlushing) {
     try {
-      await within(
-        flushing.catch(() => undefined),
-        timeoutMillis,
-        "shutdown",
-      );
+      await within(current.partsFlushing, timeoutMillis, what);
     } catch {
-      // out of time: the shutdown below still starts, and rejects at once with the timeout
+      // out of time: `then` still runs, and rejects at once with the timeout
     }
   }
-  // the SDK's call goes first: the providers mark themselves shut down and shut down their
-  // parts, and each part, asked again below, hands back that same shutdown's promise
-  const sdkShutdown = sdk.shutdown();
-  await settleAll(
-    current,
-    "shutdown",
-    Math.max(0, timeoutMillis - (Date.now() - started)),
-    (part) => part.shutdown(),
-    [sdkShutdown],
-    timeoutMillis,
-  );
+  await then(Math.max(0, timeoutMillis - (Date.now() - started)));
 }
 
 /** What is running: per signal on or off and why, and where data goes. Never header values. */

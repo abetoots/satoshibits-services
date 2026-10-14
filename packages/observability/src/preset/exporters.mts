@@ -149,22 +149,22 @@ export function exportFailure(signal: Signal, error: unknown): ExportFailure {
  * heard through its rejection).
  */
 export class ExportFailureLog {
-  readonly #open = new Set<Map<unknown, ExportFailure>>();
+  readonly #open = new Set<[unknown, ExportFailure][]>();
 
   /**
    * collect the failures that arrive from now until `close()`, by the error
    * the processor was handed (so a processor's rejection with that same
    * error is not counted twice)
    */
-  open(): { failures: Map<unknown, ExportFailure>; close: () => void } {
-    const failures = new Map<unknown, ExportFailure>();
+  open(): { failures: [unknown, ExportFailure][]; close: () => void } {
+    const failures: [unknown, ExportFailure][] = [];
     this.#open.add(failures);
     return { failures, close: () => this.#open.delete(failures) };
   }
 
   /** a failed export: recorded for every call running now */
   record(error: unknown, failure: ExportFailure): void {
-    for (const failures of this.#open) failures.set(error, failure);
+    for (const failures of this.#open) failures.push([error, failure]);
   }
 }
 
@@ -229,7 +229,6 @@ function failureReporter(signal: Signal, context: ExporterContext) {
     });
   };
 }
-
 
 /**
  * The error of a failed export. Anything that is not an `Error` (a string
