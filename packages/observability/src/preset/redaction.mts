@@ -180,19 +180,41 @@ function refuse(message: string, ...results: unknown[]): never {
 }
 
 /**
- * A log body for a policy to work on: plain objects and arrays copied all the
- * way down, so that one changed in place leaves the record's own as it was.
+ * A value for a policy to work on: plain objects and arrays copied all the way
+ * down, so that one changed in place leaves the record's own as it was.
  * Anything else (a text, a number, bytes) is handed over as it is.
+ *
+ * The copy has the shape of the original: a part met twice is copied once, so
+ * what was shared stays shared and a value that contains itself is copied as
+ * one that does. What a policy makes of a cycle is the policy's business.
  */
-const copyOfBody = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(copyOfBody);
-  if (!isPlainObject(value)) return value;
-  return Object.fromEntries(
-    Object.entries(value).map(([key, inner]) => [key, copyOfBody(inner)]),
-  );
-};
+function copyForPolicy<T>(value: T, copies = new Map<object, unknown>()): T {
+  const isArray = Array.isArray(value);
+  if (!isArray && !isPlainObject(value)) return value;
+  const known = copies.get(value);
+  if (known !== undefined) return known as T;
+  if (isArray) {
+    const copy: unknown[] = [];
+    // noted before its parts are copied: one of them may be the array itself
+    copies.set(value, copy);
+    for (const item of value) copy.push(copyForPolicy(item, copies));
+    return copy as T;
+  }
+  const copy: Record<string, unknown> = {};
+  copies.set(value, copy);
+  for (const [key, inner] of Object.entries(value)) {
+    // defined, not assigned: a key named __proto__ is a key like any other
+    Object.defineProperty(copy, key, {
+      value: copyForPolicy(inner, copies),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  }
+  return copy as T;
+}
 
-const NOTHING_REPLACED = Object.freeze({});
+const NOTHING_REPLACED: Partial<RedactedSpan> & Partial<RedactedLogRecord> = Object.freeze({});
 
 const AS_GIVEN: Redactor = {
   text: (_surface, value) => value,
@@ -224,7 +246,7 @@ export function createRedactor(option: RedactionOption): Redactor {
   ): T => {
     if (input === undefined) return input;
     // a copy: the policy must not change what it is given, and this makes a slip harmless
-    const result: unknown = policy.attributes(surface, { ...input });
+    const result: unknown = policy.attributes(surface, copyForPolicy<PolicyAttributes>(input));
     if (!isPlainResult(result)) {
       refuse(
         `the redaction policy's attributes() did not return an attribute set for ${surface}`,
@@ -265,7 +287,7 @@ export function createRedactor(option: RedactionOption): Redactor {
     // name and attributes together, and the attributes a copy, as for any attribute set
     const result: unknown = policy.spanEvent({
       name: input.name,
-      attributes: { ...input.attributes },
+      attributes: copyForPolicy<PolicyAttributes>(input.attributes ?? {}),
     });
     // read once each: what is checked is what is exported
     const { name, attributes: eventAttributes } =
@@ -305,8 +327,8 @@ export function createRedactor(option: RedactionOption): Redactor {
     // the whole record at once, and the two optional texts only where the record has them:
     // a policy that copies what it is handed must not thereby add a key
     const result: unknown = policy.logRecord({
-      body: copyOfBody(input.body),
-      attributes: { ...input.attributes },
+      body: copyForPolicy<unknown>(input.body),
+      attributes: copyForPolicy<PolicyAttributes>(input.attributes),
       ...(input.eventName !== undefined && { eventName: input.eventName }),
       ...(input.severityText !== undefined && { severityText: input.severityText }),
     });

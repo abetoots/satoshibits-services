@@ -466,11 +466,16 @@ describe("startTestTelemetry", () => {
           exporter: wrapped(behindThePolicy, {
             ...createProbePolicy(),
             attributes: (_surface, attributes) => {
+              // inside a value too: the copy goes all the way down
+              for (const value of Object.values(attributes)) {
+                if (Array.isArray(value)) value.push("added by the policy");
+              }
               for (const key of Object.keys(attributes)) attributes[key] = "changed by the policy";
               attributes.added = "by the policy";
               return attributes;
             },
             spanEvent: (event) => {
+              (event.attributes.tags as unknown[]).push("added by the policy");
               event.name = "changed by the policy";
               event.attributes.key = "changed by the policy";
               event.attributes.added = "by the policy";
@@ -481,7 +486,12 @@ describe("startTestTelemetry", () => {
         new SimpleSpanProcessor({ exporter: beside }),
       );
       try {
-        emitOnEverySurface(provider.getTracer("kit"));
+        const span = provider.getTracer("kit").startSpan("checkout", {
+          attributes: { customer: "erin", attempt: 2, tags: ["a"] },
+          links: [{ context: LINKED, attributes: { reason: "retry of", tags: ["a"] } }],
+        });
+        span.addEvent("cache miss", { key: "cart", tags: ["a"] });
+        span.end();
         await provider.forceFlush();
 
         // the policy's changes are what it returned, so they are exported
@@ -489,23 +499,25 @@ describe("startTestTelemetry", () => {
         expect(changed!.attributes).toEqual({
           customer: "changed by the policy",
           attempt: "changed by the policy",
+          tags: "changed by the policy",
           added: "by the policy",
         });
         expect(changed!.events[0]).toMatchObject({
           name: "changed by the policy",
-          attributes: { key: "changed by the policy", added: "by the policy" },
+          attributes: { key: "changed by the policy", tags: ["a", "added by the policy"], added: "by the policy" },
         });
         expect(changed!.links[0]!.attributes).toEqual({
           reason: "changed by the policy",
+          tags: "changed by the policy",
           added: "by the policy",
         });
 
-        // and the span itself has none of them
+        // and the span itself has none of them, inside an attribute's value either
         const [original] = beside.getFinishedSpans();
-        expect(original!.attributes).toEqual({ customer: "erin", attempt: 2 });
-        expect(original!.events[0]).toMatchObject({ name: "cache miss", attributes: { key: "cart" } });
-        expect(original!.events[0]!.attributes).toEqual({ key: "cart" });
-        expect(original!.links[0]!.attributes).toEqual({ reason: "retry of" });
+        expect(original!.attributes).toEqual({ customer: "erin", attempt: 2, tags: ["a"] });
+        expect(original!.events[0]!.name).toBe("cache miss");
+        expect(original!.events[0]!.attributes).toEqual({ key: "cart", tags: ["a"] });
+        expect(original!.links[0]!.attributes).toEqual({ reason: "retry of", tags: ["a"] });
       } finally {
         await provider.shutdown();
       }
@@ -721,6 +733,7 @@ describe("startTestTelemetry", () => {
               body.added = "by the policy";
               // below the first level too: the copy goes all the way down
               body.order.items.push("added by the policy");
+              (record.attributes.tags as unknown[]).push("added by the policy");
               record.attributes.customer = "changed by the policy";
               record.attributes.added = "by the policy";
               return record;
@@ -731,7 +744,7 @@ describe("startTestTelemetry", () => {
       );
       try {
         const body = { customer: "erin", order: { items: ["cart"] } };
-        provider.getLogger("kit").emit({ body, attributes: { customer: "erin" } });
+        provider.getLogger("kit").emit({ body, attributes: { customer: "erin", tags: ["a"] } });
         await provider.forceFlush();
 
         // the policy's changes are what it returned, so they are exported
@@ -741,13 +754,73 @@ describe("startTestTelemetry", () => {
           added: "by the policy",
           order: { items: ["cart", "added by the policy"] },
         });
-        expect(changed!.attributes).toEqual({ customer: "changed by the policy", added: "by the policy" });
+        expect(changed!.attributes).toEqual({
+          customer: "changed by the policy",
+          tags: ["a", "added by the policy"],
+          added: "by the policy",
+        });
 
         // and the record itself has none of them, nor has the value the application logged
         const [original] = beside.getFinishedLogRecords();
         expect(original!.body).toEqual({ customer: "erin", order: { items: ["cart"] } });
-        expect(original!.attributes).toEqual({ customer: "erin" });
+        expect(original!.attributes).toEqual({ customer: "erin", tags: ["a"] });
         expect(body).toEqual({ customer: "erin", order: { items: ["cart"] } });
+      } finally {
+        await provider.shutdown();
+      }
+    });
+
+    it("exports a record whose body contains itself, and the record batched with it", async () => {
+      const events: DiagnosticsEvent[] = [];
+      const diagnostics = createDiagnostics({ sinkFactory: () => (event) => events.push(event) });
+      diagnostics.activate();
+      const behindThePolicy = new InMemoryLogRecordExporter();
+      const beside = new InMemoryLogRecordExporter();
+      const provider = providerWith(
+        new BatchLogRecordProcessor({
+          exporter: wrapLogRecordExporter(behindThePolicy, {
+            diagnostics,
+            redactor: createRedactor(createProbePolicy()),
+          }),
+        }),
+        new SimpleLogRecordProcessor({ exporter: beside }),
+      );
+      try {
+        interface Looped {
+          customer: string;
+          self?: Looped;
+          twice: { shared: string }[];
+        }
+        const shared = { shared: "part" };
+        const body: Looped = { customer: "erin", twice: [shared, shared] };
+        body.self = body;
+        const logger = provider.getLogger("kit");
+        logger.emit({ body: body as never });
+        logger.emit({ body: "the next line" });
+        await provider.forceFlush();
+
+        const [looped, next] = behindThePolicy.getFinishedLogRecords();
+        expect(behindThePolicy.getFinishedLogRecords()).toHaveLength(2);
+        expect(next!.body).toBe("[probe:log.record] the next line");
+        expect(events).toEqual([]);
+
+        // the probe marked the first level of a copy; below it the copy has the original's shape
+        const exported = looped!.body as unknown as Looped;
+        expect(exported).not.toBe(body);
+        expect(exported.customer).toBe("[probe:log.record] erin");
+        const copy = exported.self!;
+        expect(copy).not.toBe(body);
+        expect(copy.self).toBe(copy);
+        expect(copy.twice[0]).toBe(copy.twice[1]);
+        expect(copy.twice[0]).not.toBe(shared);
+
+        // and the original is as it was
+        expect(beside.getFinishedLogRecords()[0]!.body).toBe(body);
+        expect(body.customer).toBe("erin");
+        expect(body.self).toBe(body);
+        expect(body.twice).toHaveLength(2);
+        expect(body.twice[0]).toBe(shared);
+        expect(shared).toEqual({ shared: "part" });
       } finally {
         await provider.shutdown();
       }
