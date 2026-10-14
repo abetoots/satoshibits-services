@@ -151,13 +151,13 @@ describe("the pino wiring in the redaction package's README", () => {
     }
   });
 
-  it("redacts what the README says it does: the fields passed to a log call, at any depth, and an error under err", () => {
+  it("does what the README says it does: a log call's fields through redactFields, an error given as err described and redacted", () => {
     logger.info(
       {
         to: "a@b.io",
         password: "s3cr3t-value",
         nested: { list: [{ owner: "c@d.io" }] },
-        err: new Error("no mailbox jane@example.com"),
+        err: Object.assign(new Error("no mailbox jane@example.com"), { detail: "carried by the error" }),
       },
       "sent",
     );
@@ -169,6 +169,8 @@ describe("the pino wiring in the redaction package's README", () => {
       err: { name: "Error", message: "no mailbox [EMAIL]" },
       msg: "sent",
     });
+    // described: what the error carries beyond name, message, code and stack is not written
+    expect(Object.keys(line.err as object).sort()).toEqual(["message", "name", "stack"]);
     // the stack is kept, and masked like the message
     expect((line.err as { stack: string }).stack).toContain("Error: no mailbox [EMAIL]");
     for (const address of ["a@b.io", "c@d.io", "jane@example.com"]) expect(lines.at(-1)).not.toContain(address);
@@ -214,10 +216,14 @@ describe("the pino wiring in the redaction package's README", () => {
 
   it("writes an error under another key, and a class instance, as pino serializes them, as the README says", () => {
     const error = Object.assign(new Error("x"), { detail: "jane@example.com" });
-    logger.info({ failure: error, link: new URL("https://h.example/a?e=jane@example.com") }, "m");
+    logger.info(
+      { failure: error, link: new URL("https://h.example/a?e=jane@example.com"), at: new Date(0) },
+      "m",
+    );
     expect(logged()).toMatchObject({
       failure: { detail: "jane@example.com" },
       link: "https://h.example/a?e=jane@example.com",
+      at: "1970-01-01T00:00:00.000Z",
     });
   });
 
