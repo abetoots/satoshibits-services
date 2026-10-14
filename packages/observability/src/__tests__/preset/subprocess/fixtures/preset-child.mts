@@ -21,6 +21,7 @@ import {
 import { logs } from "@opentelemetry/api-logs";
 // the 1.x span processor, as a 1.x consumer passes it to the facade
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
+import { createRequire } from "node:module";
 import net from "node:net";
 
 import type { ChildResult, ChildScenario } from "../harness.mjs";
@@ -121,20 +122,26 @@ const usesFacade = scenario.start === "facade" || scenario.start === "start-then
 let facadeExporter: InMemorySpanExporter | undefined;
 let statusBeforeFacade: ChildResult["statusBeforeFacade"] = null;
 let statusAfterFacade: ChildResult["statusAfterFacade"] = null;
+let statusAfterSecondFacade: ChildResult["statusAfterSecondFacade"] = null;
+let httpPatched: ChildResult["httpPatched"] = null;
+const facadeConfig = (given: Omit<NonNullable<ChildScenario["facade"]>, "testSpanProcessor">) => ({
+  environment: "node" as const,
+  serviceName: "facade-child",
+  disableInstrumentation: true,
+  ...given,
+  ...(facadeExporter && { testSpanProcessor: new SimpleSpanProcessor(facadeExporter) }),
+});
 // loaded only here: the root entry is not part of any other scenario
 const facade = usesFacade ? (await import("../../../../index.mjs")).SmartClient : undefined;
 if (facade) {
   const { testSpanProcessor, ...given } = scenario.facade ?? {};
   if (testSpanProcessor) facadeExporter = new InMemorySpanExporter();
   if (scenario.start === "start-then-facade") statusBeforeFacade = getStatus();
-  await facade.initialize({
-    environment: "node",
-    serviceName: "facade-child",
-    disableInstrumentation: true,
-    ...given,
-    ...(facadeExporter && { testSpanProcessor: new SimpleSpanProcessor(facadeExporter) }),
-  });
+  await facade.initialize(facadeConfig(given));
   statusAfterFacade = getStatus();
+  httpPatched =
+    (createRequire(import.meta.url)("node:http") as { request: { __wrapped?: boolean } }).request
+      .__wrapped === true;
 }
 
 const logLevelAfterStart = process.env.OTEL_LOG_LEVEL ?? null;
@@ -259,6 +266,12 @@ try {
 }
 const finishMillis = Date.now() - finishStarted;
 
+if (facade && scenario.facadeAgain) {
+  const { testSpanProcessor: _ignored, ...given } = scenario.facade ?? {};
+  await facade.initialize(facadeConfig(given));
+  statusAfterSecondFacade = getStatus();
+}
+
 let againError: string | null = null;
 if (scenario.emitAgainAfterFinish) {
   tracer.startSpan("after-finish").end();
@@ -300,6 +313,8 @@ const result: ChildResult = {
   facadeSpans,
   statusBeforeFacade,
   statusAfterFacade,
+  statusAfterSecondFacade,
+  httpPatched,
 };
 process.stdout.write(`RESULT ${JSON.stringify(result)}\n`);
 

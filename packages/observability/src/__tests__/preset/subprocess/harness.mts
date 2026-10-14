@@ -41,10 +41,14 @@ export interface ChildScenario {
    */
   facade?: {
     serviceName?: string;
+    serviceVersion?: string;
     endpoint?: string;
     headers?: Record<string, string>;
     testSpanProcessor?: boolean;
+    disableInstrumentation?: boolean;
   };
+  /** after the facade's shutdown, initialize it again with the same config */
+  facadeAgain?: boolean;
   /** merged over `{ instrumentations: false }` */
   options?: Omit<StartOptions, "diagnostics" | "testExporters" | "redaction">;
   /**
@@ -134,6 +138,10 @@ export interface ChildResult {
   statusBeforeFacade: PresetStatus | null;
   /** the status once the facade was initialized; null without a facade */
   statusAfterFacade: PresetStatus | null;
+  /** the status once the facade was initialized again (`facadeAgain`); null otherwise */
+  statusAfterSecondFacade: PresetStatus | null;
+  /** whether `http.request` was wrapped by an instrumentation once the facade was initialized */
+  httpPatched: boolean | null;
 }
 
 export interface ChildRun<R = ChildResult> {

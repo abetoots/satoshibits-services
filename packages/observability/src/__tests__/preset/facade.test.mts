@@ -24,8 +24,12 @@ import type { OtlpSink } from "../../testing/otlp-sink.mjs";
 import type { PushMetricExporter } from "@opentelemetry/sdk-metrics";
 
 import { forceFlush, getStatus, start } from "../../preset.mjs";
-import { resetForTesting, startWithTestHooks } from "../../preset/runtime.mjs";
-import { SmartClient } from "../../index.mjs";
+import { resolveConfig } from "../../preset/config.mjs";
+import { createDiagnostics } from "../../preset/diagnostics.mjs";
+import { ExportFailureLog } from "../../preset/exporters.mjs";
+import { createRedactor } from "../../preset/redaction.mjs";
+import { buildPipelines, resetForTesting, startWithTestHooks } from "../../preset/runtime.mjs";
+import { sanitizeObject, SmartClient } from "../../index.mjs";
 import { NodeSDK as FacadeSdk } from "../../sdk-wrapper-node.mjs";
 import { startTestTelemetry } from "../../testing/in-memory.mjs";
 import { startOtlpSink } from "../../testing/otlp-sink.mjs";
@@ -338,5 +342,105 @@ describe("the facade's config", () => {
       .filter((line) => line.includes('"msg":"metrics export failed"'));
     expect(failures).toHaveLength(1);
     expect(failures[0]).toContain('"signal":"metrics"');
+  });
+});
+
+// rows of COMPATIBILITY.md that need no network
+describe("the facade's config, as against 1.x (in-process)", () => {
+  const hooked = (exporter = new InMemorySpanExporter()) =>
+    ({
+      environment: "node",
+      serviceName: "facade",
+      disableInstrumentation: true,
+      testSpanProcessor: new SimpleSpanProcessor(exporter),
+    }) as const;
+
+  it("builds the metric reader for an endpoint with a 60 s interval, where 1.x used 10 s", async () => {
+    const resolution = resolveConfig(
+      { serviceName: "facade", endpoint: "http://127.0.0.1:9", redaction: standardPolicy },
+      {},
+    );
+    if (resolution.disabled) throw new Error("not disabled here");
+    const pipelines = buildPipelines(
+      resolution.config,
+      {},
+      { diagnostics: createDiagnostics(), redactor: createRedactor(standardPolicy), failures: new ExportFailureLog() },
+      true,
+    );
+
+    const reader = pipelines.metricReaders[0] as unknown as { _exportInterval: number };
+    expect(reader._exportInterval).toBe(60_000);
+    await Promise.all(pipelines.spanProcessors.map((processor) => processor.shutdown()));
+  });
+
+  it("gives the test hooks nothing with OTEL_SDK_DISABLED=true", async () => {
+    vi.stubEnv("OTEL_SDK_DISABLED", "true");
+    const exporter = new InMemorySpanExporter();
+
+    await SmartClient.initialize(hooked(exporter));
+    trace.getTracer("facade-test").startSpan("disabled").end();
+
+    expect(getStatus().state).toBe("disabled");
+    expect(exporter.getFinishedSpans()).toEqual([]);
+  });
+
+  it("starts again after a shutdown in test mode, with the new hooks", async () => {
+    const first = new InMemorySpanExporter();
+    const second = new InMemorySpanExporter();
+
+    await SmartClient.initialize(hooked(first));
+    await SmartClient.shutdown();
+    await SmartClient.initialize(hooked(second));
+    trace.getTracer("facade-test").startSpan("second-run").end();
+
+    expect(getStatus().state).toBe("running");
+    expect(second.getFinishedSpans().map((span) => span.name)).toEqual(["second-run"]);
+  });
+
+  it("honours OTEL_TRACES_SAMPLER, as 1.x did", async () => {
+    vi.stubEnv("OTEL_TRACES_SAMPLER", "always_off");
+    const exporter = new InMemorySpanExporter();
+
+    await SmartClient.initialize(hooked(exporter));
+    trace.getTracer("facade-test").startSpan("unsampled").end();
+
+    expect(getStatus().sampler).toBe("always_off");
+    expect(exporter.getFinishedSpans()).toEqual([]);
+  });
+
+  it("builds nothing with skipSdkInitialization, as 1.x did", async () => {
+    await SmartClient.initialize({ environment: "node", serviceName: "facade", skipSdkInitialization: true });
+
+    expect(getStatus().state).toBe("not-started");
+  });
+
+  it("registers its process handlers with enableProcessHandlers and removes them at shutdown, as 1.x did", async () => {
+    const before = process.listenerCount("SIGTERM");
+
+    await SmartClient.initialize({ ...hooked(), enableProcessHandlers: true });
+    expect(process.listenerCount("SIGTERM")).toBe(before + 1);
+    await SmartClient.shutdown();
+
+    expect(process.listenerCount("SIGTERM")).toBe(before);
+  });
+
+  it("warns about an invalid samplingRate and about enablePrometheus, and applies neither, as 1.x did", async () => {
+    const warnings = vi.spyOn(console, "warn");
+
+    await SmartClient.initialize({ ...hooked(), samplingRate: 1.5, enablePrometheus: true });
+
+    const messages = warnings.mock.calls.map(([message]) => String(message));
+    expect(messages).toContainEqual(expect.stringContaining("Invalid samplingRate: 1.5"));
+    expect(messages).toContainEqual(expect.stringContaining("enablePrometheus is configured"));
+    expect(getStatus().sampler).toBe("parentbased_always_on");
+  });
+
+  it("configures the root entry's sanitize helpers with sanitizerOptions, as 1.x did", async () => {
+    await SmartClient.initialize({ ...hooked(), sanitizerOptions: { customRedactFields: ["account"] } });
+
+    expect(sanitizeObject({ account: "acc-1", plain: "kept" })).toEqual({
+      account: "[REDACTED]",
+      plain: "kept",
+    });
   });
 });
