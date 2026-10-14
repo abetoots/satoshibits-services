@@ -74,6 +74,7 @@ import {
   exportFailure,
   FAILURE_REPORT_INTERVAL_MILLIS,
   hostOf,
+  nameOf,
   TelemetryExportError,
   wasReportedByExporter,
   wrapLogRecordExporter,
@@ -190,31 +191,75 @@ let testInstrumentations: Instrumentation[] | undefined;
  */
 let undoFailed = false;
 
-/** what the API holds, by identity; the context manager and propagator have no public reader */
+/** a registration that could not be read: never disabled, since it may not be the preset's */
+const UNKNOWN = Symbol("unknown registration");
+
+/**
+ * Call the API's own reader `name`, where there is one. The context manager
+ * and the propagator have no public reader; the private ones used here exist
+ * in every 1.x release so far, and an API without them makes that
+ * registration unknown, not an error.
+ */
+function readPrivately(api: object, name: string): unknown {
+  try {
+    const read = (api as Record<string, unknown>)[name];
+    return typeof read === "function" ? (read as () => unknown).call(api) : UNKNOWN;
+  } catch {
+    return UNKNOWN;
+  }
+}
+
+/** what the API holds, by identity; never throws */
 function registered() {
-  const tracerProvider = trace.getTracerProvider();
-  return {
-    // the API hands out one proxy whether or not a provider is registered: what it delegates to is
-    tracerProvider:
-      tracerProvider instanceof ProxyTracerProvider ? tracerProvider.getDelegate() : tracerProvider,
-    meterProvider: metrics.getMeterProvider(),
-    loggerProvider: logs.getLoggerProvider(),
-    contextManager: (context as unknown as { _getContextManager: () => unknown })._getContextManager(),
-    propagator: (propagation as unknown as { _getGlobalPropagator: () => unknown })._getGlobalPropagator(),
+  const read = (get: () => unknown): unknown => {
+    try {
+      return get();
+    } catch {
+      return UNKNOWN;
+    }
   };
+  return {
+    tracerProvider: read(() => {
+      const provider = trace.getTracerProvider();
+      // the API hands out one proxy whether or not a provider is registered: what it delegates to is
+      return provider instanceof ProxyTracerProvider ? provider.getDelegate() : provider;
+    }),
+    meterProvider: read(() => metrics.getMeterProvider()),
+    loggerProvider: read(() => logs.getLoggerProvider()),
+    contextManager: readPrivately(context, "_getContextManager"),
+    propagator: readPrivately(propagation, "_getGlobalPropagator"),
+  };
+}
+
+const REGISTRATION_NAMES: Record<keyof ReturnType<typeof registered>, string> = {
+  tracerProvider: "tracer provider",
+  meterProvider: "meter provider",
+  loggerProvider: "logger provider",
+  contextManager: "context manager",
+  propagator: "propagator",
+};
+
+/** what a failed start built, as far as it got */
+interface Built {
+  instrumentations: Instrumentation[];
+  sdk?: NodeSDK;
+  pipelines?: Pipelines;
 }
 
 /**
  * Give back what a failed start registered, and only that: a registration
  * that is not what it was before the start is the preset's (the API refuses
  * to replace one that someone else made first, so theirs is unchanged and
- * left alone). Every instrumentation is disabled: they patch modules as
- * they are made, before anything is registered. Returns whether all of it
- * could be undone.
+ * left alone; one that cannot be read is left alone too, and said so). Every
+ * instrumentation is disabled: they patch modules as they are made, before
+ * anything is registered. What was built is stopped as well, without
+ * waiting: a provider no longer registered would otherwise go on exporting
+ * on its own timers. Never throws; returns whether all of it could be undone.
  */
 function undoStart(
   before: ReturnType<typeof registered>,
-  instrumentations: Instrumentation[],
+  built: Built,
+  diagnostics: Diagnostics,
 ): boolean {
   let complete = true;
   const attempt = (undo: () => void) => {
@@ -224,18 +269,55 @@ function undoStart(
       complete = false;
     }
   };
-  for (const instrumentation of instrumentations) attempt(() => instrumentation.disable());
-  const now = registered();
-  const disable: Record<keyof typeof now, () => void> = {
-    tracerProvider: () => trace.disable(),
-    meterProvider: () => metrics.disable(),
-    loggerProvider: () => logs.disable(),
-    contextManager: () => context.disable(),
-    propagator: () => propagation.disable(),
-  };
-  for (const key of Object.keys(disable) as (keyof typeof now)[]) {
-    if (now[key] !== before[key]) attempt(disable[key]);
+  for (const instrumentation of built.instrumentations) {
+    attempt(() => instrumentation.disable());
   }
+  attempt(() => {
+    const now = registered();
+    const disable: Record<keyof typeof now, () => void> = {
+      tracerProvider: () => trace.disable(),
+      meterProvider: () => metrics.disable(),
+      loggerProvider: () => logs.disable(),
+      contextManager: () => context.disable(),
+      propagator: () => propagation.disable(),
+    };
+    for (const key of Object.keys(disable) as (keyof typeof now)[]) {
+      if (now[key] === UNKNOWN || before[key] === UNKNOWN) {
+        diagnostics.report({
+          level: "warn",
+          message: `a failed start could not check the ${REGISTRATION_NAMES[key]} it may have registered, and left it as it is`,
+        });
+      } else if (now[key] !== before[key]) {
+        attempt(disable[key]);
+      }
+    }
+  });
+  // the SDK shuts down the providers it made; the span and log processors are asked too, in case
+  // it failed before making theirs (each shuts down once). A metric reader runs only once a
+  // provider has it, so the SDK's call covers it
+  const stopping: Promise<unknown>[] = [];
+  const stop = (part: { shutdown: () => Promise<unknown> }) =>
+    attempt(() => stopping.push(part.shutdown()));
+  if (built.sdk) stop(built.sdk);
+  for (const processor of [
+    ...(built.pipelines?.spanProcessors ?? []),
+    ...(built.pipelines?.logRecordProcessors ?? []),
+  ]) {
+    stop(processor);
+  }
+  void Promise.allSettled(stopping).then((results) => {
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed === undefined) return;
+    try {
+      diagnostics.report({
+        level: "error",
+        message: "a failed start could not stop everything it had built",
+        fields: { error: nameOf(failed.reason) },
+      });
+    } catch {
+      // the undo never throws, later or now
+    }
+  });
   return complete;
 }
 
@@ -669,7 +751,7 @@ export function start(options: StartOptions = {}): PresetStatus {
 
   // what was registered before this start, so a failure gives back only what it added
   const before = registered();
-  let instrumentations: Instrumentation[] = [];
+  const built: Built = { instrumentations: [] };
 
   // from here on things are registered. The diagnostics logger goes first: the
   // upstream constructors below report unusable settings through it, and it
@@ -689,17 +771,19 @@ export function start(options: StartOptions = {}): PresetStatus {
   try {
     const resource = buildResource(config, redactor);
     const sampler = buildSampler(config.sampler);
-    instrumentations = [
+    const instrumentations = [
       ...buildInstrumentations(options.instrumentations, config, testExporters),
       ...(testInstrumentations ?? []),
     ];
+    built.instrumentations = instrumentations;
     pipelines = buildPipelines(
       config,
       testExporters,
       { diagnostics, redactor, failures },
       options.redaction !== undefined,
     );
-    const built = pipelines;
+    built.pipelines = pipelines;
+    const made = pipelines;
     sdk = withoutLogLevelVariable(
       () =>
         new NodeSDK({
@@ -707,18 +791,19 @@ export function start(options: StartOptions = {}): PresetStatus {
           // the resource is complete; detection here would merge the environment in again, unfiltered
           autoDetectResources: false,
           sampler,
-          spanProcessors: built.spanProcessors,
-          metricReaders: built.metricReaders,
-          logRecordProcessors: built.logRecordProcessors,
+          spanProcessors: made.spanProcessors,
+          metricReaders: made.metricReaders,
+          logRecordProcessors: made.logRecordProcessors,
           instrumentations,
         }),
     );
+    built.sdk = sdk;
     sdk.start();
     // last, once nothing can fail: a loader hook cannot be unregistered
     if (options.loaderHook !== false) installLoaderHook();
   } catch (error) {
     // give back what was registered above, and let what was held be seen
-    if (!undoStart(before, instrumentations)) {
+    if (!undoStart(before, built, diagnostics)) {
       undoFailed = true;
       diagnostics.report({
         level: "error",
