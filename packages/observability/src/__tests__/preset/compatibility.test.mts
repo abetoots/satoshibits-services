@@ -7,6 +7,7 @@
 import { metrics, SpanKind as ApiSpanKind, SpanStatusCode as ApiSpanStatusCode, trace } from "@opentelemetry/api";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+// reads exports through the TypeScript compiler API in JavaScript, which TypeScript 7 (the native port) may not provide
 import { createProgram, ModuleKind, ModuleResolutionKind, ScriptTarget, SymbolFlags } from "typescript";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
