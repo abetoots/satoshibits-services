@@ -19,6 +19,8 @@ import {
   TraceFlags,
 } from "@opentelemetry/api";
 import { logs } from "@opentelemetry/api-logs";
+// the 1.x span processor, as a 1.x consumer passes it to the facade
+import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import net from "node:net";
 
 import type { ChildResult, ChildScenario } from "../harness.mjs";
@@ -106,12 +108,33 @@ const startOptions = (): Parameters<typeof start>[0] => ({
 
 if (scenario.start === "register") {
   await import("../../../../register.mjs");
-} else if (scenario.start !== "none") {
+} else if (scenario.start !== "none" && scenario.start !== "facade") {
   try {
     start(startOptions());
   } catch (error) {
     startError = error instanceof Error ? error.message : String(error);
   }
+}
+
+// ===== the deprecated facade =====
+const usesFacade = scenario.start === "facade" || scenario.start === "start-then-facade";
+let facadeExporter: InMemorySpanExporter | undefined;
+let statusBeforeFacade: ChildResult["statusBeforeFacade"] = null;
+let statusAfterFacade: ChildResult["statusAfterFacade"] = null;
+// loaded only here: the root entry is not part of any other scenario
+const facade = usesFacade ? (await import("../../../../index.mjs")).SmartClient : undefined;
+if (facade) {
+  const { testSpanProcessor, ...given } = scenario.facade ?? {};
+  if (testSpanProcessor) facadeExporter = new InMemorySpanExporter();
+  if (scenario.start === "start-then-facade") statusBeforeFacade = getStatus();
+  await facade.initialize({
+    environment: "node",
+    serviceName: "facade-child",
+    disableInstrumentation: true,
+    ...given,
+    ...(facadeExporter && { testSpanProcessor: new SimpleSpanProcessor(facadeExporter) }),
+  });
+  statusAfterFacade = getStatus();
 }
 
 const logLevelAfterStart = process.env.OTEL_LOG_LEVEL ?? null;
@@ -201,6 +224,9 @@ if (scenario.lingerMillis) {
   await new Promise((resolve) => setTimeout(resolve, scenario.lingerMillis));
 }
 
+// read before the finish: an in-memory exporter forgets its spans when it is shut down
+const facadeSpans = facadeExporter?.getFinishedSpans().map((span) => span.name) ?? null;
+
 // ===== finish =====
 /** everything of an error a caller could print, so a test can search it for what must not be there */
 const printable = (error: unknown): string => {
@@ -221,6 +247,8 @@ const finishStarted = Date.now();
 try {
   if (scenario.finish === "forceFlush") {
     await forceFlush(scenario.timeoutMillis);
+  } else if (facade && scenario.finish !== "none") {
+    await facade.shutdown();
   } else if (scenario.finish !== "none") {
     await shutdown(scenario.timeoutMillis);
   }
@@ -269,6 +297,9 @@ const result: ChildResult = {
   sinkFactoryCalledAfterSdkStarted,
   logLevelAfterStart,
   endpointVariablesRestored,
+  facadeSpans,
+  statusBeforeFacade,
+  statusAfterFacade,
 };
 process.stdout.write(`RESULT ${JSON.stringify(result)}\n`);
 

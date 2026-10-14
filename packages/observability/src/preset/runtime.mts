@@ -39,6 +39,7 @@ import type {
   PresetConfigOptions,
   ResolvedConfig,
   Signal,
+  SignalConfig,
   SignalOffReason,
 } from "./config.mjs";
 import type { Diagnostics, DiagnosticsSink } from "./diagnostics.mjs";
@@ -118,10 +119,20 @@ export interface StartOptions extends PresetConfigOptions {
   testExporters?: TestExporters;
 }
 
+/**
+ * The deprecated 1.x facade's test hooks: a span processor and a metric
+ * reader of the consumer's own, installed as given (no exporter wrapper, no
+ * redaction policy), as the facade did in 1.x. Not part of the public entry.
+ */
+export interface TestHooks {
+  spanProcessor?: SpanProcessor;
+  metricReader?: MetricReader;
+}
+
 export type SignalStatus =
   | {
       enabled: true;
-      /** `test` when a test exporter replaced the network */
+      /** `test` when a test exporter (or the deprecated facade's test hook) replaced the network */
       destination: "otlp" | "test";
       /** host and port only; never the path, query or credentials */
       endpoint?: string;
@@ -320,7 +331,7 @@ export function instrumentationsForTesting(added: Instrumentation[] | undefined)
   testInstrumentations = added;
 }
 
-const allOff = (reason: SignalOffReason): Record<Signal, SignalStatus> => ({
+const allOff = (reason: SignalOffReason): Record<Signal, SignalStatus> & Record<Signal, SignalConfig> => ({
   traces: { enabled: false, reason },
   metrics: { enabled: false, reason },
   logs: { enabled: false, reason },
@@ -474,7 +485,11 @@ export function buildPipelines(
   test: TestExporters,
   base: Omit<ExporterContext, "endpointHost">,
   redactionNamed: boolean,
+  hooks?: TestHooks,
 ): Pipelines {
+  // the facade's hooks are the consumer's own, given as they are; the other signals were
+  // turned off before this was called, so nothing here reaches an exporter
+  if (hooks !== undefined) return pipelinesOfHooks(hooks);
   // Validation already refused a start that exports with no `redaction` named. This is the
   // same rule asked a second time, at the one place exporters are made, so that a change to
   // either side that let them disagree would stop here and not export as given.
@@ -582,6 +597,21 @@ export function buildPipelines(
   return { spanProcessors, metricReaders, logRecordProcessors, signals };
 }
 
+function pipelinesOfHooks(hooks: TestHooks): Pipelines {
+  const off = allOff("test-hooks");
+  return {
+    // a tracer provider is registered only with a span processor; see buildPipelines
+    spanProcessors: [hooks.spanProcessor ?? new NoopSpanProcessor()],
+    metricReaders: hooks.metricReader ? [hooks.metricReader] : [],
+    logRecordProcessors: [],
+    signals: {
+      traces: hooks.spanProcessor ? { enabled: true, destination: "test" } : off.traces,
+      metrics: hooks.metricReader ? { enabled: true, destination: "test" } : off.metrics,
+      logs: off.logs,
+    },
+  };
+}
+
 function reportStartup(
   diagnostics: Diagnostics,
   signals: Record<Signal, SignalStatus>,
@@ -626,7 +656,11 @@ function withoutLogLevelVariable<T>(construct: () => T): T {
  * reported again. Nothing else is skipped: an error with a code that the
  * wrapper never saw (a file error from an instrumentation, say) is reported.
  */
-function installErrorHandler(diagnostics: Diagnostics): void {
+function installErrorHandler(
+  diagnostics: Diagnostics,
+  /** a metric reader was injected: its exporter is not the preset's, and nobody else reports its failures */
+  unwrappedReader: boolean,
+): void {
   const limiters = new Map<string, ReturnType<typeof createRateLimiter>>();
   setGlobalErrorHandler((error) => {
     try {
@@ -639,12 +673,13 @@ function installErrorHandler(diagnostics: Diagnostics): void {
       const message = typeof detail.message === "string" ? detail.message : "";
       // already reported, per signal, by the exporter wrapper: that exact error object, or the
       // metric reader's rewrapping of one (the reader's own timeout goes through the diag logger)
-      if (
-        wasReportedByExporter(error) ||
-        message.startsWith("PeriodicExportingMetricReader: metrics export failed")
-      ) {
-        return;
-      }
+      if (wasReportedByExporter(error)) return;
+      const readerExportFailed = message.startsWith(
+        "PeriodicExportingMetricReader: metrics export failed",
+      );
+      // a reader holds one exporter, and with an injected reader the preset builds no other:
+      // its failure is reported here, the way the wrapper would have, or by nobody
+      if (readerExportFailed && !unwrappedReader) return;
       // one limit per kind of error: its name and the shape of its message (numbers aside), since
       // most SDK errors are plain `Error`s and a repeating one must not hide a different one.
       // Past the first few kinds, the rest share one limit.
@@ -656,6 +691,15 @@ function installErrorHandler(diagnostics: Diagnostics): void {
         limiters.set(key, limit);
       }
       limit((suppressed) => {
+        if (readerExportFailed) {
+          // the message quotes the exporter's error, whose text comes from the far end
+          diagnostics.report({
+            level: "error",
+            message: "metrics export failed",
+            fields: { signal: "metrics", error: name, ...(suppressed > 0 && { suppressed }) },
+          });
+          return;
+        }
         diagnostics.report({
           level: "error",
           message: "telemetry pipeline error",
@@ -698,6 +742,27 @@ const snapshot = (status: PresetStatus): PresetStatus => structuredClone(status)
  * `OTEL_SDK_DISABLED=true` it registers nothing and returns.
  */
 export function start(options: StartOptions = {}): PresetStatus {
+  return startRuntime(options, undefined);
+}
+
+/**
+ * `start()` for the deprecated facade: `hooks` are installed as given and
+ * every signal without one is off, whatever the environment says (an empty
+ * object turns every signal off). Not part of the public entry.
+ */
+export function startWithTestHooks(options: StartOptions, hooks: TestHooks): PresetStatus {
+  if (options.testExporters !== undefined) {
+    throw new Error(
+      "@satoshibits/observability: test hooks and test exporters cannot be given together",
+    );
+  }
+  return startRuntime(options, {
+    ...(hooks.spanProcessor !== undefined && { spanProcessor: hooks.spanProcessor }),
+    ...(hooks.metricReader !== undefined && { metricReader: hooks.metricReader }),
+  });
+}
+
+function startRuntime(options: StartOptions, hooks: TestHooks | undefined): PresetStatus {
   // first of all, whatever else this start comes to (a second call included): a promise
   // passed as a resource attribute is given a handler here, before anything can throw
   const deferredResourceAttributes = deferredAttributes(options.resourceAttributes);
@@ -729,7 +794,11 @@ export function start(options: StartOptions = {}): PresetStatus {
     };
     return snapshot(handle.status);
   }
-  const { config } = resolution;
+  // with hooks, the variables are still validated but no signal goes to the network
+  const config: ResolvedConfig =
+    hooks === undefined
+      ? resolution.config
+      : { ...resolution.config, signals: allOff("test-hooks") };
 
   // validation has passed: `redaction` is absent only when nothing is exported
   const redactor = createRedactor(options.redaction ?? false);
@@ -758,7 +827,7 @@ export function start(options: StartOptions = {}): PresetStatus {
     logLevel: diagnostics.diagLevel,
     suppressOverrideMessage: true,
   });
-  installErrorHandler(diagnostics);
+  installErrorHandler(diagnostics, hooks?.metricReader !== undefined);
   // held with everything else, so a start that fails below still shows them
   for (const warning of config.warnings) {
     diagnostics.report({ level: "warn", message: warning });
@@ -779,6 +848,7 @@ export function start(options: StartOptions = {}): PresetStatus {
       testExporters,
       { diagnostics, redactor, failures },
       options.redaction !== undefined,
+      hooks,
     );
     built.pipelines = pipelines;
     const made = pipelines;

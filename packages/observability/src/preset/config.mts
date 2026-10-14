@@ -83,6 +83,8 @@ export type SignalOffReason =
   | "not-requested"
   /** `OTEL_SDK_DISABLED=true` */
   | "sdk-disabled"
+  /** the deprecated facade was given test hooks (or `OBS_TEST_NO_EXPORT=1`), and none for this signal */
+  | "test-hooks"
   /** `start()` has not been called in this process */
   | "not-started";
 
