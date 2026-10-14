@@ -5,7 +5,9 @@
  * process globals, so only a new process gives an honest start. The child is
  * plain `node` running an esbuild bundle of the fixture and the library
  * SOURCE; dependencies stay external and are loaded by node itself, which is
- * how a consumer's build treats them.
+ * how a consumer's build treats them. `runNode` runs any other command line
+ * (another node binary, `--import`, a plain `.mjs` application) from the
+ * package directory, as a consumer runs one.
  *
  * Every test in this project also holds a "trap": a sink on the
  * specification's default port, 4318, on both loopback families. Anything
@@ -97,13 +99,18 @@ export interface ChildResult {
   endpointVariablesRestored: boolean;
 }
 
-export interface ChildRun {
+export interface ChildRun<R = ChildResult> {
   code: number | null;
   stdout: string;
   stderr: string;
   /** JSON lines the child wrote to stderr (the default diagnostics sink) */
   stderrLines: Record<string, unknown>[];
-  result: ChildResult;
+  result: R;
+}
+
+/** what every child reports, so the checks shared by a file can read its sockets */
+interface ReportsSockets {
+  sockets: ChildResult["sockets"];
 }
 
 const FIXTURE = fileURLToPath(
@@ -149,9 +156,20 @@ const SCRUBBED_ENV_NAMES = new Set([
 const CHILD_DEADLINE_MILLIS = 20_000;
 
 /** every run since the last call, for a check shared by all tests of a file */
-const recentRuns: ChildRun[] = [];
-export function takeRecentRuns(): ChildRun[] {
+const recentRuns: ChildRun<ReportsSockets>[] = [];
+export function takeRecentRuns(): ChildRun<ReportsSockets>[] {
   return recentRuns.splice(0);
+}
+
+/** the environment a child sees: the runner's, less anything telemetry-related, plus `env` */
+function childEnvironment(env: Record<string, string>): NodeJS.ProcessEnv {
+  const childEnv: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (SCRUBBED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) continue;
+    if (SCRUBBED_ENV_NAMES.has(key)) continue;
+    childEnv[key] = value;
+  }
+  return Object.assign(childEnv, env);
 }
 
 /**
@@ -163,21 +181,40 @@ export async function runChild(
   env: Record<string, string> = {},
 ): Promise<ChildRun> {
   const bundle = await bundleFixture();
-
-  const childEnv: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (SCRUBBED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) continue;
-    if (SCRUBBED_ENV_NAMES.has(key)) continue;
-    childEnv[key] = value;
-  }
-  Object.assign(childEnv, env, {
+  return spawnForResult<ChildResult>(process.execPath, [bundle], {
+    ...env,
     OBS_CHILD_SCENARIO: JSON.stringify(scenario),
   });
+}
 
+export interface NodeRun {
+  /** the node binary (default: the one running the tests) */
+  node?: string;
+  /** everything after the binary, e.g. `["--import", "…/register", "app.mjs"]` */
+  args: string[];
+  /** as for runChild: the only telemetry-related environment the child sees */
+  env?: Record<string, string>;
+}
+
+/**
+ * Run any node command line from the package directory, the way a consumer
+ * runs an application. The child must print one `RESULT {json}` line that
+ * carries at least its outbound `sockets`. Rejects when the binary does not
+ * exist, so a missing node version fails a test and never skips it.
+ */
+export function runNode<R extends ReportsSockets>(run: NodeRun): Promise<ChildRun<R>> {
+  return spawnForResult<R>(run.node ?? process.execPath, run.args, run.env ?? {});
+}
+
+function spawnForResult<R extends ReportsSockets>(
+  command: string,
+  args: string[],
+  env: Record<string, string>,
+): Promise<ChildRun<R>> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [bundle], {
+    const child = spawn(command, args, {
       cwd: PACKAGE_ROOT,
-      env: childEnv,
+      env: childEnvironment(env),
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -221,12 +258,12 @@ export async function runChild(
           // not a diagnostics line
         }
       }
-      const run: ChildRun = {
+      const run: ChildRun<R> = {
         code,
         stdout,
         stderr,
         stderrLines,
-        result: JSON.parse(line.slice("RESULT ".length)) as ChildResult,
+        result: JSON.parse(line.slice("RESULT ".length)) as R,
       };
       recentRuns.push(run);
       resolve(run);

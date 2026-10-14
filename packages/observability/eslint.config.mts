@@ -11,7 +11,12 @@ const configs: TSESLint.FlatConfig.ConfigArray = [
   ...satoshiConfig,
   {
     name: "Global Ignores",
-    ignores: ["examples/**"],
+    ignores: [
+      "examples/**",
+      // plain ESM applications that subprocess tests run as a consumer would; the
+      // type-aware rules have no types to work from in untyped JavaScript
+      "src/__tests__/preset/subprocess/fixtures/*.mjs",
+    ],
   },
   {
     languageOptions: {
