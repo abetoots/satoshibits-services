@@ -21,11 +21,14 @@ import {
 import { logs } from "@opentelemetry/api-logs";
 import net from "node:net";
 
-import type { ChildResult, ChildScenario } from "../harness.mjs";
 import type { DiagnosticsEvent } from "../../../../preset/diagnostics.mjs";
+import type { ChildResult, ChildScenario } from "../harness.mjs";
 
 import { forceFlush, getStatus, shutdown, start } from "../../../../preset.mjs";
-import { createProbePolicy, createThrowingPolicy } from "../../probe-policy.mjs";
+import {
+  createProbePolicy,
+  createThrowingPolicy,
+} from "../../probe-policy.mjs";
 
 const scenario = JSON.parse(
   process.env.OBS_CHILD_SCENARIO ?? "{}",
@@ -71,42 +74,45 @@ const endpointVariables = (): [string, string][] =>
     .sort(([a], [b]) => a.localeCompare(b));
 const endpointVariablesBeforeStart = JSON.stringify(endpointVariables());
 const diagnostics: DiagnosticsEvent[] = [];
+
 let sinkFactoryCalledAfterSdkStarted: boolean | null = null;
 let startError: string | null = null;
+
+const startOptions = (): Parameters<typeof start>[0] => ({
+  instrumentations: false,
+  ...scenario.options,
+  ...(scenario.redaction !== "none" && {
+    redaction:
+      scenario.redaction === "probe"
+        ? createProbePolicy()
+        : scenario.redaction === "throwing"
+          ? createThrowingPolicy()
+          : false,
+  }),
+  ...(scenario.collectDiagnostics && {
+    diagnostics: () => {
+      // a tracer provider is registered by the same call that installs instrumentation
+      // a registered tracer provider hands out recording spans; none are exported by this
+      sinkFactoryCalledAfterSdkStarted = trace
+        .getTracer("probe")
+        .startSpan("probe")
+        .isRecording();
+      if (scenario.collectDiagnostics === "throwing") {
+        return (event) => {
+          diagnostics.push(event);
+          throw new Error("diagnostics sink is broken");
+        };
+      }
+      return (event) => diagnostics.push(event);
+    },
+  }),
+});
 
 if (scenario.start === "register") {
   await import("../../../../register.mjs");
 } else if (scenario.start !== "none") {
   try {
-    start({
-      instrumentations: false,
-      ...scenario.options,
-      ...(scenario.redaction !== "none" && {
-        redaction:
-          scenario.redaction === "probe"
-            ? createProbePolicy()
-            : scenario.redaction === "throwing"
-              ? createThrowingPolicy()
-              : false,
-      }),
-      ...(scenario.collectDiagnostics && {
-        diagnostics: () => {
-          // a tracer provider is registered by the same call that installs instrumentation
-          // a registered tracer provider hands out recording spans; none are exported by this
-          sinkFactoryCalledAfterSdkStarted = trace
-            .getTracer("probe")
-            .startSpan("probe")
-            .isRecording();
-          if (scenario.collectDiagnostics === "throwing") {
-            return (event) => {
-              diagnostics.push(event);
-              throw new Error("diagnostics sink is broken");
-            };
-          }
-          return (event) => diagnostics.push(event);
-        },
-      }),
-    });
+    start(startOptions());
   } catch (error) {
     startError = error instanceof Error ? error.message : String(error);
   }
@@ -120,10 +126,14 @@ const endpointVariablesRestored =
 // ===== emit =====
 const scopeName = scenario.scopeName ?? "preset-child";
 const scopeOptions = {
-  ...(scenario.scopeSchemaUrl !== undefined && { schemaUrl: scenario.scopeSchemaUrl }),
+  ...(scenario.scopeSchemaUrl !== undefined && {
+    schemaUrl: scenario.scopeSchemaUrl,
+  }),
 };
 // through the provider: the API's own getTracer() drops the schema URL
-const tracer = trace.getTracerProvider().getTracer(scopeName, scenario.scopeVersion, scopeOptions);
+const tracer = trace
+  .getTracerProvider()
+  .getTracer(scopeName, scenario.scopeVersion, scopeOptions);
 const parent =
   scenario.parentTraceState === undefined
     ? undefined
@@ -159,9 +169,13 @@ for (let i = 0; i < total; i++) {
     },
     parent,
   );
-  if (scenario.spanEvent) span.addEvent(scenario.spanEvent.name, scenario.spanEvent.attributes);
+  if (scenario.spanEvent)
+    span.addEvent(scenario.spanEvent.name, scenario.spanEvent.attributes);
   if (scenario.spanStatusMessage !== undefined) {
-    span.setStatus({ code: SpanStatusCode.ERROR, message: scenario.spanStatusMessage });
+    span.setStatus({
+      code: SpanStatusCode.ERROR,
+      message: scenario.spanStatusMessage,
+    });
   }
   const spanContext = span.spanContext();
   if (i < 50) {
@@ -175,7 +189,10 @@ for (let i = 0; i < total; i++) {
 }
 
 if (scenario.metric !== false) {
-  metrics.getMeter(scopeName, scenario.scopeVersion, scopeOptions).createCounter("child_counter").add(1);
+  metrics
+    .getMeter(scopeName, scenario.scopeVersion, scopeOptions)
+    .createCounter("child_counter")
+    .add(1);
 }
 
 if (scenario.log !== false) {
@@ -184,7 +201,11 @@ if (scenario.log !== false) {
       ...scopeOptions,
       ...(scenario.scopeAttributes && { attributes: scenario.scopeAttributes }),
     })
-    .emit({ body: "child-log-line", severityText: "INFO", ...scenario.logRecord });
+    .emit({
+      body: "child-log-line",
+      severityText: "INFO",
+      ...scenario.logRecord,
+    });
 }
 
 // ===== overflow: fill the span queue, let it drain, then one more span =====
@@ -206,7 +227,9 @@ const printable = (error: unknown): string => {
   if (typeof error === "object" && error !== null) {
     for (const key of Object.getOwnPropertyNames(error)) {
       const value: unknown = (error as Record<string, unknown>)[key];
-      parts.push(`${key}=${typeof value === "string" ? value : (JSON.stringify(value) ?? String(value))}`);
+      parts.push(
+        `${key}=${typeof value === "string" ? value : (JSON.stringify(value) ?? String(value))}`,
+      );
     }
   }
   return parts.join("\n");
@@ -232,12 +255,28 @@ const finishMillis = Date.now() - finishStarted;
 let againError: string | null = null;
 if (scenario.emitAgainAfterFinish) {
   tracer.startSpan("after-finish").end();
-  metrics.getMeter(scopeName).createCounter("child_counter_after_finish").add(1);
-  logs.getLogger(scopeName).emit({ body: "after-finish-line", severityText: "INFO" });
+  metrics
+    .getMeter(scopeName)
+    .createCounter("child_counter_after_finish")
+    .add(1);
+  logs
+    .getLogger(scopeName)
+    .emit({ body: "after-finish-line", severityText: "INFO" });
   try {
     await forceFlush(scenario.timeoutMillis);
   } catch (error) {
     againError = error instanceof Error ? error.message : String(error);
+  }
+}
+
+let restartError: string | null = null;
+if (scenario.restartAfterFinish) {
+  try {
+    start(startOptions());
+    tracer.startSpan("after-restart").end();
+    await shutdown(scenario.timeoutMillis);
+  } catch (error) {
+    restartError = error instanceof Error ? error.message : String(error);
   }
 }
 
@@ -249,6 +288,7 @@ const result: ChildResult = {
   finishErrorText,
   finishMillis,
   againError,
+  restartError,
   spans,
   sockets,
   diagnostics,

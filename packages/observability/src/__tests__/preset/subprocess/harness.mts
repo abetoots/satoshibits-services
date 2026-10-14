@@ -84,6 +84,8 @@ export interface ChildScenario {
   exit?: "forced" | "natural";
   /** after finishing, emit one more span (`after-finish`), counter point and log record, then forceFlush */
   emitAgainAfterFinish?: boolean;
+  /** after finishing, call start() again with the same options; if it starts, emit `after-restart` and shut down */
+  restartAfterFinish?: boolean;
 }
 
 export interface ChildResult {
@@ -100,6 +102,8 @@ export interface ChildResult {
   finishMillis: number;
   /** what the forceFlush after `emitAgainAfterFinish` threw, or null */
   againError: string | null;
+  /** what the second start() of `restartAfterFinish` threw, or null when it started */
+  restartError: string | null;
   spans: { traceId: string; valid: boolean; sampled: boolean }[];
   /** every outbound socket the child opened */
   sockets: { host: string; port: number }[];
