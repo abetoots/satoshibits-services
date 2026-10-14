@@ -20,11 +20,13 @@ const PACKAGE_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
 const run = promisify(execFile);
 
 // the only shapes a file in the tarball may have: the manifest, the readme,
-// changelog and licence npm always adds, and compiled modules, their
-// declarations and source maps at the top of dist/ or in one of its folders
+// changelog and licence npm always adds, the 1.x compatibility table the readme
+// links to, and compiled modules, their declarations and source maps at the
+// top of dist/ or in one of its folders
 const ALLOWED = [
   /^package\.json$/,
   /^README\.md$/,
+  /^COMPATIBILITY\.md$/,
   /^CHANGELOG\.md$/,
   /^LICEN[CS]E(\.md)?$/,
   /^dist\/((config|enrichment|internal|preset|testing|utils)\/)?[a-z][a-z0-9-]*\.(mjs|d\.mts)(\.map)?$/,
@@ -77,6 +79,10 @@ describe("the packed tarball", () => {
   it("holds compiled modules", () => {
     expect(files).toContain("package.json");
     expect(files).toContain("dist/preset.mjs");
+  });
+
+  it("holds the 1.x compatibility table", () => {
+    expect(files).toContain("COMPATIBILITY.md");
   });
 
   it("holds only files the allow-list names", () => {
