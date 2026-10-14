@@ -30,7 +30,7 @@ import net from "node:net";
 import pino from "pino";
 import winston from "winston";
 
-// ===== record every outbound connection but the fixture's own request =====
+// ===== test plumbing, not part of the application: record every outbound connection but the fixture's own request =====
 const sockets = [];
 const originalConnect = net.Socket.prototype.connect;
 net.Socket.prototype.connect = function (...args) {

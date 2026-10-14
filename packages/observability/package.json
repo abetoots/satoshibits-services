@@ -46,7 +46,8 @@
   },
   "files": [
     "./dist/**/*",
-    "!./dist/**/*.test.*"
+    "!./dist/**/*.test.*",
+    "!dist/__consumer__/**"
   ],
   "keywords": [
     "opentelemetry",
