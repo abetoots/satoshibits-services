@@ -292,6 +292,30 @@ describe("OTLP sink", () => {
     expect(sink.spans().map((s) => s.name)).toEqual(["rejected"]);
   });
 
+  it("answers with the injected status text and body, which reach the exporter's error", async () => {
+    sink = await startOtlpSink();
+    sink.respondWith({ status: 500, statusText: "Sink Says No", body: "body-from-the-sink" });
+    const exporter = new ProtoTraceExporter({ url: `${sink.url}/v1/traces` });
+    closers.push(() => exporter.shutdown());
+    const provider = new BasicTracerProvider({ resource });
+    const span = provider.getTracer("t").startSpan("rejected");
+    span.end();
+
+    const result = await new Promise<{ code: ExportResultCode; error?: Error }>((resolve) =>
+      exporter.export([span as never], resolve),
+    );
+
+    expect(result.code).toBe(ExportResultCode.FAILED);
+    // the upstream error carries the status text as its message and the body as its data
+    expect(result.error).toMatchObject({
+      name: "OTLPExporterError",
+      code: 500,
+      message: "Sink Says No",
+      data: "body-from-the-sink",
+    });
+    expect(sink.spans().map((s) => s.name)).toEqual(["rejected"]);
+  });
+
   it("records a connection and a request it never answers", async () => {
     sink = await startOtlpSink();
     sink.respondWith({ hang: true });

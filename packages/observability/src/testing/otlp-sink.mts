@@ -51,6 +51,14 @@ export interface SinkRequest {
 export interface SinkResponse {
   /** HTTP status to answer with (default 200) */
   status?: number;
+  /** the status line's text in place of the standard one for `status` (e.g. `Internal Server Error`) */
+  statusText?: string;
+  /**
+   * the response body, sent as given in place of the default (an empty
+   * Export*ServiceResponse); for an error status, a body the client should
+   * never repeat to its caller, say
+   */
+  body?: string | Buffer;
   /** never answer; the request stays open until the sink closes */
   hang?: boolean;
   /** wait this long before answering */
@@ -171,16 +179,16 @@ export async function startOtlpSink(
           notify();
           return;
         }
-        const { status = 200, hang = false, delayMs = 0 } = response;
+        const { status = 200, hang = false, delayMs = 0, statusText, body: answerBody } = response;
         if (hang) {
           openResponses.add(res);
         } else {
           const answer = () => {
+            const headers = { "content-type": contentType ?? "application/x-protobuf" };
+            if (statusText === undefined) res.writeHead(status, headers);
+            else res.writeHead(status, statusText, headers);
             // an empty body is a valid, empty Export*ServiceResponse in both encodings
-            res.writeHead(status, {
-              "content-type": contentType ?? "application/x-protobuf",
-            });
-            res.end(request.encoding === "json" ? "{}" : undefined);
+            res.end(answerBody ?? (request.encoding === "json" ? "{}" : undefined));
           };
           if (delayMs > 0) setTimeout(answer, delayMs).unref();
           else answer();
