@@ -84,6 +84,8 @@ describe("the facade starting the runtime", () => {
       { start: "facade", facade: { endpoint: sink.url } },
       { OBS_TEST_NO_EXPORT: "1", OTEL_EXPORTER_OTLP_ENDPOINT: sink.url, OTEL_LOGS_EXPORTER: "otlp" },
     );
+    // a span was made, and held back
+    expect(bare.result.spans[0]?.valid).toBe(true);
     expect(bare.result.statusAfterFacade).toMatchObject({
       state: "running",
       signals: {
@@ -194,7 +196,7 @@ describe("the facade's config, as against 1.x", () => {
     expect(sink.spans()[0]!.resource["service.version"]).toBeUndefined();
   });
 
-  it("drops the host, process and OS keys 1.x's detectors added, and keeps only the OS type", async () => {
+  it("detects only the OS type, and drops host, command-line, executable and user keys from any source", async () => {
     await runChild({ start: "facade", facade: { endpoint: sink.url } });
 
     const keys = Object.keys(sink.spans()[0]!.resource);
