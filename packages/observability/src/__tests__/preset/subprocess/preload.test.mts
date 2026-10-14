@@ -17,7 +17,8 @@
  * `redaction: false`, and an allow-list a preload of the application's own
  * builds.
  *
- * Every case runs on Node 22 and Node 25. A missing binary fails the file.
+ * Every case runs on Node 22 and Node 26, and checks the child ran the major
+ * version its row names. A missing binary fails the file.
  */
 
 import { build } from "esbuild";
@@ -51,17 +52,19 @@ const NODE_VARIABLES = {
     "OBS_TEST_NODE_22",
     join(homedir(), ".nvm/versions/node/v22.21.0/bin/node"),
   ],
-  "25": [
-    "OBS_TEST_NODE_25",
-    join(homedir(), ".nvm/versions/node/v25.0.0/bin/node"),
+  "26": [
+    "OBS_TEST_NODE_26",
+    join(homedir(), ".nvm/versions/node/v26.11.1/bin/node"),
   ],
 } as const;
 const NODES = {
   "22": process.env[NODE_VARIABLES["22"][0]] ?? NODE_VARIABLES["22"][1],
-  "25": process.env[NODE_VARIABLES["25"][0]] ?? NODE_VARIABLES["25"][1],
+  "26": process.env[NODE_VARIABLES["26"][0]] ?? NODE_VARIABLES["26"][1],
 };
 
 interface AppResult {
+  /** `process.versions.node` of the child */
+  node: string;
   status: number;
   finishError: string | null;
   port: number;
@@ -82,7 +85,7 @@ beforeEach(() => {
 });
 
 beforeAll(async () => {
-  for (const version of ["22", "25"] as const) {
+  for (const version of ["22", "26"] as const) {
     const binary = NODES[version];
     // the harness's rule for the sink port: a missing prerequisite fails, it never skips
     if (!existsSync(binary)) {
@@ -118,13 +121,21 @@ const environment = (logs: "on" | "off"): Record<string, string> => ({
   ...(logs === "on" && { OTEL_LOGS_EXPORTER: "otlp" }),
 });
 
+type NodeVersion = keyof typeof NODES;
+
+/** run the app on the binary for `version`; a child of another major version fails */
 async function runApp(
-  node: string,
+  version: NodeVersion,
   args: string[],
   env: Record<string, string>,
 ): Promise<ChildRun<AppResult>> {
-  const run = await runNode<AppResult>({ node, args, env });
+  const run = await runNode<AppResult>({ node: NODES[version], args, env });
   expect(run.code, run.stderr).toBe(0);
+  // a wrong binary, or one variable naming the other version's, must not pass as this one
+  expect(
+    run.result.node?.split(".")[0],
+    `the node version of ${NODES[version]}`,
+  ).toBe(version);
   expect(run.result.status).toBe(200);
   expect(run.result.finishError).toBeNull();
   return run;
@@ -205,8 +216,8 @@ const recordOf = (records: SinkLogRecord[], logger: keyof typeof LOG_SCOPES) =>
 const SENSITIVE = { OBS_FIXTURE_SENSITIVE: "1" };
 
 /** a run of the app with OBS_FIXTURE_SENSITIVE=1, logs on, and what it sent, found by request */
-async function runSensitive(node: string, preload: string[]) {
-  const run = await runApp(node, [...preload, APP], {
+async function runSensitive(version: NodeVersion, preload: string[]) {
+  const run = await runApp(version, [...preload, APP], {
     ...environment("on"),
     ...SENSITIVE,
   });
@@ -278,11 +289,11 @@ async function runSensitive(node: string, preload: string[]) {
   };
 }
 
-describe.each(Object.entries(NODES))(
+describe.each(Object.keys(NODES) as NodeVersion[])(
   "node --import …/register on Node %s",
-  (_version, node) => {
+  (version) => {
     it("gives server, route and client spans of one request, and every logger's line carries its trace id on stdout and at /v1/logs", async () => {
-      const run = await runApp(node, [...REGISTER, APP], environment("on"));
+      const run = await runApp(version, [...REGISTER, APP], environment("on"));
 
       const { server } = requestSpans(sink);
       const traceId = server.traceId;
@@ -314,7 +325,7 @@ describe.each(Object.entries(NODES))(
     });
 
     it("with the logs signal off, the lines still carry the trace id and none is sent", async () => {
-      const run = await runApp(node, [...REGISTER, APP], environment("off"));
+      const run = await runApp(version, [...REGISTER, APP], environment("off"));
 
       const { server } = requestSpans(sink);
       const lines = stdoutLines(run);
@@ -324,10 +335,10 @@ describe.each(Object.entries(NODES))(
       expect(sink.requestsTo("/v1/logs")).toEqual([]);
     });
 
-    it("a partial override of the pino instrumentation renames its keys and keeps log sending with the logs signal", async () => {
+    it("a partial override of the pino instrumentation takes effect: its log keys are renamed, and lines are still sent with the logs signal and not without it", async () => {
       const preload = ["--import", `./${FIXTURES}/override-preload.mjs`];
 
-      const on = await runApp(node, [...preload, APP], environment("on"));
+      const on = await runApp(version, [...preload, APP], environment("on"));
       const traceId = requestSpans(sink).server.traceId;
       const line = stdoutLines(on).pino;
       expect(line).toMatchObject({ tid: traceId, tf: "01" });
@@ -339,7 +350,7 @@ describe.each(Object.entries(NODES))(
       });
 
       const offSink = await sinks.extra();
-      const off = await runApp(node, [...preload, APP], {
+      const off = await runApp(version, [...preload, APP], {
         ...environment("off"),
         OTEL_EXPORTER_OTLP_ENDPOINT: offSink.url,
       });
@@ -349,14 +360,14 @@ describe.each(Object.entries(NODES))(
       expect(offSink.requestsTo("/v1/logs")).toEqual([]);
     });
 
-    it("a partial setting for the dns instrumentation keeps the preset's `enabled: false` for it", async () => {
+    it("a partial setting for the dns instrumentation keeps the preset's other defaults: its `enabled: false` stays", async () => {
       // log sending cannot show a kept default (with logs off nothing could arrive either way); a span can
       const preload = ["--import", `./${FIXTURES}/dns-override-preload.mjs`];
       const lookup = { OBS_FIXTURE_DNS_LOOKUP: "1" };
       const dnsSpans = (at: OtlpSink) =>
         at.spans().filter((s) => s.name === "dns.lookup");
 
-      await runApp(node, [...preload, APP], {
+      await runApp(version, [...preload, APP], {
         ...environment("off"),
         ...lookup,
       });
@@ -365,7 +376,7 @@ describe.each(Object.entries(NODES))(
 
       // control: the same partial setting with `enabled: true` does record the lookup
       const enabledSink = await sinks.extra();
-      await runApp(node, [...preload, APP], {
+      await runApp(version, [...preload, APP], {
         ...environment("off"),
         ...lookup,
         OTEL_EXPORTER_OTLP_ENDPOINT: enabledSink.url,
@@ -375,7 +386,7 @@ describe.each(Object.entries(NODES))(
     });
 
     it("control: the same application without the flag sends nothing and its lines carry no trace id", async () => {
-      const run = await runApp(node, [APP], environment("on"));
+      const run = await runApp(version, [APP], environment("on"));
 
       expect(run.result.sockets).toEqual([]);
       expect(sink.connections).toEqual([]);
@@ -389,7 +400,7 @@ describe.each(Object.entries(NODES))(
     it("control: a logger created before start() is not correlated, inside a span that reaches the sink", async () => {
       // the preload imports a module that creates a pino logger, then calls start()
       const run = await runApp(
-        node,
+        version,
         ["--import", `./${FIXTURES}/early-logger-preload.mjs`, APP],
         { ...environment("on"), OBS_FIXTURE_EARLY_LOGGER: "1" },
       );
@@ -398,7 +409,7 @@ describe.each(Object.entries(NODES))(
       const lines = stdoutLines(run);
       // a logger created after start() is correlated even though pino was loaded before it
       expect(lines.pino).toMatchObject({ trace_id: server.traceId });
-      // observed on pino 9.14 and instrumentation-pino 0.69 on Node 22 and 25: the early
+      // observed on pino 9.14 and instrumentation-pino 0.69 on Node 22 and 26: the early
       // logger's line has no trace id and is not sent. The import rule stands on that
       expect(lines["early-pino"]).toBeDefined();
       expect(lines["early-pino"]).not.toHaveProperty("trace_id");
@@ -409,11 +420,11 @@ describe.each(Object.entries(NODES))(
   },
 );
 
-describe.each(Object.entries(NODES))(
+describe.each(Object.keys(NODES) as NodeVersion[])(
   "the standard redaction policy on telemetry from real instrumentation, on Node %s",
-  (_version, node) => {
+  (version) => {
     it("under register: query strings, peer addresses, span exception detail and status text are gone; logged errors keep theirs, masked; the event name is masked", async () => {
-      const at = await runSensitive(node, REGISTER);
+      const at = await runSensitive(version, REGISTER);
       const { sensitive, server, client } = at;
 
       // the inbound request (server span) and the outbound one (client span) are the
@@ -515,7 +526,7 @@ describe.each(Object.entries(NODES))(
     });
 
     it("not through register: a preload with the standard parts and `app.contact` allowed exports that key as given and masks the same value under another", async () => {
-      const at = await runSensitive(node, [
+      const at = await runSensitive(version, [
         "--import",
         `./${FIXTURES}/allow-list-preload.mjs`,
       ]);
@@ -533,7 +544,7 @@ describe.each(Object.entries(NODES))(
     });
 
     it("control: with `redaction: false` the same telemetry carries every value the policy removes", async () => {
-      const at = await runSensitive(node, [
+      const at = await runSensitive(version, [
         "--import",
         `./${FIXTURES}/no-redaction-preload.mjs`,
       ]);
@@ -616,11 +627,7 @@ describe.each(Object.entries(NODES))(
 
 describe("bundled as the second consumer builds (esbuild, packages external, ESM)", () => {
   it("on Node 22, pino and winston lines carry the request's trace id and arrive at /v1/logs", async () => {
-    const run = await runApp(
-      NODES["22"],
-      [...REGISTER, BUNDLE],
-      environment("on"),
-    );
+    const run = await runApp("22", [...REGISTER, BUNDLE], environment("on"));
 
     const { server } = requestSpans(sink);
     const traceId = server.traceId;
