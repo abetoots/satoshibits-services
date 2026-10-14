@@ -27,6 +27,7 @@ import {
   TracerProvider,
 } from "@opentelemetry/sdk-trace";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
 
 import type { TestTelemetry } from "../../testing/in-memory.mjs";
@@ -35,13 +36,14 @@ import { forceFlush, getStatus, PresetConfigError, shutdown, start } from "../..
 import { createDiagnostics } from "../../preset/diagnostics.mjs";
 import { wrapLogRecordExporter, wrapSpanExporter } from "../../preset/exporters.mjs";
 import { createRedactor } from "../../preset/redaction.mjs";
+import { decodeOtlpRequest } from "../../testing/otlp-decode.mjs";
 import { buildPipelines, instrumentationConfigFor, resetForTesting } from "../../preset/runtime.mjs";
 import { startTestTelemetry } from "../../testing/in-memory.mjs";
 import type { DiagnosticsEvent } from "../../preset/diagnostics.mjs";
 import type { ResolvedConfig } from "../../preset/config.mjs";
 import type { PolicyAttributes, PolicyLogRecord, RedactionPolicy } from "../../preset/redaction.mjs";
 import type { ProbeCall } from "./probe-policy.mjs";
-import type { Context, TracerProvider as TracerProviderApi } from "@opentelemetry/api";
+import type { Context, SpanContext, TracerProvider as TracerProviderApi } from "@opentelemetry/api";
 import type { Logger } from "@opentelemetry/api-logs";
 import type { InstrumentationConfigMap } from "@opentelemetry/auto-instrumentations-node";
 import type { LogRecordExporter, LogRecordProcessor, ReadableLogRecord } from "@opentelemetry/sdk-logs";
@@ -631,6 +633,145 @@ describe("startTestTelemetry", () => {
       } finally {
         await provider.shutdown();
       }
+    });
+  });
+
+  describe("a span context rebuilt for its trace state", () => {
+    // the serialisers the OTLP exporters use, from the transformer version they pin
+    const transformer = createRequire(
+      createRequire(import.meta.url).resolve("@opentelemetry/exporter-trace-otlp-http"),
+    )("@opentelemetry/otlp-transformer") as {
+      JsonTraceSerializer: { serializeRequest: (spans: ReadableSpan[]) => Uint8Array | undefined };
+      ProtobufTraceSerializer: { serializeRequest: (spans: ReadableSpan[]) => Uint8Array | undefined };
+    };
+
+    /** a valid context whose fields are all inherited: the SDK accepts it as given */
+    const inheritedContext = (): SpanContext =>
+      Object.create({
+        traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+        spanId: "00f067aa0ba902b7",
+        traceFlags: 1,
+        isRemote: true,
+        traceState: createTraceState("vendor=secret"),
+      }) as SpanContext;
+
+    const fieldsOf = (context: SpanContext | undefined) => ({
+      traceId: context?.traceId,
+      spanId: context?.spanId,
+      traceFlags: context?.traceFlags,
+      isRemote: context?.isRemote,
+    });
+
+    /** the spans one emission exports under the probe policy, and under redaction: false */
+    async function exportedBoth(emit: (provider: TracerProvider) => void) {
+      const underPolicy = new InMemorySpanExporter();
+      const asGiven = new InMemorySpanExporter();
+      const provider = new TracerProvider({
+        spanProcessors: [
+          new SimpleSpanProcessor({
+            exporter: wrapSpanExporter(underPolicy, {
+              diagnostics: createDiagnostics(),
+              redactor: createRedactor(createProbePolicy()),
+            }),
+          }),
+          new SimpleSpanProcessor({
+            exporter: wrapSpanExporter(asGiven, {
+              diagnostics: createDiagnostics(),
+              redactor: createRedactor(false),
+            }),
+          }),
+        ],
+      });
+      try {
+        emit(provider);
+        await provider.forceFlush();
+        // read before shutdown, which empties an in-memory exporter
+        return { policy: underPolicy.getFinishedSpans(), control: asGiven.getFinishedSpans() };
+      } finally {
+        await provider.shutdown();
+      }
+    }
+
+    /** what each serialisation carries for the first span's own context and its link */
+    function serialised(spans: ReadableSpan[]) {
+      const json = JSON.parse(
+        new TextDecoder().decode(transformer.JsonTraceSerializer.serializeRequest(spans)),
+      ) as { resourceSpans: { scopeSpans: { spans: Record<string, unknown>[] }[] }[] };
+      const jsonSpan = json.resourceSpans[0]!.scopeSpans[0]!.spans[0]!;
+      const jsonLink = (jsonSpan.links as Record<string, unknown>[])[0];
+      const proto = decodeOtlpRequest(
+        "/v1/traces",
+        "application/x-protobuf",
+        Buffer.from(transformer.ProtobufTraceSerializer.serializeRequest(spans)!),
+      ).spans[0]!;
+      return {
+        json: {
+          span: [jsonSpan.traceId, jsonSpan.spanId, jsonSpan.flags],
+          link: jsonLink && [jsonLink.traceId, jsonLink.spanId, jsonLink.flags],
+        },
+        protobuf: { span: [proto.traceId, proto.spanId], link: proto.links.map((link) => link.traceId) },
+      };
+    }
+
+    it("keeps a link's inherited ids, flags and isRemote, in the view and in JSON and protobuf", async () => {
+      const { policy, control } = await exportedBoth((provider) =>
+        provider.getTracer("kit").startSpan("s", { links: [{ context: inheritedContext() }] }).end(),
+      );
+      const [marked] = policy;
+      expect(fieldsOf(marked!.links[0]!.context)).toEqual(fieldsOf(control[0]!.links[0]!.context));
+      expect(fieldsOf(marked!.links[0]!.context).traceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
+      expect(marked!.links[0]!.context.traceState?.serialize()).toBe("probe=link.traceState,vendor=secret");
+      expect(serialised(policy)).toEqual(serialised(control));
+    });
+
+    it("keeps a span's context whole when its parent's fields are inherited, in the view and in JSON and protobuf", async () => {
+      const { policy, control } = await exportedBoth((provider) =>
+        provider
+          .getTracer("kit")
+          .startSpan("s", {}, trace.setSpanContext(ROOT_CONTEXT, inheritedContext()))
+          .end(),
+      );
+      const [marked] = policy;
+      expect(fieldsOf(marked!.spanContext())).toEqual(fieldsOf(control[0]!.spanContext()));
+      expect(marked!.spanContext().traceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
+      expect(marked!.spanContext().traceState?.serialize()).toBe("probe=span.traceState,vendor=secret");
+      expect(serialised(policy)).toEqual(serialised(control));
+    });
+
+    it.each<[string, string, string | undefined]>([
+      ["wholly unreadable, one word", "M", undefined],
+      ["wholly unreadable, a redaction mark", "[REDACTED]", undefined],
+      ["partly unreadable", "ok=1,BAD KEY=x", "ok=1"],
+    ])("exports only the members it can read when the policy's trace state is %s", async (_how, returned, exported) => {
+      const probe = createProbePolicy();
+      const policy: RedactionPolicy = {
+        ...probe,
+        text: (surface, value) => (surface.endsWith(".traceState") ? returned : probe.text(surface, value)),
+      };
+      const exporter = new InMemorySpanExporter();
+      const provider = new TracerProvider({
+        spanProcessors: [
+          new SimpleSpanProcessor({
+            exporter: wrapSpanExporter(exporter, { diagnostics: createDiagnostics(), redactor: createRedactor(policy) }),
+          }),
+        ],
+      });
+      let spans: ReadableSpan[];
+      try {
+        emitOnEverySurface(provider);
+        await provider.forceFlush();
+        // read before shutdown, which empties an in-memory exporter
+        spans = exporter.getFinishedSpans();
+      } finally {
+        await provider.shutdown();
+      }
+      expect(spans).toHaveLength(1);
+      const [span] = spans;
+      // no trace state at all, rather than an empty one that JSON would write as ""
+      expect(span!.spanContext().traceState?.serialize()).toBe(exported);
+      expect(span!.links[0]!.context.traceState?.serialize()).toBe(exported);
+      const json = new TextDecoder().decode(transformer.JsonTraceSerializer.serializeRequest(spans));
+      expect(json.includes('"traceState"')).toBe(exported !== undefined);
     });
   });
 

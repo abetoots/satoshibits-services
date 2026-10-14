@@ -36,7 +36,7 @@ export type TextSurface =
    * a span's trace state, serialised: the SDK copies a parent's onto every child,
    * so an inbound `tracestate` header arrives here. What is returned is parsed
    * back into a trace state; a list member that is not valid trace-state syntax
-   * is dropped, and an empty text exports none
+   * is dropped, and a text with no valid member left exports none
    */
   | "span.traceState"
   /** a link's trace state, serialised, and parsed back the same way */
@@ -349,9 +349,18 @@ export function createRedactor(option: RedactionOption): Redactor {
     // as the OTLP serialisers read it: an empty trace state is not written at all
     const serialized = input.traceState?.serialize();
     if (serialized === undefined || serialized === "") return input;
-    const redacted = text(surface, serialized);
-    const { traceState: _, ...rest } = input;
-    return redacted === "" ? rest : { ...rest, traceState: createTraceState(redacted) };
+    // parsing drops every member that is not valid trace-state syntax; a text with none left
+    // (empty, "[REDACTED]") exports no trace state, not an empty one JSON would write as ""
+    const parsed = createTraceState(text(surface, serialized));
+    // the fields read one by one, not spread: a valid context may inherit them, and a spread
+    // copies own properties only. A plain object, like the contexts the SDK itself builds.
+    return {
+      traceId: input.traceId,
+      spanId: input.spanId,
+      traceFlags: input.traceFlags,
+      ...(input.isRemote !== undefined && { isRemote: input.isRemote }),
+      ...(parsed.serialize() !== "" && { traceState: parsed }),
+    };
   };
 
   type SpanEvent = ReadableSpan["events"][number];
