@@ -1,8 +1,7 @@
 /**
  * README Examples Validation Tests
  *
- * Ensures all code examples in the README actually work
- * in both Node.js and browser environments.
+ * Ensures all code examples in the README actually work.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

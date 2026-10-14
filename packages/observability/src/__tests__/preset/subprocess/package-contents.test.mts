@@ -29,6 +29,7 @@ const ALLOWED = [
   /^COMPATIBILITY\.md$/,
   /^CHANGELOG\.md$/,
   /^LICEN[CS]E(\.md)?$/,
+  // a new folder under dist/ fails this test until it is added here, on purpose
   /^dist\/((config|enrichment|internal|preset|testing|utils)\/)?[a-z][a-z0-9-]*\.(mjs|d\.mts)(\.map)?$/,
 ];
 
@@ -60,7 +61,11 @@ beforeAll(async () => {
       cwd: PACKAGE_ROOT,
       maxBuffer: 16 * 1024 * 1024,
     });
-    files = (JSON.parse(stdout) as { files: { path: string }[] }).files.map((file) => file.path);
+    const parsed = JSON.parse(stdout) as { files?: unknown };
+    expect(Array.isArray(parsed.files), `pnpm pack --json printed no files array: ${stdout.slice(0, 200)}`).toBe(
+      true,
+    );
+    files = (parsed.files as { path: string }[]).map((file) => file.path);
   } finally {
     rmSync(destination, { recursive: true, force: true });
     rmSync(consumer, { recursive: true, force: true });

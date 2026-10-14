@@ -63,13 +63,12 @@ export interface BaseClientConfig {
   sampling?: SmartSamplerConfig;
 
   /** Whether automatic instrumentation should be enabled (where supported).
-   * Browser and Node instrumentations may choose to honor this flag.
+   * The Node instrumentation honours this flag.
    */
   autoInstrument?: boolean;
 
   /**
    * Whether the client should enrich business/context metadata automatically.
-   * Kept here because both browser and node SDKs can opt into this behavior.
    */
   enrichContext?: boolean;
 

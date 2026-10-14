@@ -85,12 +85,7 @@ export async function initializeEnvironmentSdkDynamic(
     try {
       if (environment === "node") {
         const nodeSdk = await import("./sdk-wrapper-node.mjs");
-        const nodeConfig =
-          config.environment === "node"
-            ? config
-            : { ...config, environment: "node" as const };
-
-        resultState = nodeSdk.NodeSDKWrapper.initializeSdk(nodeConfig);
+        resultState = nodeSdk.NodeSDKWrapper.initializeSdk(config);
       } else {
         throw new Error(`Unknown environment: ${environment}`);
       }

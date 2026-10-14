@@ -1090,7 +1090,7 @@ export class UnifiedObservabilityClient {
    *
    * This method performs instance-level cleanup without affecting the global
    * OpenTelemetry SDK or other client instances. Use this when:
-   * - A micro-frontend is being unmounted
+   * - A component that owns the client is shutting down
    * - A test is completing
    * - A tenant context is ending
    *
@@ -1107,11 +1107,11 @@ export class UnifiedObservabilityClient {
    *
    * @example
    * ```typescript
-   * const client = await SmartClient.create({ serviceName: 'my-mfe', environment: 'node' });
+   * const client = await SmartClient.create({ serviceName: 'billing-worker', environment: 'node' });
    *
    * // Use the client...
    *
-   * // When the micro-frontend unmounts:
+   * // When the component shuts down:
    * await client.destroy();
    * ```
    *
