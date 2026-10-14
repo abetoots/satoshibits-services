@@ -331,6 +331,7 @@ export function instrumentationsForTesting(added: Instrumentation[] | undefined)
   testInstrumentations = added;
 }
 
+// both a status and a resolved config: the test hooks turn a resolved signal off with it
 const allOff = (reason: SignalOffReason): Record<Signal, SignalStatus> & Record<Signal, SignalConfig> => ({
   traces: { enabled: false, reason },
   metrics: { enabled: false, reason },
@@ -488,8 +489,8 @@ export function buildPipelines(
   hooks?: TestHooks,
 ): Pipelines {
   // the facade's hooks are the consumer's own, given as they are; the other signals were
-  // turned off before this was called, so nothing here reaches an exporter
-  if (hooks !== undefined) return pipelinesOfHooks(hooks);
+  // turned off in start's config, so nothing here reaches an exporter
+  if (hooks !== undefined) return pipelinesOfHooks(config, hooks);
   // Validation already refused a start that exports with no `redaction` named. This is the
   // same rule asked a second time, at the one place exporters are made, so that a change to
   // either side that let them disagree would stop here and not export as given.
@@ -597,17 +598,24 @@ export function buildPipelines(
   return { spanProcessors, metricReaders, logRecordProcessors, signals };
 }
 
-function pipelinesOfHooks(hooks: TestHooks): Pipelines {
-  const off = allOff("test-hooks");
+function pipelinesOfHooks(config: ResolvedConfig, hooks: TestHooks): Pipelines {
+  // a signal without a hook is as start's config resolved it for hooks: off
+  const off = (signal: Signal): SignalStatus => {
+    const resolved = config.signals[signal];
+    if (resolved.enabled) {
+      throw new Error(`@satoshibits/observability: ${signal} would be exported beside a test hook`);
+    }
+    return resolved;
+  };
   return {
     // a tracer provider is registered only with a span processor; see buildPipelines
     spanProcessors: [hooks.spanProcessor ?? new NoopSpanProcessor()],
     metricReaders: hooks.metricReader ? [hooks.metricReader] : [],
     logRecordProcessors: [],
     signals: {
-      traces: hooks.spanProcessor ? { enabled: true, destination: "test" } : off.traces,
-      metrics: hooks.metricReader ? { enabled: true, destination: "test" } : off.metrics,
-      logs: off.logs,
+      traces: hooks.spanProcessor ? { enabled: true, destination: "test" } : off("traces"),
+      metrics: hooks.metricReader ? { enabled: true, destination: "test" } : off("metrics"),
+      logs: off("logs"),
     },
   };
 }
@@ -794,7 +802,8 @@ function startRuntime(options: StartOptions, hooks: TestHooks | undefined): Pres
     };
     return snapshot(handle.status);
   }
-  // with hooks, the variables are still validated but no signal goes to the network
+  // the one place test hooks turn signals off: the variables are still validated, but no
+  // signal goes to the network, and the instrumentation settings read the same answer
   const config: ResolvedConfig =
     hooks === undefined
       ? resolution.config

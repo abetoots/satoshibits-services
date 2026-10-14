@@ -70,8 +70,21 @@ export class NodeSDK {
       );
     }
 
+    // sampling went to the 1.x SDK's own sampler; the preset takes a sampler by name only
+    if (config.sampling !== undefined) {
+      console.warn(
+        "sampling is configured but has no effect: set OTEL_TRACES_SAMPLER and OTEL_TRACES_SAMPLER_ARG instead.",
+      );
+    }
+
     // a runtime in any state (running, disabled, shut down) is the process's one runtime
-    if (getStatus().state === "not-started") {
+    if (getStatus().state !== "not-started") {
+      if (config.testSpanProcessor !== undefined || config.testMetricReader !== undefined) {
+        console.warn(
+          "testSpanProcessor and testMetricReader are not used: telemetry was already started in this process.",
+        );
+      }
+    } else {
       const testHooks =
         process.env.OBS_TEST_NO_EXPORT === "1" ||
         config.testSpanProcessor !== undefined ||
@@ -112,9 +125,14 @@ export class NodeSDK {
   }
 
   /**
-   * Shut the runtime down gracefully (the one attached to included: there is
-   * one per process). A runtime this facade started with test hooks is then
-   * forgotten, so that the next test can initialize again.
+   * Shut the runtime down gracefully, the one attached to included: there is
+   * one per process, and a 1.x consumer flushes at exit through this call.
+   *
+   * A runtime this facade started in test mode (a test hook given, or
+   * `OBS_TEST_NO_EXPORT=1`) is also reset, as the `/testing` kit's `stop()`
+   * does: forgotten, with the API's global registrations cleared, so the next
+   * test can initialize again. Outside test mode a shutdown is final, as the
+   * preset's is, and a later initialize attaches to the stopped runtime.
    */
   public async shutdown(): Promise<void> {
     if (!this.isStarted) {

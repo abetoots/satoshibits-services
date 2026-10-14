@@ -26,6 +26,7 @@ import type { PushMetricExporter } from "@opentelemetry/sdk-metrics";
 import { forceFlush, getStatus, start } from "../../preset.mjs";
 import { resetForTesting, startWithTestHooks } from "../../preset/runtime.mjs";
 import { SmartClient } from "../../index.mjs";
+import { NodeSDK as FacadeSdk } from "../../sdk-wrapper-node.mjs";
 import { startTestTelemetry } from "../../testing/in-memory.mjs";
 import { startOtlpSink } from "../../testing/otlp-sink.mjs";
 
@@ -218,7 +219,7 @@ describe("the facade and a runtime that is already there", () => {
     expect(facadeExporter.getFinishedSpans()).toEqual([]);
   });
 
-  it("starts the runtime once when initialize is called twice", async () => {
+  it("returns the client it already has when initialize is called twice, and starts nothing again", async () => {
     const exporter = new InMemorySpanExporter();
     const errors = vi.spyOn(console, "error");
     const config = {
@@ -236,5 +237,106 @@ describe("the facade and a runtime that is already there", () => {
     expect(status).toMatchObject({ state: "running", serviceName: "facade" });
     expect(getStatus()).toEqual(status);
     expect(errors).not.toHaveBeenCalled();
+  });
+
+  it("a second facade instance attaches to the runtime the first one started", () => {
+    const first = new InMemorySpanExporter();
+    const second = new InMemorySpanExporter();
+    const errors = vi.spyOn(console, "error");
+    const config = (exporter: InMemorySpanExporter) =>
+      ({
+        environment: "node",
+        serviceName: "facade",
+        disableInstrumentation: true,
+        testSpanProcessor: new SimpleSpanProcessor(exporter),
+      }) as const;
+
+    new FacadeSdk(config(first)).start();
+    const status = getStatus();
+    // past SmartClient's own cache: the facade's guard is what stops a second start
+    expect(() => new FacadeSdk(config(second)).start()).not.toThrow();
+
+    expect(getStatus()).toEqual(status);
+    expect(errors).not.toHaveBeenCalled();
+    trace.getTracer("facade-test").startSpan("after-second").end();
+    expect(first.getFinishedSpans().map((span) => span.name)).toEqual(["after-second"]);
+    expect(second.getFinishedSpans()).toEqual([]);
+  });
+
+  it("warns that the test hooks it was given are not used when it attaches", async () => {
+    startTestTelemetry({ serviceName: "preloaded" });
+    const warnings = vi.spyOn(console, "warn");
+
+    await SmartClient.initialize({
+      environment: "node",
+      serviceName: "facade",
+      testSpanProcessor: new SimpleSpanProcessor(new InMemorySpanExporter()),
+    });
+
+    expect(warnings.mock.calls.map(([message]) => String(message))).toContainEqual(
+      expect.stringContaining("testSpanProcessor and testMetricReader are not used"),
+    );
+  });
+});
+
+describe("the facade's config", () => {
+  it("warns that sampling no longer has an effect", async () => {
+    const warnings = vi.spyOn(console, "warn");
+
+    await SmartClient.initialize({
+      environment: "node",
+      serviceName: "facade",
+      disableInstrumentation: true,
+      testSpanProcessor: new SimpleSpanProcessor(new InMemorySpanExporter()),
+      sampling: { baseRate: 0.5 },
+    });
+
+    expect(warnings.mock.calls.map(([message]) => String(message))).toContainEqual(
+      expect.stringContaining("sampling is configured but has no effect"),
+    );
+  });
+
+  it("gives a metric reader passed to initialize the metrics", async () => {
+    const exporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
+    await SmartClient.initialize({
+      environment: "node",
+      serviceName: "facade",
+      disableInstrumentation: true,
+      testMetricReader: new PeriodicExportingMetricReader({ exporter, exportIntervalMillis: 2 ** 31 - 1 }),
+    });
+    metrics.getMeter("facade-test").createCounter("facade_counter").add(1);
+    await forceFlush();
+    const names = exporter
+      .getMetrics()
+      .flatMap((collection) => collection.scopeMetrics)
+      .flatMap((scope) => scope.metrics.map((metric) => metric.descriptor.name));
+    expect(names).toContain("facade_counter");
+  });
+
+  it("reports a failed export behind a metric reader given to initialize exactly once", async () => {
+    const lines: string[] = [];
+    const write = process.stderr.write.bind(process.stderr);
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk, ...rest) => {
+      lines.push(String(chunk));
+      return write(chunk, ...(rest as []));
+    });
+    await SmartClient.initialize({
+      environment: "node",
+      serviceName: "facade",
+      disableInstrumentation: true,
+      testMetricReader: new PeriodicExportingMetricReader({
+        exporter: failingMetricExporter(),
+        exportIntervalMillis: 2 ** 31 - 1,
+      }),
+    });
+
+    metrics.getMeter("facade-test").createCounter("facade_counter").add(1);
+    await forceFlush().catch(() => undefined);
+
+    const failures = lines
+      .flatMap((chunk) => chunk.split("\n"))
+      .filter((line) => line.includes('"msg":"metrics export failed"'));
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain('"signal":"metrics"');
   });
 });
