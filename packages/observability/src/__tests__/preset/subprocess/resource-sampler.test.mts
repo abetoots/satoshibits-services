@@ -160,7 +160,8 @@ describe("resource", () => {
     scopeAttributes: { api_key: "SENTINEL-SCOPE-SECRET", plain: "kept" },
   };
   const scopesSeen = () => ({
-    span: sink.spans().find((s) => s.name === "child-span-0")?.scope,
+    // found by how its name ends: under a policy the name is a surface too, and arrives marked
+    span: sink.spans().find((s) => s.name.endsWith("child-span-0"))?.scope,
     metric: sink.metrics().find((m) => m.name === "child_counter")?.scope,
     // the body is a log-record surface, which this batch does not yet pass to the policy
     log: sink.logRecords().find((r) => String(r.body).includes("child-log-line"))?.scope,

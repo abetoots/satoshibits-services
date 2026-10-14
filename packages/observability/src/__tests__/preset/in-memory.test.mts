@@ -14,7 +14,12 @@ import { logs } from "@opentelemetry/api-logs";
 import { globalErrorHandler } from "@opentelemetry/core";
 import { InMemoryLogRecordExporter } from "@opentelemetry/sdk-logs";
 import { AggregationTemporality, InMemoryMetricExporter } from "@opentelemetry/sdk-metrics";
-import { InMemorySpanExporter } from "@opentelemetry/sdk-trace";
+import {
+  BatchSpanProcessor,
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+  TracerProvider,
+} from "@opentelemetry/sdk-trace";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runInNewContext } from "node:vm";
 
@@ -22,6 +27,7 @@ import type { TestTelemetry } from "../../testing/in-memory.mjs";
 
 import { forceFlush, getStatus, PresetConfigError, shutdown, start } from "../../preset.mjs";
 import { createDiagnostics } from "../../preset/diagnostics.mjs";
+import { wrapSpanExporter } from "../../preset/exporters.mjs";
 import { createRedactor } from "../../preset/redaction.mjs";
 import { buildPipelines, instrumentationConfigFor, resetForTesting } from "../../preset/runtime.mjs";
 import { startTestTelemetry } from "../../testing/in-memory.mjs";
@@ -29,7 +35,9 @@ import type { DiagnosticsEvent } from "../../preset/diagnostics.mjs";
 import type { ResolvedConfig } from "../../preset/config.mjs";
 import type { RedactionPolicy } from "../../preset/redaction.mjs";
 import type { ProbeCall } from "./probe-policy.mjs";
+import type { Tracer } from "@opentelemetry/api";
 import type { InstrumentationConfigMap } from "@opentelemetry/auto-instrumentations-node";
+import type { ReadableSpan, SpanExporter, SpanProcessor } from "@opentelemetry/sdk-trace";
 
 import { createProbePolicy } from "./probe-policy.mjs";
 
@@ -278,6 +286,186 @@ describe("startTestTelemetry", () => {
     expect(Object.keys(attributes).sort()).toEqual(["service.instance.id", "service.name"]);
     expect(attributes["service.name"]).toBe("billing");
     expect(attributes["service.instance.id"]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4/);
+  });
+
+  describe("the policy on a span", () => {
+    const LINKED = {
+      traceId: "0af7651916cd43dd8448eb211c80319c",
+      spanId: "b7ad6b7169203331",
+      traceFlags: 1,
+    };
+
+    /** one span with something on every surface of a span a policy is handed */
+    function emitOnEverySurface(tracer: Tracer = trace.getTracer("kit")): void {
+      const span = tracer.startSpan("checkout", {
+        attributes: { customer: "erin", attempt: 2 },
+        links: [{ context: LINKED, attributes: { reason: "retry of" } }],
+      });
+      span.addEvent("cache miss", { key: "cart" });
+      span.recordException(new Error("card declined"));
+      span.setStatus({ code: SpanStatusCode.ERROR, message: "payment failed" });
+      span.end();
+    }
+
+    // one row per surface, so that a surface the policy is no longer applied to fails its own row
+    const SURFACES: [string, (span: ReadableSpan) => unknown, unknown, unknown][] = [
+      ["its name, as span.name", (span) => span.name, "[probe:span.name] checkout", "checkout"],
+      [
+        "its attributes, as span",
+        (span) => span.attributes,
+        { customer: "[probe:span] erin", attempt: 2 },
+        { customer: "erin", attempt: 2 },
+      ],
+      [
+        "its status text, as span.status",
+        (span) => span.status,
+        { code: SpanStatusCode.ERROR, message: "[probe:span.status] payment failed" },
+        { code: SpanStatusCode.ERROR, message: "payment failed" },
+      ],
+      [
+        "an event's name and attributes, as span.event",
+        (span) => ({ name: span.events[0]?.name, attributes: span.events[0]?.attributes }),
+        { name: "[probe:span.event] cache miss", attributes: { key: "[probe:span.event] cart" } },
+        { name: "cache miss", attributes: { key: "cart" } },
+      ],
+      [
+        // an event like any other: the probe marks its message, as it would any attribute
+        "a recorded exception, as span.event",
+        (span) => ({
+          name: span.events[1]?.name,
+          type: span.events[1]?.attributes?.["exception.type"],
+          message: span.events[1]?.attributes?.["exception.message"],
+        }),
+        {
+          name: "[probe:span.event] exception",
+          type: "[probe:span.event] Error",
+          message: "[probe:span.event] card declined",
+        },
+        { name: "exception", type: "Error", message: "card declined" },
+      ],
+      [
+        "a link's attributes, as link",
+        (span) => span.links[0]?.attributes,
+        { reason: "[probe:link] retry of" },
+        { reason: "retry of" },
+      ],
+    ];
+
+    it.each(SURFACES)("is applied to %s", async (_surface, read, marked) => {
+      telemetry = startTestTelemetry({ redaction: createProbePolicy() });
+      emitOnEverySurface();
+      const spans = await telemetry.spans();
+      expect(spans).toHaveLength(1);
+      expect(read(spans[0]!)).toEqual(marked);
+    });
+
+    it.each(SURFACES)("redaction: false exports %s as given", async (_surface, read, _marked, given) => {
+      telemetry = startTestTelemetry({ redaction: false });
+      emitOnEverySurface();
+      const spans = await telemetry.spans();
+      expect(spans).toHaveLength(1);
+      expect(read(spans[0]!)).toEqual(given);
+    });
+
+    it("is not handed a status that has no message", async () => {
+      const calls: ProbeCall[] = [];
+      telemetry = startTestTelemetry({ redaction: createProbePolicy(calls) });
+      const tracer = trace.getTracer("kit");
+      tracer.startSpan("unset").end();
+      const ok = tracer.startSpan("ok");
+      ok.setStatus({ code: SpanStatusCode.OK });
+      ok.end();
+      const failed = tracer.startSpan("failed");
+      failed.setStatus({ code: SpanStatusCode.ERROR });
+      failed.end();
+
+      const spans = await telemetry.spans();
+      expect(spans.map((span) => span.status)).toEqual([
+        { code: SpanStatusCode.UNSET },
+        { code: SpanStatusCode.OK },
+        { code: SpanStatusCode.ERROR },
+      ]);
+      expect(calls.filter((call) => call.fn === "spanStatus")).toEqual([]);
+
+      // and the recording would have shown a call: one with a message is handed over
+      const withMessage = tracer.startSpan("with a message");
+      withMessage.setStatus({ code: SpanStatusCode.ERROR, message: "payment failed" });
+      withMessage.end();
+      await telemetry.spans();
+      expect(calls.filter((call) => call.fn === "spanStatus")).toEqual([
+        { fn: "spanStatus", given: "payment failed" },
+      ]);
+    });
+
+    it("drops the status message and keeps the code when the policy returns undefined for it", async () => {
+      telemetry = startTestTelemetry({
+        redaction: { ...createProbePolicy(), spanStatus: () => undefined },
+      });
+      emitOnEverySurface();
+      const [span] = await telemetry.spans();
+      expect(span!.status).toEqual({ code: SpanStatusCode.ERROR });
+      expect("message" in span!.status).toBe(false);
+    });
+
+    // The kit's start() takes one span exporter and puts it behind the simple processor; the batch
+    // processor is reached only with a real endpoint (the subprocess tests), and no public API adds
+    // a processor to a provider that is already built. So the next tests build a provider of their
+    // own from the SDK's parts and put the preset's wrapper in it themselves.
+    function providerWith(...spanProcessors: SpanProcessor[]): TracerProvider {
+      return new TracerProvider({ spanProcessors });
+    }
+    const wrapped = (exporter: SpanExporter): SpanExporter =>
+      wrapSpanExporter(exporter, {
+        diagnostics: createDiagnostics(),
+        redactor: createRedactor(createProbePolicy()),
+      });
+
+    it("leaves the span itself as it was: an exporter beside the wrapped one receives the original", async () => {
+      const behindThePolicy = new InMemorySpanExporter();
+      const beside = new InMemorySpanExporter();
+      // the wrapped one first: were the span changed for it, the one after it would see the change
+      const provider = providerWith(
+        new SimpleSpanProcessor({ exporter: wrapped(behindThePolicy) }),
+        new SimpleSpanProcessor({ exporter: beside }),
+      );
+      try {
+        emitOnEverySurface(provider.getTracer("kit"));
+        await provider.forceFlush();
+
+        const [marked] = behindThePolicy.getFinishedSpans();
+        const [original] = beside.getFinishedSpans();
+        for (const [surface, read, whenMarked, given] of SURFACES) {
+          expect(read(marked!), surface).toEqual(whenMarked);
+          expect(read(original!), surface).toEqual(given);
+        }
+        // what the policy has no say in is read through to the same span
+        expect(marked!.spanContext()).toEqual(original!.spanContext());
+        expect(marked!.events.map((event) => event.time)).toEqual(original!.events.map((event) => event.time));
+        expect(marked!.links.map((link) => link.context)).toEqual([LINKED]);
+        expect(marked!.startTime).toBe(original!.startTime);
+      } finally {
+        await provider.shutdown();
+      }
+    });
+
+    it.each<[string, (exporter: SpanExporter) => SpanProcessor]>([
+      ["simple", (exporter) => new SimpleSpanProcessor({ exporter })],
+      ["batch", (exporter) => new BatchSpanProcessor({ exporter })],
+    ])("is applied the same under the %s span processor", async (_which, processorFor) => {
+      const exporter = new InMemorySpanExporter();
+      const provider = providerWith(processorFor(wrapped(exporter)));
+      try {
+        emitOnEverySurface(provider.getTracer("kit"));
+        await provider.forceFlush();
+        const spans = exporter.getFinishedSpans();
+        expect(spans).toHaveLength(1);
+        for (const [surface, read, marked] of SURFACES) {
+          expect(read(spans[0]!), surface).toEqual(marked);
+        }
+      } finally {
+        await provider.shutdown();
+      }
+    });
   });
 
   describe("a policy that misbehaves", () => {
@@ -762,6 +950,84 @@ describe("startTestTelemetry", () => {
         "(text withheld: the redaction policy threw)",
         "(text withheld: the redaction policy threw)",
       ]);
+    });
+
+    // everything but the one function under test passes through, so the span reaches that function
+    // (the resource and the scope are attribute sets and texts too) and the report can be read back
+    const passing: RedactionPolicy = {
+      ...createProbePolicy(),
+      text: (_surface, value) => value,
+      attributes: (_surface, given) => given,
+    };
+    const textFor = (surface: string, result: () => unknown): Partial<RedactionPolicy> => ({
+      text: (given, value) => (given === surface ? (result() as string) : value),
+    });
+    const attributesFor = (surface: string, result: () => unknown): Partial<RedactionPolicy> => ({
+      attributes: (given, attributes) => (given === surface ? (result() as never) : attributes),
+    });
+    const status = (result: () => unknown): Partial<RedactionPolicy> => ({ spanStatus: result as never });
+    const event = (result: () => unknown): Partial<RedactionPolicy> => ({ spanEvent: result as never });
+
+    const NO_NAME = /did not return a string for span.name/;
+    const NO_SPAN_SET = /did not return an attribute set for span/;
+    const NO_LINK_SET = /did not return an attribute set for link/;
+    const NO_STATUS = /spanStatus\(\) did not return a string or undefined/;
+    const NO_EVENT = /spanEvent\(\) did not return an event/;
+    it.each<[string, Partial<RedactionPolicy>, RegExp]>([
+      ["a span's name is a number", textFor("span.name", () => 7), NO_NAME],
+      ["a span's name is nothing", textFor("span.name", () => undefined), NO_NAME],
+      ["a span's name is a promise that rejects", textFor("span.name", rejecting), NO_NAME],
+      ["a span's attributes are nothing", attributesFor("span", () => undefined), NO_SPAN_SET],
+      ["a span's attributes are an array", attributesFor("span", () => []), NO_SPAN_SET],
+      ["a span's attributes are a promise that rejects", attributesFor("span", rejecting), NO_SPAN_SET],
+      ["a link's attributes are a string", attributesFor("link", () => "abc"), NO_LINK_SET],
+      ["a link's attributes are an object with a then()", attributesFor("link", () => adapterOf(rejecting())), NO_LINK_SET],
+      ["the status text is a number", status(() => 7), NO_STATUS],
+      ["the status text is null", status(() => null), NO_STATUS],
+      ["the status text is a promise", status(() => Promise.resolve("text")), NO_STATUS],
+      ["the status text is a promise that rejects", status(rejecting), NO_STATUS],
+      ["an event is nothing", event(() => undefined), NO_EVENT],
+      ["an event is a string", event(() => "cache miss"), NO_EVENT],
+      ["an event is a promise that rejects", event(rejecting), NO_EVENT],
+      [
+        "an event is an object with a then()",
+        event(() => Object.assign(adapterOf(rejecting()), { name: "n", attributes: {} })),
+        NO_EVENT,
+      ],
+      ["an event's name is a number", event(() => ({ name: 7, attributes: {} })), NO_EVENT],
+      ["an event's name is a promise that rejects", event(() => ({ name: rejecting(), attributes: {} })), NO_EVENT],
+      ["an event has no attributes", event(() => ({ name: "n" })), NO_EVENT],
+      ["an event's attributes are an array", event(() => ({ name: "n", attributes: [] })), NO_EVENT],
+      ["an event's attributes are a promise that rejects", event(() => ({ name: "n", attributes: rejecting() })), NO_EVENT],
+      ["the policy throws for an event", event(failing), /the policy is broken/],
+    ])("on a span (%s): the export fails closed and is reported once", async (_how, how, message) => {
+      const events: DiagnosticsEvent[] = [];
+      telemetry = startTestTelemetry({
+        diagnostics: () => (reported) => events.push(reported),
+        redaction: { ...passing, ...how },
+      });
+      const pending = telemetry;
+      const unhandled = await unhandledDuring(async () => {
+        const span = trace.getTracer("kit").startSpan("checkout", {
+          attributes: { customer: "erin" },
+          links: [
+            {
+              context: { traceId: "0af7651916cd43dd8448eb211c80319c", spanId: "b7ad6b7169203331", traceFlags: 1 },
+              attributes: { reason: "retry of" },
+            },
+          ],
+        });
+        span.addEvent("cache miss", { key: "cart" });
+        span.setStatus({ code: SpanStatusCode.ERROR, message: "payment failed" });
+        span.end();
+        // the flush that would have delivered the span rejects: it did not go out as it was
+        await expect(pending.spans()).rejects.toThrow(message);
+      });
+      expect(unhandled).toEqual([]);
+      expect(events.map((reported) => [reported.message, reported.fields?.signal])).toEqual([
+        ["traces export failed", "traces"],
+      ]);
+      expect(JSON.stringify(events)).not.toContain("SENTINEL");
     });
   });
 

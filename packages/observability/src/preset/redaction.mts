@@ -17,6 +17,7 @@
 
 import type { Attributes } from "@opentelemetry/api";
 import type { InstrumentationScope } from "@opentelemetry/core";
+import type { ReadableSpan } from "@opentelemetry/sdk-trace";
 
 /** an attribute set as a policy sees it: plain keys and values */
 export type PolicyAttributes = Record<string, unknown>;
@@ -109,6 +110,8 @@ export interface Redactor {
   ) => T;
   /** an instrumentation scope: its name and attributes are chosen by API callers */
   scope: (scope: InstrumentationScope) => InstrumentationScope;
+  /** what is exported in place of the span's own, by property; the span is not changed */
+  span: (span: ReadableSpan) => Partial<ReadableSpan>;
 }
 
 /**
@@ -148,10 +151,13 @@ export function abandon(result: unknown): void {
   }
 }
 
+const NOTHING_REPLACED: Partial<ReadableSpan> = Object.freeze({});
+
 const AS_GIVEN: Redactor = {
   text: (_surface, value) => value,
   attributes: (_surface, attributes) => attributes,
   scope: (scope) => scope,
+  span: () => NOTHING_REPLACED,
 };
 
 export function createRedactor(option: RedactionOption): Redactor {
@@ -203,5 +209,55 @@ export function createRedactor(option: RedactionOption): Redactor {
     return clean;
   };
 
-  return { text, attributes, scope };
+  const status = (input: ReadableSpan["status"]): ReadableSpan["status"] => {
+    // a status with no text has nothing a policy could redact
+    if (input.message === undefined) return input;
+    const result: unknown = policy.spanStatus(input.message);
+    if (result === undefined) return { code: input.code };
+    if (typeof result !== "string") {
+      abandon(result);
+      throw new TypeError(
+        "the redaction policy's spanStatus() did not return a string or undefined",
+      );
+    }
+    return { code: input.code, message: result };
+  };
+
+  type SpanEvent = ReadableSpan["events"][number];
+  const event = (input: SpanEvent): SpanEvent => {
+    // name and attributes together, and the attributes a copy, as for any attribute set
+    const result: unknown = policy.spanEvent({
+      name: input.name,
+      attributes: { ...input.attributes },
+    });
+    // read once each: what is checked is what is exported
+    const { name, attributes: eventAttributes } =
+      typeof result === "object" && result !== null && !isThenable(result)
+        ? (result as { name?: unknown; attributes?: unknown })
+        : {};
+    if (
+      typeof name !== "string" ||
+      !isPlainObject(eventAttributes) ||
+      isThenable(eventAttributes)
+    ) {
+      // a promise may be the event itself or sit where its name or attributes belong
+      for (const promised of [result, name, eventAttributes]) abandon(promised);
+      throw new TypeError("the redaction policy's spanEvent() did not return an event");
+    }
+    return { ...input, name, attributes: eventAttributes as Attributes };
+  };
+
+  const span: Redactor["span"] = (input) => ({
+    name: text("span.name", input.name),
+    attributes: attributes("span", input.attributes),
+    status: status(input.status),
+    events: input.events.map(event),
+    links: input.links.map((link) => ({
+      ...link,
+      attributes: attributes("link", link.attributes),
+    })),
+    instrumentationScope: scope(input.instrumentationScope),
+  });
+
+  return { text, attributes, scope, span };
 }

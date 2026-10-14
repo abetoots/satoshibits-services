@@ -28,13 +28,13 @@ const marked = (surface: string, attributes: PolicyAttributes): PolicyAttributes
 export interface ProbeCall {
   fn: keyof RedactionPolicy;
   surface?: string;
-  /** the text handed over, or the keys of the attribute set */
+  /** the text handed over (for an event, its name), or the keys of the attribute set */
   given: string | string[];
 }
 
 /**
- * @param calls when given, every call of `text` and `attributes` is recorded
- *   here. The marks show what the policy did to what was exported; only this
+ * @param calls when given, every call of `text`, `attributes`, `spanStatus`
+ *   and `spanEvent` is recorded here. The marks show what the policy did to what was exported; only this
  *   shows what it was handed, including anything the preset replaced afterwards.
  */
 export function createProbePolicy(calls?: ProbeCall[]): RedactionPolicy {
@@ -47,11 +47,17 @@ export function createProbePolicy(calls?: ProbeCall[]): RedactionPolicy {
       calls?.push({ fn: "attributes", surface, given: Object.keys(attributes) });
       return marked(surface, attributes);
     },
-    spanStatus: (message) => probed("span.status", message),
-    spanEvent: (event) => ({
-      name: probed("span.event", event.name),
-      attributes: marked("span.event", event.attributes),
-    }),
+    spanStatus: (message) => {
+      calls?.push({ fn: "spanStatus", given: message });
+      return probed("span.status", message);
+    },
+    spanEvent: (event) => {
+      calls?.push({ fn: "spanEvent", given: event.name });
+      return {
+        name: probed("span.event", event.name),
+        attributes: marked("span.event", event.attributes),
+      };
+    },
     logRecord: (record) => ({
       ...record,
       body:
