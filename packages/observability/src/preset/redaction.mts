@@ -63,6 +63,10 @@ export interface PolicyLogRecord {
  * and must answer at once (not with a promise) and the same way each time for
  * the same input: what it returns for an instrumentation scope is kept for
  * the life of the process.
+ *
+ * What a function is handed is a copy as far as plain objects and arrays go,
+ * at any depth. Anything else in it (bytes, a date, a class instance) is the
+ * original, and must not be changed in place.
  */
 export interface RedactionPolicy {
   text: (surface: TextSurface, value: string) => string;
@@ -179,40 +183,52 @@ function refuse(message: string, ...results: unknown[]): never {
   throw new TypeError(message);
 }
 
+/** what is copied for a policy: a plain object or an array, and nothing else */
+const isContainer = (value: unknown): value is object =>
+  Array.isArray(value) || isPlainObject(value);
+
 /**
- * A value for a policy to work on: plain objects and arrays copied all the way
- * down, so that one changed in place leaves the record's own as it was.
- * Anything else (a text, a number, bytes) is handed over as it is.
+ * A copy of `original`, its own properties as they are, in which every plain
+ * object and array at any depth is a copy too. Anything else (a text, a
+ * number, bytes, a date, a class instance) is the original's own.
  *
  * The copy has the shape of the original: a part met twice is copied once, so
  * what was shared stays shared and a value that contains itself is copied as
  * one that does. What a policy makes of a cycle is the policy's business.
+ *
+ * It recurses with the nesting of the value: one nested thousands deep
+ * overflows the stack, and that export fails like any other throw.
+ *
+ * @param copies originals already copied, by original. Left out by the first
+ *   caller: nearly every attribute set is flat, and for those no map is made.
  */
-function copyForPolicy<T>(value: T, copies = new Map<object, unknown>()): T {
-  const isArray = Array.isArray(value);
-  if (!isArray && !isPlainObject(value)) return value;
-  const known = copies.get(value);
-  if (known !== undefined) return known as T;
-  if (isArray) {
-    const copy: unknown[] = [];
-    // noted before its parts are copied: one of them may be the array itself
-    copies.set(value, copy);
-    for (const item of value) copy.push(copyForPolicy(item, copies));
-    return copy as T;
+function copyForPolicy(original: object, copies?: Map<object, object>): object {
+  // a spread defines the properties it copies: a key named __proto__ stays a key
+  const copy = (Array.isArray(original) ? [...(original as unknown[])] : { ...original }) as Record<
+    string,
+    unknown
+  >;
+  copies?.set(original, copy);
+  for (const key of Object.keys(copy)) {
+    const inner = copy[key];
+    if (!isContainer(inner)) continue;
+    // only the outermost value is ever here without a map, so it is the only one to add late
+    copies ??= new Map([[original, copy]]);
+    // an own property already, so this assigns to it whatever the key is called
+    copy[key] = copies.get(inner) ?? copyForPolicy(inner, copies);
   }
-  const copy: Record<string, unknown> = {};
-  copies.set(value, copy);
-  for (const [key, inner] of Object.entries(value)) {
-    // defined, not assigned: a key named __proto__ is a key like any other
-    Object.defineProperty(copy, key, {
-      value: copyForPolicy(inner, copies),
-      enumerable: true,
-      writable: true,
-      configurable: true,
-    });
-  }
-  return copy as T;
+  return copy;
 }
+
+/** an attribute set for a policy: always a copy, whatever kind of object holds the attributes */
+const copyOfSet = (attributes: object): PolicyAttributes => copyForPolicy(attributes) as PolicyAttributes;
+
+/** a log body for a policy: a copy where it is a plain object or an array, itself otherwise */
+const copyOfBody = (body: unknown): unknown => (isContainer(body) ? copyForPolicy(body) : body);
+
+/** the parts of what a policy returned where a record belongs; none when it is not a plain object */
+const partsOf = (result: unknown): Record<string, unknown> =>
+  isPlainResult(result) ? result : {};
 
 const NOTHING_REPLACED: Partial<RedactedSpan> & Partial<RedactedLogRecord> = Object.freeze({});
 
@@ -246,7 +262,7 @@ export function createRedactor(option: RedactionOption): Redactor {
   ): T => {
     if (input === undefined) return input;
     // a copy: the policy must not change what it is given, and this makes a slip harmless
-    const result: unknown = policy.attributes(surface, copyForPolicy<PolicyAttributes>(input));
+    const result: unknown = policy.attributes(surface, copyOfSet(input));
     if (!isPlainResult(result)) {
       refuse(
         `the redaction policy's attributes() did not return an attribute set for ${surface}`,
@@ -287,13 +303,10 @@ export function createRedactor(option: RedactionOption): Redactor {
     // name and attributes together, and the attributes a copy, as for any attribute set
     const result: unknown = policy.spanEvent({
       name: input.name,
-      attributes: copyForPolicy<PolicyAttributes>(input.attributes ?? {}),
+      attributes: copyOfSet(input.attributes ?? {}),
     });
     // read once each: what is checked is what is exported
-    const { name, attributes: eventAttributes } =
-      typeof result === "object" && result !== null && !isThenable(result)
-        ? (result as { name?: unknown; attributes?: unknown })
-        : {};
+    const { name, attributes: eventAttributes } = partsOf(result);
     if (typeof name !== "string" || !isPlainResult(eventAttributes)) {
       // a promise may be the event itself or sit where its name or attributes belong
       refuse(
@@ -327,8 +340,8 @@ export function createRedactor(option: RedactionOption): Redactor {
     // the whole record at once, and the two optional texts only where the record has them:
     // a policy that copies what it is handed must not thereby add a key
     const result: unknown = policy.logRecord({
-      body: copyForPolicy<unknown>(input.body),
-      attributes: copyForPolicy<PolicyAttributes>(input.attributes),
+      body: copyOfBody(input.body),
+      attributes: copyOfSet(input.attributes),
       ...(input.eventName !== undefined && { eventName: input.eventName }),
       ...(input.severityText !== undefined && { severityText: input.severityText }),
     });
@@ -338,7 +351,7 @@ export function createRedactor(option: RedactionOption): Redactor {
       attributes: recordAttributes,
       eventName,
       severityText,
-    } = isPlainResult(result) ? result : {};
+    } = partsOf(result);
     if (
       !isPlainResult(recordAttributes) ||
       // a body may be any value but a promise of one

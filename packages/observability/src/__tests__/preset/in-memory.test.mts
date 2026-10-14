@@ -38,7 +38,7 @@ import { buildPipelines, instrumentationConfigFor, resetForTesting } from "../..
 import { startTestTelemetry } from "../../testing/in-memory.mjs";
 import type { DiagnosticsEvent } from "../../preset/diagnostics.mjs";
 import type { ResolvedConfig } from "../../preset/config.mjs";
-import type { RedactionPolicy } from "../../preset/redaction.mjs";
+import type { PolicyAttributes, PolicyLogRecord, RedactionPolicy } from "../../preset/redaction.mjs";
 import type { ProbeCall } from "./probe-policy.mjs";
 import type { Context, Tracer } from "@opentelemetry/api";
 import type { Logger } from "@opentelemetry/api-logs";
@@ -846,44 +846,45 @@ describe("startTestTelemetry", () => {
     });
   });
 
-  it("does not hand a metric's attributes to the policy, and still hands it the metric's scope", async () => {
-    const calls: ProbeCall[] = [];
+  describe("the policy and a metric", () => {
     const record = () => {
       metrics
         .getMeter("meter frank.sentinel@example.com")
         .createCounter("orders_total")
         .add(1, { "customer.tier": "gold" });
     };
-    telemetry = startTestTelemetry({ redaction: createProbePolicy(calls) });
-    record();
-    expect(await telemetry.metricPoints("orders_total")).toEqual([
-      { attributes: { "customer.tier": "gold" }, value: 1 },
-    ]);
-    // neither as an attribute set nor as a text, under any function of the policy
-    expect(calls.flatMap((call) => call.given)).not.toContain("customer.tier");
-    expect(JSON.stringify(calls)).not.toContain("gold");
-    // and the recording would have shown it: the scope was handed over
-    expect(calls).toContainEqual({ fn: "text", surface: "scope.name", given: "meter frank.sentinel@example.com" });
-    await telemetry.stop();
 
-    // the kit does not hand out a metric's scope, so the exporter is read directly for it
-    const exporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
-    start({
-      serviceName: "test",
-      instrumentations: false,
-      loaderHook: false,
-      redaction: createProbePolicy(),
-      testExporters: { metricExporter: exporter },
+    it("is not handed the metric's attributes, which are exported as given", async () => {
+      const calls: ProbeCall[] = [];
+      telemetry = startTestTelemetry({ redaction: createProbePolicy(calls) });
+      record();
+      expect(await telemetry.metricPoints("orders_total")).toEqual([
+        { attributes: { "customer.tier": "gold" }, value: 1 },
+      ]);
+      // neither as an attribute set nor as a text, under any function of the policy
+      expect(calls.flatMap((call) => call.given)).not.toContain("customer.tier");
+      expect(JSON.stringify(calls)).not.toContain("gold");
+      // and the recording would have shown it: the metric's scope was handed over
+      expect(calls).toContainEqual({ fn: "text", surface: "scope.name", given: "meter frank.sentinel@example.com" });
     });
-    record();
-    await forceFlush();
-    const scopeMetrics = exporter.getMetrics().flatMap((collection) => collection.scopeMetrics);
-    expect(scopeMetrics.map((scoped) => scoped.scope.name)).toEqual([
-      "[probe:scope.name] meter frank.sentinel@example.com",
-    ]);
-    expect(scopeMetrics[0]!.metrics[0]!.dataPoints.map((point) => point.attributes)).toEqual([
-      { "customer.tier": "gold" },
-    ]);
+
+    it("is still applied to the metric's scope", async () => {
+      // the kit does not hand out a metric's scope, so the exporter is read directly for it
+      const exporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
+      start({
+        serviceName: "test",
+        instrumentations: false,
+        loaderHook: false,
+        redaction: createProbePolicy(),
+        testExporters: { metricExporter: exporter },
+      });
+      record();
+      await forceFlush();
+      const scopeMetrics = exporter.getMetrics().flatMap((collection) => collection.scopeMetrics);
+      expect(scopeMetrics.map((scoped) => scoped.scope.name)).toEqual([
+        "[probe:scope.name] meter frank.sentinel@example.com",
+      ]);
+    });
   });
 
   describe("a policy that misbehaves", () => {
@@ -1286,6 +1287,82 @@ describe("startTestTelemetry", () => {
       expect(given).toEqual({ kept: "as it was" });
     });
 
+    describe("the copy a policy is handed", () => {
+      /** what the policy's attributes() and logRecord() are handed for these */
+      function handed(attributes: object, body?: unknown): { set: PolicyAttributes; record: PolicyLogRecord } {
+        const seen: { set?: PolicyAttributes; record?: PolicyLogRecord } = {};
+        const redactor = createRedactor({
+          ...createProbePolicy(),
+          attributes: (_surface, set) => (seen.set ??= set),
+          logRecord: (record) => (seen.record = record),
+        });
+        redactor.attributes("span", attributes as never);
+        redactor.logRecord({ body, attributes, instrumentationScope: { name: "kit" } } as never);
+        return { set: seen.set!, record: seen.record! };
+      }
+      // an own key, as a parsed document has it: written in a literal it would set the prototype
+      const withProtoKey = (): Record<string, unknown> =>
+        JSON.parse('{ "__proto__": { "polluted": true }, "kept": "as it was" }') as Record<string, unknown>;
+
+      it.each<[string, (given: Record<string, unknown>) => unknown]>([
+        ["an attribute set", (given) => handed(given).set],
+        ["a log record's attributes", (given) => handed(given).record.attributes],
+        ["a body", (given) => handed({}, given).record.body],
+        ["a value nested in a body", (given) => (handed({}, { nested: [given] }).record.body as { nested: unknown[] }).nested[0]],
+      ])("keeps a key named __proto__ a key like any other, in %s", (_where, copyOf) => {
+        const given = withProtoKey();
+        const copy = copyOf(given) as Record<string, unknown>;
+        expect(copy).not.toBe(given);
+        expect(Object.keys(copy)).toEqual(["__proto__", "kept"]);
+        expect(Object.getOwnPropertyDescriptor(copy, "__proto__")?.value).toEqual({ polluted: true });
+        // a copy of the value, not the value: it is a plain object like any other
+        expect(Object.getOwnPropertyDescriptor(copy, "__proto__")?.value).not.toBe(
+          Object.getOwnPropertyDescriptor(given, "__proto__")?.value,
+        );
+        expect(Object.getPrototypeOf(copy)).toBe(Object.prototype);
+        expect((copy as { polluted?: unknown }).polluted).toBeUndefined();
+      });
+
+      class Money {
+        constructor(readonly amount: number) {}
+      }
+      it.each<[string, unknown]>([
+        ["bytes", new Uint8Array([1, 2, 3])],
+        ["a date", new Date(0)],
+        ["a class instance", new Money(5)],
+      ])("hands over %s as they are: as a body, nested in one, and as an attribute's value", (_what, value) => {
+        expect(handed({}, value).record.body).toBe(value);
+        const nested = handed({ direct: value, listed: [value] }, { inside: { deep: [value] } });
+        expect((nested.record.body as { inside: { deep: unknown[] } }).inside.deep[0]).toBe(value);
+        expect(nested.set.direct).toBe(value);
+        expect((nested.record.attributes.listed as unknown[])[0]).toBe(value);
+      });
+
+      it("copies an attribute set that is not a plain object too", () => {
+        class Labels {
+          customer = "erin";
+          tags = ["a"];
+        }
+        const given = new Labels();
+        const { set, record } = handed(given);
+        for (const copy of [set, record.attributes]) {
+          expect(copy).not.toBe(given);
+          expect(copy).toEqual({ customer: "erin", tags: ["a"] });
+          expect(copy.tags).not.toBe(given.tags);
+        }
+      });
+
+      it("copies a flat set and a nested one alike: what was shared stays shared, at any depth", () => {
+        const shared = { part: "shared" };
+        const given = { flat: "text", first: shared, list: [shared, { deeper: shared }] };
+        const copy = handed(given).set as typeof given;
+        expect(copy).toEqual(given);
+        expect(copy.first).not.toBe(shared);
+        expect(copy.list[0]).toBe(copy.first);
+        expect((copy.list[1] as { deeper: unknown }).deeper).toBe(copy.first);
+      });
+    });
+
     const NOT_A_STRING = /did not return a string for scope.name/;
     it.each([
       ["throws", failing, /the policy is broken/],
@@ -1387,26 +1464,43 @@ describe("startTestTelemetry", () => {
     const eventFor = (result: () => unknown): Partial<RedactionPolicy> => ({ spanEvent: result as never });
 
     /**
-     * Emit a span under `passing` with `how` in place of part of it; the flush that would have
-     * delivered the span must reject with `message`, with no rejection left unhandled. Resolves
-     * to what diagnostics reported.
+     * Under `passing` with `how` in place of part of it, run `emitAndRead`, which emits and
+     * asserts what the read then does; no rejection may be left unhandled. Resolves to what
+     * diagnostics reported.
      */
-    async function reportedForASpan(how: Partial<RedactionPolicy>, message: RegExp): Promise<DiagnosticsEvent[]> {
+    async function reportedFor(
+      how: Partial<RedactionPolicy>,
+      emitAndRead: (running: TestTelemetry) => Promise<void>,
+    ): Promise<DiagnosticsEvent[]> {
       const events: DiagnosticsEvent[] = [];
       telemetry = startTestTelemetry({
         diagnostics: () => (reported) => events.push(reported),
         redaction: { ...passing, ...how },
       });
-      const pending = telemetry;
-      const unhandled = await unhandledDuring(async () => {
-        emitOnEverySurface();
-        // it did not go out as it was
-        await expect(pending.spans()).rejects.toThrow(message);
-      });
+      const running = telemetry;
+      const unhandled = await unhandledDuring(() => emitAndRead(running));
       expect(unhandled).toEqual([]);
       return events;
     }
+    /** the flush that would have delivered the span rejects with `message`: it did not go out as it was */
+    const aSpan = (message: RegExp) => async (running: TestTelemetry) => {
+      emitOnEverySurface();
+      await expect(running.spans()).rejects.toThrow(message);
+    };
+    /** for this signal the SDK swallows the failed export: the read resolves, and the record is not in it */
+    const aLogRecord = async (running: TestTelemetry) => {
+      logs.getLogger("kit").emit({ body: "a line", attributes: { customer: "erin" } });
+      await expect(running.logRecords()).resolves.toEqual([]);
+    };
 
+    class EventLike {
+      name = "n";
+      attributes = {};
+    }
+    class RecordLike {
+      body = "a line";
+      attributes = {};
+    }
     const NO_NAME = /did not return a string for span.name/;
     const NO_SPAN_SET = /did not return an attribute set for span/;
     const NO_LINK_SET = /did not return an attribute set for link/;
@@ -1430,6 +1524,8 @@ describe("startTestTelemetry", () => {
       // null is an object to typeof: it is refused as a wrong kind, not by failing to be read
       ["an event is null", eventFor(() => null), NO_EVENT],
       ["an event is a promise that rejects", eventFor(rejecting), NO_EVENT],
+      // it has the name and the attributes of an event, and is refused for what it is
+      ["an event is a class instance", eventFor(() => new EventLike()), NO_EVENT],
       [
         "an event is an object with a then()",
         eventFor(() => Object.assign(adapterOf(rejecting()), { name: "n", attributes: {} })),
@@ -1446,14 +1542,14 @@ describe("startTestTelemetry", () => {
       ],
       ["an event's attributes are a promise that rejects", eventFor(() => ({ name: "n", attributes: rejecting() })), NO_EVENT],
     ])("on a span (%s): the export fails closed and is reported once", async (_how, how, message) => {
-      const events = await reportedForASpan(how, message);
+      const events = await reportedFor(how, aSpan(message));
       expect(events.map((reported) => [reported.message, reported.fields?.signal])).toEqual([
         ["traces export failed", "traces"],
       ]);
     });
 
     it("on a span (the policy throws): the export fails closed, reported once and without the error's text", async () => {
-      const events = await reportedForASpan(eventFor(failing), /the policy is broken SENTINEL/);
+      const events = await reportedFor(eventFor(failing), aSpan(/the policy is broken SENTINEL/));
       expect(events.map((reported) => [reported.message, reported.fields?.signal])).toEqual([
         ["traces export failed", "traces"],
       ]);
@@ -1461,27 +1557,6 @@ describe("startTestTelemetry", () => {
     });
 
     const recordFor = (result: () => unknown): Partial<RedactionPolicy> => ({ logRecord: result as never });
-
-    /**
-     * Emit one log record under `passing` with `how` in place of part of it, with no rejection
-     * left unhandled. Resolves to what diagnostics reported.
-     */
-    async function reportedForALogRecord(how: Partial<RedactionPolicy>): Promise<DiagnosticsEvent[]> {
-      const events: DiagnosticsEvent[] = [];
-      telemetry = startTestTelemetry({
-        diagnostics: () => (reported) => events.push(reported),
-        redaction: { ...passing, ...how },
-      });
-      const running = telemetry;
-      const unhandled = await unhandledDuring(async () => {
-        logs.getLogger("kit").emit({ body: "a line", attributes: { customer: "erin" } });
-        // for this signal the SDK swallows the failed export: the read resolves, and the record
-        // is not in it, so it did not go out as it was
-        await expect(running.logRecords()).resolves.toEqual([]);
-      });
-      expect(unhandled).toEqual([]);
-      return events;
-    }
 
     // made when the policy is called: a promise that rejects must not exist before anything can let go of it
     const recordWith = (part: () => Record<string, unknown>) => () => ({ body: "a line", attributes: {}, ...part() });
@@ -1491,6 +1566,7 @@ describe("startTestTelemetry", () => {
       ["a record is null", () => null],
       ["a record is an array", () => []],
       ["a record is a Map", () => new Map()],
+      ["a record is a class instance", () => new RecordLike()],
       ["a record is a promise", () => Promise.resolve({ body: "a line", attributes: {} })],
       ["a record is a promise that rejects", rejecting],
       ["a record is an object with a then()", recordWith(() => adapterOf(rejecting()))],
@@ -1509,7 +1585,7 @@ describe("startTestTelemetry", () => {
       ["a record's body is a promise that rejects", recordWith(() => ({ body: rejecting() }))],
       ["a record's body is an object with a then()", recordWith(() => ({ body: adapterOf(rejecting()) }))],
     ])("on a log record (%s): the export fails closed and is reported once", async (_how, result) => {
-      const events = await reportedForALogRecord(recordFor(result));
+      const events = await reportedFor(recordFor(result), aLogRecord);
       // the flush does not carry the error for this signal; the report names its kind
       expect(events.map((reported) => [reported.message, reported.fields?.signal, reported.fields?.error])).toEqual([
         ["logs export failed", "logs", "TypeError"],
@@ -1527,7 +1603,7 @@ describe("startTestTelemetry", () => {
     });
 
     it("on a log record (the policy throws): the export fails closed, reported once and without the error's text", async () => {
-      const events = await reportedForALogRecord(recordFor(failing));
+      const events = await reportedFor(recordFor(failing), aLogRecord);
       expect(events.map((reported) => [reported.message, reported.fields?.signal, reported.fields?.error])).toEqual([
         ["logs export failed", "logs", "Error"],
       ]);
