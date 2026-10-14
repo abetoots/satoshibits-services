@@ -33,24 +33,31 @@ function rowsOf(table: string): string[][] {
     .map((line) => line.trim().slice(1, -1).split("|").map((cell) => cell.trim().replace(/^`|`$/g, "")));
 }
 
-/** every `OTEL_*` name the package's own code reads, as written there (comments left out) */
+// the signals' parts of a variable name, as config.mts's SIGNAL_VAR spells them
+const SIGNAL_PARTS = ["TRACES", "METRICS", "LOGS"];
+
+/**
+ * every `OTEL_*` name the package's own code reads: `process.env.NAME`, a
+ * string literal that is the whole name (what `read(env, …)` and the name
+ * lists take), and a name built from a signal's part. A name inside a
+ * sentence (a warning's text) or a comment is not a read.
+ */
 function variablesInSource(): Set<string> {
   const names = new Set<string>();
   const src = join(PACKAGE_ROOT, "src");
   for (const entry of readdirSync(src, { recursive: true, withFileTypes: true })) {
     const file = join(entry.parentPath, entry.name);
     if (!entry.isFile() || relative(src, file).startsWith("__tests__")) continue;
-    // block comments, then line comments (a `//` after a colon is a URL's)
-    const code = readFileSync(file, "utf8")
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/(^|[^:])\/\/.*$/gm, "$1");
-    for (const name of code.match(/OTEL_[A-Z0-9_]+/g) ?? []) names.add(name);
+    const code = readFileSync(file, "utf8");
+    for (const m of code.matchAll(/process\.env\.(OTEL_[A-Z0-9_]+)/g)) names.add(m[1]!);
+    for (const m of code.matchAll(/["'](OTEL_[A-Z0-9_]+)["']/g)) names.add(m[1]!);
+    for (const m of code.matchAll(/`(OTEL_[A-Z0-9_]*)\$\{SIGNAL_VAR\[signal\]\}([A-Z0-9_]*)`/g)) {
+      for (const part of SIGNAL_PARTS) names.add(`${m[1]}${part}${m[2]}`);
+    }
   }
   return names;
 }
 
-// read by the preset under a name it builds from the signal's, so not written out in the source
-const BUILT_NAMES = ["OTEL_TRACES_EXPORTER", "OTEL_METRICS_EXPORTER"];
 // read by OpenTelemetry's OTLP exporters themselves, which the preset constructs
 const UPSTREAM_NAMES = ["OTEL_EXPORTER_OTLP_HEADERS"];
 
@@ -98,8 +105,15 @@ describe("the README names nothing the package does not have", () => {
     expect([...new Set(used)].filter((entry) => !(entry in manifest.exports))).toEqual([]);
   });
 
+  it("counts as read the names built from a signal's, and not the names in a warning's text", () => {
+    const read = variablesInSource();
+    expect(read).toContain("OTEL_TRACES_EXPORTER");
+    expect(read).toContain("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL");
+    expect(read).toContain("OTEL_SERVICE_NAME");
+  });
+
   it("names only OTEL_* variables the package reads", () => {
-    const known = new Set([...variablesInSource(), ...BUILT_NAMES, ...UPSTREAM_NAMES]);
+    const known = new Set([...variablesInSource(), ...UPSTREAM_NAMES]);
     const named = new Set(README.match(/OTEL_[A-Z0-9_]+/g) ?? []);
     expect(named.size).toBeGreaterThan(0);
     expect([...named].filter((name) => !known.has(name))).toEqual([]);
@@ -184,7 +198,14 @@ describe("the README states", () => {
   });
 
   it("that Prisma's instrumentation is the project's to add", () => {
-    expect(prose).toMatch(/@prisma\/instrumentation/);
+    expect(prose).toMatch(
+      /Prisma publishes its own instrumentation, `@prisma\/instrumentation`; a project that wants Prisma's spans adds it itself\./,
+    );
+  });
+
+  it("that a logs endpoint alone does not export logs", () => {
+    expect(prose).not.toMatch(/OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` set one signal's, and turn that signal on by themselves/);
+    expect(prose).toMatch(/OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`[^\n]*logs also need `OTEL_LOGS_EXPORTER=otlp`/);
   });
 
   it("that start() after shutdown() is refused", () => {
@@ -192,8 +213,8 @@ describe("the README states", () => {
   });
 
   it("that preloads read process.env, so .env files need --env-file", () => {
-    expect(prose).toMatch(/process\.env/);
-    expect(README).toMatch(/--env-file/);
+    expect(prose).toMatch(/A preload runs before your application's code, and it reads `process\.env` directly\./);
+    expect(prose).toMatch(/`--env-file` needs Node\.js 20\.6 or later/);
   });
 
   it("the test kit", () => {

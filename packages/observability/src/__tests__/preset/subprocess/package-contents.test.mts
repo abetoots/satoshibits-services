@@ -150,8 +150,18 @@ describe("the manifest", () => {
     expect(manifest.dependencies ?? {}).not.toHaveProperty("@opentelemetry/api");
   });
 
-  // an api the SDK refuses makes the SDK install a copy of its own: the split the peer exists to prevent
-  it.each(["@opentelemetry/sdk-node", "@opentelemetry/sdk-trace-base", "@opentelemetry/sdk-logs"])(
+  // every dependency of ours that takes the api as a peer, read from the installed packages
+  const API_PEERS = Object.keys(
+    (JSON.parse(readFileSync(join(PACKAGE_ROOT, "package.json"), "utf8")) as { dependencies: Record<string, string> })
+      .dependencies,
+  ).filter((name) => packageOf(name).peerDependencies?.["@opentelemetry/api"] !== undefined);
+
+  it("finds the dependencies that take the api as a peer", () => {
+    expect(API_PEERS).toEqual(expect.arrayContaining(["@opentelemetry/sdk-node", "@opentelemetry/sdk-metrics"]));
+  });
+
+  // an api a dependency refuses makes it install a copy of its own: the split the peer exists to prevent
+  it.each(API_PEERS)(
     "accepts no @opentelemetry/api that %s refuses",
     (sdk) => {
       const [ourLow, ourHigh] = interval(manifest.peerDependencies!["@opentelemetry/api"]!);

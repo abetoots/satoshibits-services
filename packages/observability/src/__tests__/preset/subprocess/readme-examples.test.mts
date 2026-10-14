@@ -1,11 +1,13 @@
 /**
  * The README's snippets, run as a consumer runs them: from a package of its
- * own, outside this repository, whose node_modules holds this package (the
- * built `dist/`, rebuilt before the file's tests), `@satoshibits/redaction`
- * and `@opentelemetry/api`. The links resolve to the real packages, so their
- * own dependencies (dev ones included) stay visible to them; a preload in the
- * consumer imports the redaction package through the consumer's own
- * dependency on it.
+ * own, outside this repository. Its node_modules holds this package as
+ * `pnpm pack` publishes it (built here first), unpacked, with only the
+ * dependencies its packed manifest declares linked beside it; and
+ * `@opentelemetry/api` and `@satoshibits/redaction` as the consumer's own
+ * dependencies. So `files`, the dependency list and the peer are what run:
+ * a file left out of the tarball, an import of an undeclared package, or a
+ * second copy of the api fails a test here. The linked dependencies are the
+ * workspace's installed packages (the test runs offline).
  *
  * Each snippet is read from README.md (see ../readme-snippets.mts); `app.js`
  * is fixtures/readme-app.mjs, and the README's example endpoint is replaced
@@ -16,6 +18,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import {
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -49,11 +52,12 @@ beforeEach(() => {
 });
 
 let consumer: string;
+const run = promisify(execFile);
 
 beforeAll(async () => {
   // as in preload.test.mts: built here unless the release workflow has just built dist/
   if (process.env.OBS_TEST_DIST_FRESH !== "1") {
-    await promisify(execFile)("pnpm", ["run", "build"], { cwd: PACKAGE_ROOT });
+    await run("pnpm", ["run", "build"], { cwd: PACKAGE_ROOT });
   }
   consumer = mkdtempSync(join(tmpdir(), "obs-readme-consumer-"));
   writeFileSync(
@@ -69,13 +73,33 @@ beforeAll(async () => {
       },
     }),
   );
-  const link = (name: string, target: string) => {
-    mkdirSync(join(consumer, "node_modules", name, ".."), { recursive: true });
-    symlinkSync(target, join(consumer, "node_modules", name), "dir");
+  const installed = (name: string) => realpathSync(join(PACKAGE_ROOT, "node_modules", name));
+  const link = (modules: string, name: string) => {
+    mkdirSync(join(modules, name, ".."), { recursive: true });
+    symlinkSync(installed(name), join(modules, name), "dir");
   };
-  link("@satoshibits/observability", PACKAGE_ROOT);
-  link("@satoshibits/redaction", realpathSync(join(PACKAGE_ROOT, "node_modules/@satoshibits/redaction")));
-  link("@opentelemetry/api", realpathSync(join(PACKAGE_ROOT, "node_modules/@opentelemetry/api")));
+  link(join(consumer, "node_modules"), "@satoshibits/redaction");
+  link(join(consumer, "node_modules"), "@opentelemetry/api");
+
+  // the package as published: packed, unpacked, and given only the dependencies it declares
+  const packed = mkdtempSync(join(tmpdir(), "obs-readme-pack-"));
+  try {
+    const { stdout } = await run("pnpm", ["pack", "--pack-destination", packed, "--json"], {
+      cwd: PACKAGE_ROOT,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    const tarball = (JSON.parse(stdout) as { filename: string }).filename;
+    const target = join(consumer, "node_modules/@satoshibits/observability");
+    mkdirSync(target, { recursive: true });
+    await run("tar", ["-xzf", tarball, "-C", target, "--strip-components=1"]);
+  } finally {
+    rmSync(packed, { recursive: true, force: true });
+  }
+  const unpacked = join(consumer, "node_modules/@satoshibits/observability");
+  const declared = JSON.parse(readFileSync(join(unpacked, "package.json"), "utf8")) as {
+    dependencies: Record<string, string>;
+  };
+  for (const name of Object.keys(declared.dependencies)) link(join(unpacked, "node_modules"), name);
   copyFileSync(join(import.meta.dirname, "fixtures/readme-app.mjs"), join(consumer, "app.js"));
 }, 120_000);
 
@@ -115,6 +139,32 @@ function serverSpan(): SinkSpan {
 // the keys the standard policy drops as the peer's address, under any convention the instrumentation uses
 const PEER_ADDRESS_KEYS = ["client.address", "network.peer.address", "http.client_ip", "net.peer.ip", "net.sock.peer.addr"];
 const peerAddresses = (span: SinkSpan) => PEER_ADDRESS_KEYS.filter((key) => key in span.attributes);
+// the ones the pinned HTTP instrumentation puts on its server span
+const EMITTED_PEER_KEYS = ["client.address", "network.peer.address"];
+
+describe("the consumer package", () => {
+  it("has this package as published: no sources, its own dependencies only, the api from the consumer", () => {
+    const unpacked = join(consumer, "node_modules/@satoshibits/observability");
+    expect(existsSync(join(unpacked, "dist/register.mjs"))).toBe(true);
+    expect(existsSync(join(unpacked, "src")), "sources are not published").toBe(false);
+    expect(existsSync(join(unpacked, "node_modules/@opentelemetry/api")), "the api is a peer").toBe(false);
+  });
+});
+
+describe("the redaction control", () => {
+  // what the app emits with nothing redacted, so the absences asserted below mean something
+  it("exports the secret and the peer address when the preload passes redaction: false", async () => {
+    writeFileSync(
+      join(consumer, "unredacted.mjs"),
+      'import { start } from "@satoshibits/observability/preset";\nstart({ serviceName: "control", redaction: false });\n',
+    );
+    await runCommand(
+      "OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.example.com node --import ./unredacted.mjs app.js",
+    );
+    expect(JSON.stringify(sink.spans())).toContain(SECRET);
+    expect(peerAddresses(serverSpan())).toEqual(EMITTED_PEER_KEYS);
+  });
+});
 
 describe("the quick start", () => {
   it("exports the app's spans under the standard policy, with one flag and the standard variables", async () => {
@@ -168,7 +218,8 @@ describe("a preload of your own", () => {
     expect(named, "the snippet sets serviceName in code").not.toBeNull();
     expect(span.resource["service.name"]).toBe(named![1]);
     // the policy keeps the peer address the standard one drops, and still cuts the query string
-    expect(peerAddresses(span).length).toBeGreaterThan(0);
+    expect(peerAddresses(span)).toEqual(EMITTED_PEER_KEYS);
+    expect(span.attributes["client.address"]).toBe("127.0.0.1");
     expect(JSON.stringify(sink.spans())).not.toContain(SECRET);
   });
 

@@ -537,6 +537,24 @@ describe("the removed exports' table", () => {
     (cells) => [unquote(cells[0]!), unquote(cells[1]!), cells[2]!, cells[3]!] as const,
   );
 
+  // fixed here, so a row deleted from the table fails rather than leaving with its check
+  const BROWSER_NAMES = [
+    "BrowserInitConfig",
+    "BrowserClientUserConfig",
+    "BrowserClientConfig",
+    "RECOMMENDED_BROWSER_INSTRUMENTATION",
+    "FULL_BROWSER_INSTRUMENTATION",
+  ];
+
+  it.each(BROWSER_NAMES)("has a removed /browser row for %s, and no entry exports it", (name) => {
+    const row = rows.find(([entry, rowName]) => entry === "/browser" && rowName === name);
+    expect(row, `no /browser row for ${name}`).toBeDefined();
+    expect(row![3]).toBe("removed");
+    for (const source of liveSources) {
+      expect([...exportsOf(source).keys()], `${name} on ${path.relative(PACKAGE, source)}`).not.toContain(name);
+    }
+  });
+
   it("lists each removed entry with a row of its own", () => {
     for (const entry of REMOVED_ENTRIES) {
       expect(rows.filter(([e, , kind]) => e === entry && kind === "entry"), entry).toHaveLength(1);
