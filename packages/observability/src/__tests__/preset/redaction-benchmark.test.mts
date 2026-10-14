@@ -83,6 +83,27 @@ function finishedSpans(): ReadableSpan[] {
   return memory.getFinishedSpans();
 }
 
+/** whether an exported span shows a value the standard policy removes from these spans */
+function unredacted(span: ReadableSpan): boolean {
+  const { attributes } = span;
+  if ("client.address" in attributes || "network.peer.address" in attributes)
+    return true;
+  if ("url.query" in attributes) return true;
+  if (String(attributes["url.full"]).includes("?")) return true;
+  if (
+    Object.values(attributes).some((value) =>
+      String(value).includes("@example.com"),
+    )
+  ) {
+    return true;
+  }
+  if (span.status.message !== undefined) return true;
+  return span.events.some(
+    (event) =>
+      event.attributes !== undefined && "exception.message" in event.attributes,
+  );
+}
+
 describe("the standard redaction policy on a full batch", () => {
   it(`redacts ${BATCH} HTTP server spans through the exporter wrapper within ${THRESHOLD_MILLIS} ms (best of ${RUNS})`, async ({
     annotate,
@@ -104,21 +125,32 @@ describe("the standard redaction policy on a full batch", () => {
     });
 
     let best = Number.POSITIVE_INFINITY;
-    // a run that failed fast inside the wrapper would read as a low time: each run must
-    // answer success with the whole batch, and none may read an earlier run's batch
-    const runs: { code: ExportResultCode | undefined; exported: number }[] = [];
+    // a run that failed fast inside the wrapper, or skipped the policy for some spans,
+    // would read as a low time: each run must answer success with the whole batch, every
+    // span of it redacted, and none may read an earlier run's batch. The check runs after
+    // the timed region, on what that run exported
+    const runs: {
+      code: ExportResultCode | undefined;
+      exported: number;
+      unredacted: number;
+    }[] = [];
     for (let run = 0; run < RUNS; run++) {
       exported = [];
       let code: ExportResultCode | undefined;
       const started = performance.now();
       wrapper.export(spans, (result) => (code = result.code));
       best = Math.min(best, performance.now() - started);
-      runs.push({ code, exported: exported.length });
+      runs.push({
+        code,
+        exported: exported.length,
+        unredacted: exported.filter(unredacted).length,
+      });
     }
     expect(runs).toEqual(
       Array.from({ length: RUNS }, () => ({
         code: ExportResultCode.SUCCESS,
         exported: BATCH,
+        unredacted: 0,
       })),
     );
 
