@@ -114,10 +114,59 @@ describe("the packed tarball", () => {
   });
 });
 
+type Version = [number, number, number];
+
+/** a version range as [lowest accepted, lowest refused); only the `^x.y.z` and `>=a.b.c <x.y.z` forms */
+function interval(range: string): [Version, Version] {
+  const version = (text: string): Version => {
+    const parts = /^(\d+)\.(\d+)\.(\d+)$/.exec(text);
+    if (!parts) throw new Error(`not a plain version: ${text}`);
+    return [Number(parts[1]), Number(parts[2]), Number(parts[3])];
+  };
+  const caret = /^\^(\S+)$/.exec(range.trim());
+  if (caret) {
+    const low = version(caret[1]!);
+    // ^1.y.z stops at the next major; this package's peers are all 1.x
+    if (low[0] === 0) throw new Error(`a ^0.x range is not handled here: ${range}`);
+    return [low, [low[0] + 1, 0, 0]];
+  }
+  const bounded = /^>=\s*(\S+)\s+<\s*(\S+)$/.exec(range.trim());
+  if (bounded) return [version(bounded[1]!), version(bounded[2]!)];
+  throw new Error(`a range of a form this check does not read: ${range}`);
+}
+
+const compare = (a: Version, b: Version): number => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+
+const packageOf = (name: string) =>
+  JSON.parse(readFileSync(join(PACKAGE_ROOT, "node_modules", name, "package.json"), "utf8")) as {
+    version: string;
+    peerDependencies?: Record<string, string>;
+  };
+
 describe("the manifest", () => {
   // two copies of the API would split context and the registered providers between the app and the library
-  it("takes @opentelemetry/api as a peer on the 1.x line, never as a dependency of its own", () => {
-    expect(manifest.peerDependencies?.["@opentelemetry/api"]).toMatch(/^\^1\./);
+  it("takes @opentelemetry/api as a peer, never as a dependency of its own", () => {
+    expect(manifest.peerDependencies).toHaveProperty("@opentelemetry/api");
     expect(manifest.dependencies ?? {}).not.toHaveProperty("@opentelemetry/api");
+  });
+
+  // an api the SDK refuses makes the SDK install a copy of its own: the split the peer exists to prevent
+  it.each(["@opentelemetry/sdk-node", "@opentelemetry/sdk-trace-base", "@opentelemetry/sdk-logs"])(
+    "accepts no @opentelemetry/api that %s refuses",
+    (sdk) => {
+      const [ourLow, ourHigh] = interval(manifest.peerDependencies!["@opentelemetry/api"]!);
+      const theirs = packageOf(sdk).peerDependencies?.["@opentelemetry/api"];
+      expect(theirs, `${sdk} names no @opentelemetry/api peer`).toBeDefined();
+      const [theirLow, theirHigh] = interval(theirs!);
+      expect(compare(ourLow, theirLow), `our lowest ${ourLow.join(".")} against ${theirs}`).toBeGreaterThanOrEqual(0);
+      expect(compare(ourHigh, theirHigh), `our upper bound ${ourHigh.join(".")} against ${theirs}`).toBeLessThanOrEqual(0);
+    },
+  );
+
+  it("accepts the @opentelemetry/api the package is tested with", () => {
+    const [low, high] = interval(manifest.peerDependencies!["@opentelemetry/api"]!);
+    const installed = interval(`>=${packageOf("@opentelemetry/api").version} <999.0.0`)[0];
+    expect(compare(installed, low)).toBeGreaterThanOrEqual(0);
+    expect(compare(installed, high)).toBeLessThan(0);
   });
 });
