@@ -111,8 +111,14 @@ export interface Redactor {
   /** an instrumentation scope: its name and attributes are chosen by API callers */
   scope: (scope: InstrumentationScope) => InstrumentationScope;
   /** what is exported in place of the span's own, by property; the span is not changed */
-  span: (span: ReadableSpan) => Partial<ReadableSpan>;
+  span: (span: ReadableSpan) => Partial<RedactedSpan>;
 }
+
+/** the properties of a span a policy has a say in: all of them are replaced under one */
+export type RedactedSpan = Pick<
+  ReadableSpan,
+  "name" | "attributes" | "status" | "events" | "links" | "instrumentationScope"
+>;
 
 /**
  * An object literal or one without a prototype: not an array, a promise or a
@@ -151,7 +157,20 @@ export function abandon(result: unknown): void {
   }
 }
 
-const NOTHING_REPLACED: Partial<ReadableSpan> = Object.freeze({});
+/**
+ * What a policy may return where an attribute set belongs. A thenable is not
+ * one whatever else it is: an object literal with a then() is plain too.
+ */
+const isPlainResult = (value: unknown): value is Record<string, unknown> =>
+  isPlainObject(value) && !isThenable(value);
+
+/** refuse what a policy returned, letting go first of every promise among `results` */
+function refuse(message: string, ...results: unknown[]): never {
+  for (const result of results) abandon(result);
+  throw new TypeError(message);
+}
+
+const NOTHING_REPLACED: Partial<RedactedSpan> = Object.freeze({});
 
 const AS_GIVEN: Redactor = {
   text: (_surface, value) => value,
@@ -171,8 +190,7 @@ export function createRedactor(option: RedactionOption): Redactor {
   const text: Redactor["text"] = (surface, value) => {
     const result: unknown = policy.text(surface, value);
     if (typeof result !== "string") {
-      abandon(result);
-      throw new TypeError(`the redaction policy's text() did not return a string for ${surface}`);
+      refuse(`the redaction policy's text() did not return a string for ${surface}`, result);
     }
     return result;
   };
@@ -184,11 +202,10 @@ export function createRedactor(option: RedactionOption): Redactor {
     if (input === undefined) return input;
     // a copy: the policy must not change what it is given, and this makes a slip harmless
     const result: unknown = policy.attributes(surface, { ...input });
-    // a thenable is refused whatever else it is: an object literal with a then() is one too
-    if (!isPlainObject(result) || isThenable(result)) {
-      abandon(result);
-      throw new TypeError(
+    if (!isPlainResult(result)) {
+      refuse(
         `the redaction policy's attributes() did not return an attribute set for ${surface}`,
+        result,
       );
     }
     return result as T;
@@ -209,22 +226,19 @@ export function createRedactor(option: RedactionOption): Redactor {
     return clean;
   };
 
-  const status = (input: ReadableSpan["status"]): ReadableSpan["status"] => {
+  const spanStatus = (input: ReadableSpan["status"]): ReadableSpan["status"] => {
     // a status with no text has nothing a policy could redact
     if (input.message === undefined) return input;
     const result: unknown = policy.spanStatus(input.message);
     if (result === undefined) return { code: input.code };
     if (typeof result !== "string") {
-      abandon(result);
-      throw new TypeError(
-        "the redaction policy's spanStatus() did not return a string or undefined",
-      );
+      refuse("the redaction policy's spanStatus() did not return a string or undefined", result);
     }
     return { code: input.code, message: result };
   };
 
   type SpanEvent = ReadableSpan["events"][number];
-  const event = (input: SpanEvent): SpanEvent => {
+  const spanEvent = (input: SpanEvent): SpanEvent => {
     // name and attributes together, and the attributes a copy, as for any attribute set
     const result: unknown = policy.spanEvent({
       name: input.name,
@@ -235,27 +249,32 @@ export function createRedactor(option: RedactionOption): Redactor {
       typeof result === "object" && result !== null && !isThenable(result)
         ? (result as { name?: unknown; attributes?: unknown })
         : {};
-    if (
-      typeof name !== "string" ||
-      !isPlainObject(eventAttributes) ||
-      isThenable(eventAttributes)
-    ) {
+    if (typeof name !== "string" || !isPlainResult(eventAttributes)) {
       // a promise may be the event itself or sit where its name or attributes belong
-      for (const promised of [result, name, eventAttributes]) abandon(promised);
-      throw new TypeError("the redaction policy's spanEvent() did not return an event");
+      refuse(
+        "the redaction policy's spanEvent() did not return an event",
+        result,
+        name,
+        eventAttributes,
+      );
     }
     return { ...input, name, attributes: eventAttributes as Attributes };
   };
 
-  const span: Redactor["span"] = (input) => ({
+  // typed as the whole set, so that a surface left out here does not compile;
+  // most spans have no events and no links, and for those nothing is allocated
+  const span = (input: ReadableSpan): RedactedSpan => ({
     name: text("span.name", input.name),
     attributes: attributes("span", input.attributes),
-    status: status(input.status),
-    events: input.events.map(event),
-    links: input.links.map((link) => ({
-      ...link,
-      attributes: attributes("link", link.attributes),
-    })),
+    status: spanStatus(input.status),
+    events: input.events.length === 0 ? input.events : input.events.map(spanEvent),
+    links:
+      input.links.length === 0
+        ? input.links
+        : input.links.map((link) => ({
+            ...link,
+            attributes: attributes("link", link.attributes),
+          })),
     instrumentationScope: scope(input.instrumentationScope),
   });
 
