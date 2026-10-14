@@ -2387,8 +2387,9 @@ describe("forceFlush and shutdown", () => {
     const { exporter } = heldMetricExporter();
     startWith({ metricExporter: exporter });
     metrics.getMeter("m").createCounter("c").add(1);
-    // only the timers: the export is held, so nothing settles but the call's own deadline
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    // the timers and the clock the deadline is read from, together: with the clock real, time that
+    // passes before the timer is set (a loaded machine) shortens the faked delay, and it fires early
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     try {
       let error: unknown;
       const flushing = forceFlush(given as number).catch((caught: unknown) => (error = caught));
