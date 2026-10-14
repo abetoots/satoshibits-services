@@ -36,10 +36,11 @@ export interface ChildScenario {
    * The `redaction` option the child passes to start(). A policy is a set of
    * functions and cannot travel in this JSON, so it is named: `false` (the
    * default: export as given), `probe` (the child builds the probe policy),
-   * or `none` (the option is left out, to meet the no-policy rule).
-   * The register entry takes no options; this is ignored for it.
+   * `none` (the option is left out, to meet the no-policy rule), or
+   * `throwing` (the probe policy, except that it throws on a span's name; see
+   * probe-policy.mts). The register entry takes no options; this is ignored for it.
    */
-  redaction?: "probe" | false | "none";
+  redaction?: "probe" | false | "none" | "throwing";
   /** collect diagnostics events into the result; `throwing` also makes the sink throw */
   collectDiagnostics?: boolean | "throwing";
   /** scope name for the tracer, meter and logger (default `preset-child`) */
@@ -81,13 +82,24 @@ export interface ChildScenario {
   timeoutMillis?: number;
   /** `natural` lets the event loop empty instead of calling process.exit */
   exit?: "forced" | "natural";
+  /** after finishing, emit one more span (`after-finish`), counter point and log record, then forceFlush */
+  emitAgainAfterFinish?: boolean;
 }
 
 export interface ChildResult {
   status: PresetStatus;
   startError: string | null;
   finishError: string | null;
+  /** the finish error's name */
+  finishErrorName: string | null;
+  /**
+   * everything of the finish error a caller could print: `String()` of it, its
+   * JSON, and each of its own properties (message and stack among them)
+   */
+  finishErrorText: string | null;
   finishMillis: number;
+  /** what the forceFlush after `emitAgainAfterFinish` threw, or null */
+  againError: string | null;
   spans: { traceId: string; valid: boolean; sampled: boolean }[];
   /** every outbound socket the child opened */
   sockets: { host: string; port: number }[];
@@ -106,6 +118,8 @@ export interface ChildRun<R = ChildResult> {
   /** JSON lines the child wrote to stderr (the default diagnostics sink) */
   stderrLines: Record<string, unknown>[];
   result: R;
+  /** from the moment the result line arrived to the child's exit */
+  exitMillisAfterResult: number;
 }
 
 /** what every child reports, so the checks shared by a file can read its sockets */
@@ -219,7 +233,11 @@ function spawnForResult<R extends ReportsSockets>(
     });
     let stdout = "";
     let stderr = "";
-    child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+    let resultArrivedAt: number | undefined;
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+      if (resultArrivedAt === undefined && stdout.includes("RESULT ")) resultArrivedAt = Date.now();
+    });
     child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
     child.on("error", reject);
     let killed = false;
@@ -264,6 +282,7 @@ function spawnForResult<R extends ReportsSockets>(
         stderr,
         stderrLines,
         result: JSON.parse(line.slice("RESULT ".length)) as R,
+        exitMillisAfterResult: Date.now() - (resultArrivedAt ?? Date.now()),
       };
       recentRuns.push(run);
       resolve(run);

@@ -12,7 +12,7 @@ import {
   DiagLogLevel,
 } from "@opentelemetry/api";
 import { logs, SeverityNumber } from "@opentelemetry/api-logs";
-import { globalErrorHandler } from "@opentelemetry/core";
+import { ExportResultCode, globalErrorHandler } from "@opentelemetry/core";
 import {
   BatchLogRecordProcessor,
   InMemoryLogRecordExporter,
@@ -30,9 +30,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
 
+import type { TestExporters } from "../../preset.mjs";
 import type { TestTelemetry } from "../../testing/in-memory.mjs";
 
-import { forceFlush, getStatus, PresetConfigError, shutdown, start } from "../../preset.mjs";
+import {
+  forceFlush,
+  getStatus,
+  PresetConfigError,
+  shutdown,
+  start,
+  TelemetryExportError,
+} from "../../preset.mjs";
 import { createDiagnostics } from "../../preset/diagnostics.mjs";
 import { wrapLogRecordExporter, wrapSpanExporter } from "../../preset/exporters.mjs";
 import { createRedactor } from "../../preset/redaction.mjs";
@@ -45,6 +53,8 @@ import type { PolicyAttributes, PolicyLogRecord, RedactionPolicy } from "../../p
 import type { ProbeCall } from "./probe-policy.mjs";
 import type { Context, SpanContext, TracerProvider as TracerProviderApi } from "@opentelemetry/api";
 import type { Logger } from "@opentelemetry/api-logs";
+import type { ExportResult } from "@opentelemetry/core";
+import type { PushMetricExporter } from "@opentelemetry/sdk-metrics";
 import type { InstrumentationConfigMap } from "@opentelemetry/auto-instrumentations-node";
 import type { LogRecordExporter, LogRecordProcessor, ReadableLogRecord } from "@opentelemetry/sdk-logs";
 import type { ReadableSpan, SpanExporter, SpanProcessor } from "@opentelemetry/sdk-trace";
@@ -1641,10 +1651,22 @@ describe("startTestTelemetry", () => {
       const unhandled = await unhandledDuring(async () => {
         trace.getTracer("a scope").startSpan("s").end();
         // asked for at once, while the export is still pending: the flush that would have
-        // delivered the span rejects, so the record did not go out as it was
-        await expect(pending.spans()).rejects.toThrow(message);
+        // delivered the span rejects, so the record did not go out as it was. The rejection
+        // names the signal and the error's kind, and nothing of its text
+        const error: unknown = await pending.spans().catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(TelemetryExportError);
+        expect((error as Error).message).toContain("traces");
+        expect(JSON.stringify(error) + String(error)).not.toMatch(message);
       });
       expect(unhandled).toEqual([]);
+      // the text the rejection leaves out says which refusal it was
+      expect(() =>
+        createRedactor({
+          ...createProbePolicy(),
+          text: (surface, value) =>
+            surface === "scope.name" ? (text() as unknown as string) : value,
+        }).scope({ name: "a scope" }),
+      ).toThrow(message);
       expect(events.map((event) => [event.message, event.fields?.signal])).toContainEqual([
         "traces export failed",
         "traces",
@@ -1670,9 +1692,14 @@ describe("startTestTelemetry", () => {
       const unhandled = await unhandledDuring(async () => {
         metrics.getMeter("a scope").createCounter("c").add(1);
         logs.getLogger("a scope").emit({ body: "a line" });
-        // for these two signals the SDK swallows the failed export: the read resolves, with nothing in it
-        await expect(running.metrics()).resolves.toEqual([]);
-        await expect(running.logRecords()).resolves.toEqual([]);
+        // the metric reader swallows the failed export its flush began; the preset's flush rejects
+        await expect(running.metrics()).rejects.toThrow(/metrics/);
+        // a test log record is exported (and failed) as it was emitted, before the read's flush:
+        // that flush is not failed by it. It flushes every signal, so the metric export fails again
+        const error: unknown = await running.logRecords().catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(TelemetryExportError);
+        expect((error as Error).message).toContain("metrics");
+        expect((error as Error).message).not.toContain("logs");
       });
       expect(unhandled).toEqual([]);
       expect(events.map((event) => event.message)).toEqual(
@@ -1726,24 +1753,42 @@ describe("startTestTelemetry", () => {
      */
     async function reportedFor(
       how: Partial<RedactionPolicy>,
-      emitAndRead: (running: TestTelemetry) => Promise<void>,
+      emitAndRead: (running: TestTelemetry, policy: RedactionPolicy) => Promise<void>,
     ): Promise<DiagnosticsEvent[]> {
       const events: DiagnosticsEvent[] = [];
+      const policy = { ...passing, ...how };
       telemetry = startTestTelemetry({
         diagnostics: () => (reported) => events.push(reported),
-        redaction: { ...passing, ...how },
+        redaction: policy,
       });
       const running = telemetry;
-      const unhandled = await unhandledDuring(() => emitAndRead(running));
+      const unhandled = await unhandledDuring(() => emitAndRead(running, policy));
       expect(unhandled).toEqual([]);
       return events;
     }
     /** the flush that would have delivered the span rejects with `message`: it did not go out as it was */
-    const aSpan = (message: RegExp) => async (running: TestTelemetry) => {
+    const aSpan = (message: RegExp) => async (running: TestTelemetry, policy: RedactionPolicy) => {
       emitOnEverySurface();
-      await expect(running.spans()).rejects.toThrow(message);
+      // the rejection names the signal and nothing of the error's text
+      const error: unknown = await running.spans().catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(TelemetryExportError);
+      expect((error as Error).message).toContain("traces");
+      expect(JSON.stringify(error) + String(error)).not.toMatch(message);
+      // which is the text that says which refusal it was: the same span, under the same policy
+      const exporter = new InMemorySpanExporter();
+      const provider = new TracerProvider({
+        spanProcessors: [new SimpleSpanProcessor({ exporter })],
+      });
+      emitOnEverySurface(provider);
+      await provider.forceFlush();
+      const [span] = exporter.getFinishedSpans();
+      expect(() => createRedactor(policy).span(span!)).toThrow(message);
+      await provider.shutdown();
     };
-    /** for this signal the SDK swallows the failed export: the read resolves, and the record is not in it */
+    /**
+     * a test log record is exported (and failed) as it is emitted, before the read's flush, which
+     * is therefore not failed by it: the read resolves, and the record is not in it
+     */
     const aLogRecord = async (running: TestTelemetry) => {
       logs.getLogger("kit").emit({ body: "a line", attributes: { customer: "erin" } });
       await expect(running.logRecords()).resolves.toEqual([]);
@@ -2231,5 +2276,131 @@ describe("startTestTelemetry", () => {
   it("refuses a second start while one is running", () => {
     telemetry = startTestTelemetry();
     expect(() => startTestTelemetry()).toThrow(/start\(\) was already called/);
+  });
+});
+
+describe("forceFlush and shutdown", () => {
+  /** answers every held export, and every later one, once a test is over, so the kit's stop() can finish */
+  const release: (() => void)[] = [];
+  afterEach(() => {
+    for (const released of release.splice(0)) released();
+  });
+
+  /** a metric exporter that answers each export only when the test says so */
+  function heldMetricExporter() {
+    const pending: ((result: ExportResult) => void)[] = [];
+    let released = false;
+    release.push(() => {
+      released = true;
+      for (const resultCallback of pending.splice(0)) resultCallback({ code: ExportResultCode.SUCCESS });
+    });
+    const exporter: PushMetricExporter = {
+      export: (_metrics, resultCallback) => {
+        if (released) resultCallback({ code: ExportResultCode.SUCCESS });
+        else pending.push(resultCallback);
+      },
+      forceFlush: () => Promise.resolve(),
+      shutdown: () => Promise.resolve(),
+    };
+    /** answer the next export, once it has begun */
+    const answer = async (result: ExportResult) => {
+      await vi.waitFor(() => expect(pending).not.toHaveLength(0));
+      pending.shift()!(result);
+    };
+    return { exporter, answer };
+  }
+
+  const startWith = (testExporters: TestExporters) =>
+    start({
+      serviceName: "lifecycle",
+      instrumentations: false,
+      loaderHook: false,
+      redaction: false,
+      testExporters,
+    });
+
+  /** whether `promise` has settled after a moment longer than an immediate timer */
+  async function settledSoon(promise: Promise<unknown>): Promise<boolean> {
+    let settled = false;
+    promise.then(
+      () => (settled = true),
+      () => (settled = true),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    return settled;
+  }
+
+  it("a second shutdown() while the first runs joins it, and one after it has finished gets the same outcome", async () => {
+    const { exporter, answer } = heldMetricExporter();
+    startWith({ metricExporter: exporter });
+    metrics.getMeter("m").createCounter("c").add(1);
+
+    const first = shutdown();
+    const second = shutdown();
+    expect(second).toBe(first);
+    expect(await settledSoon(first)).toBe(false);
+
+    await answer({ code: ExportResultCode.FAILED, error: new Error("far end text") });
+    await expect(first).rejects.toBeInstanceOf(TelemetryExportError);
+    expect(shutdown()).toBe(first);
+    expect(getStatus().state).toBe("shut-down");
+  });
+
+  it("forceFlush with a timeout larger than a timer can hold waits for the export instead of giving up at once", async () => {
+    const { exporter, answer } = heldMetricExporter();
+    startWith({ metricExporter: exporter });
+    metrics.getMeter("m").createCounter("c").add(1);
+
+    const flushing = forceFlush(2 ** 31);
+    expect(await settledSoon(flushing)).toBe(false);
+
+    await answer({ code: ExportResultCode.SUCCESS });
+    await expect(flushing).resolves.toBeUndefined();
+  });
+
+  it("a failed metric export makes forceFlush reject; the next flush, whose export succeeds, resolves", async () => {
+    const { exporter, answer } = heldMetricExporter();
+    startWith({ metricExporter: exporter });
+    metrics.getMeter("m").createCounter("c").add(1);
+
+    const failing = forceFlush();
+    await answer({ code: ExportResultCode.FAILED, error: new Error("far end text") });
+    const error: unknown = await failing.catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(TelemetryExportError);
+    expect((error as Error).message).toContain("metrics");
+    expect(JSON.stringify(error)).not.toContain("far end text");
+
+    // a failure belongs to the call whose export failed; it is not carried into the next one
+    const succeeding = forceFlush();
+    await answer({ code: ExportResultCode.SUCCESS });
+    await expect(succeeding).resolves.toBeUndefined();
+  });
+
+  it("an export in flight when the call began is the call's, and one that failed before it is not", async () => {
+    const pending: ((result: ExportResult) => void)[] = [];
+    // a test span exporter is called as each span ends, not by the flush
+    startWith({
+      spanExporter: {
+        export: (_spans: unknown, resultCallback: (result: ExportResult) => void) => {
+          pending.push(resultCallback);
+        },
+        shutdown: () => Promise.resolve(),
+      },
+    });
+
+    trace.getTracer("t").startSpan("failed before the flush").end();
+    pending.shift()!({ code: ExportResultCode.FAILED, error: new Error("far end text") });
+    // the processor has let go of the failed export before the call is made
+    await new Promise((resolve) => setImmediate(resolve));
+    await expect(forceFlush()).resolves.toBeUndefined();
+
+    // the processor's flush waits for this export, which fails while the call runs
+    trace.getTracer("t").startSpan("in flight").end();
+    const flushing = forceFlush();
+    pending.shift()!({ code: ExportResultCode.FAILED, error: new Error("far end text") });
+    const error: unknown = await flushing.catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(TelemetryExportError);
+    expect((error as Error).message).toContain("traces");
+    expect(JSON.stringify(error)).not.toContain("far end text");
   });
 });
