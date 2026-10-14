@@ -15,7 +15,9 @@
  * chosen in code, and a redacted label value would merge series.
  */
 
-import type { Attributes } from "@opentelemetry/api";
+import { createTraceState } from "@opentelemetry/api";
+
+import type { Attributes, SpanContext } from "@opentelemetry/api";
 import type { InstrumentationScope } from "@opentelemetry/core";
 import type { ReadableLogRecord } from "@opentelemetry/sdk-logs";
 import type { ReadableSpan } from "@opentelemetry/sdk-trace";
@@ -30,7 +32,20 @@ export type PolicyAttributes = Record<string, unknown>;
  */
 export type TextSurface =
   | "span.name"
+  /**
+   * a span's trace state, serialised: the SDK copies a parent's onto every child,
+   * so an inbound `tracestate` header arrives here. What is returned is parsed
+   * back into a trace state; a list member that is not valid trace-state syntax
+   * is dropped, and an empty text exports none
+   */
+  | "span.traceState"
+  /** a link's trace state, serialised, and parsed back the same way */
+  | "link.traceState"
   | "scope.name"
+  /** an instrumentation scope's version: any text the caller of `getTracer()` and the like passed */
+  | "scope.version"
+  /** an instrumentation scope's schema URL, chosen by the same caller */
+  | "scope.schemaUrl"
   /** the library's own diagnostics: a message, or a text field of one */
   | "diagnostics";
 
@@ -124,7 +139,14 @@ export interface Redactor {
 /** the properties of a span a policy has a say in: all of them are replaced under one */
 export type RedactedSpan = Pick<
   ReadableSpan,
-  "name" | "attributes" | "status" | "events" | "links" | "instrumentationScope"
+  | "name"
+  | "attributes"
+  | "status"
+  | "events"
+  | "links"
+  | "instrumentationScope"
+  /** for its trace state: the rest of the context is the span's own */
+  | "spanContext"
 >;
 
 /** the properties of a log record a policy has a say in: all of them are replaced under one */
@@ -188,13 +210,21 @@ const isContainer = (value: unknown): value is object =>
   Array.isArray(value) || isPlainObject(value);
 
 /**
- * A copy of `original`, its own properties as they are, in which every plain
- * object and array at any depth is a copy too. Anything else (a text, a
- * number, bytes, a date, a class instance) is the original's own.
+ * A copy of `original` in which every plain object and array at any depth is
+ * a copy too. Anything else (a text, a number, bytes, a date, a class
+ * instance) is the original's own.
  *
- * The copy has the shape of the original: a part met twice is copied once, so
- * what was shared stays shared and a value that contains itself is copied as
- * one that does. What a policy makes of a cycle is the policy's business.
+ * What is copied is an object's own enumerable string-keyed properties and an
+ * array's elements: an array's other own properties are left out, and a hole
+ * in it reads as `undefined`. Symbol-keyed properties are left out of every
+ * object: OTLP never serialises them, so nothing is lost on the wire, and a
+ * value the policy is not handed must not reach an exporter either (copying
+ * them all the way down instead measured about three times slower for a flat
+ * set).
+ *
+ * A part met twice is copied once, so what was shared stays shared and a
+ * value that contains itself is copied as one that does. What a policy makes
+ * of a cycle is the policy's business.
  *
  * It recurses with the nesting of the value: one nested thousands deep
  * overflows the stack, and that export fails like any other throw.
@@ -204,10 +234,13 @@ const isContainer = (value: unknown): value is object =>
  */
 function copyForPolicy(original: object, copies?: Map<object, object>): object {
   // a spread defines the properties it copies: a key named __proto__ stays a key
-  const copy = (Array.isArray(original) ? [...(original as unknown[])] : { ...original }) as Record<
-    string,
+  const isArray = Array.isArray(original);
+  const copy = (isArray ? [...(original as unknown[])] : { ...original }) as Record<
+    string | symbol,
     unknown
   >;
+  // an object spread copies symbol keys too (an array spread does not); see above for why they go
+  if (!isArray) for (const symbol of Object.getOwnPropertySymbols(copy)) delete copy[symbol];
   copies?.set(original, copy);
   for (const key of Object.keys(copy)) {
     const inner = copy[key];
@@ -282,7 +315,14 @@ export function createRedactor(option: RedactionOption): Redactor {
     };
     const name = text("scope.name", input.name);
     const cleanAttributes = attributes("scope", withAttributes.attributes);
-    const clean = { ...input, name, attributes: cleanAttributes };
+    const clean = {
+      ...input,
+      name,
+      // set in code by most callers, but the API takes any text a caller passes
+      ...(input.version !== undefined && { version: text("scope.version", input.version) }),
+      ...(input.schemaUrl !== undefined && { schemaUrl: text("scope.schemaUrl", input.schemaUrl) }),
+      attributes: cleanAttributes,
+    };
     scopes.set(input, clean);
     return clean;
   };
@@ -296,6 +336,22 @@ export function createRedactor(option: RedactionOption): Redactor {
       refuse("the redaction policy's spanStatus() did not return a string or undefined", result);
     }
     return { code: input.code, message: result };
+  };
+
+  /**
+   * A span context with its trace state as the policy left it; the context itself when it
+   * has none, so a span without one is handed nothing and allocates nothing.
+   */
+  const withTraceState = (
+    surface: "span.traceState" | "link.traceState",
+    input: SpanContext,
+  ): SpanContext => {
+    // as the OTLP serialisers read it: an empty trace state is not written at all
+    const serialized = input.traceState?.serialize();
+    if (serialized === undefined || serialized === "") return input;
+    const redacted = text(surface, serialized);
+    const { traceState: _, ...rest } = input;
+    return redacted === "" ? rest : { ...rest, traceState: createTraceState(redacted) };
   };
 
   type SpanEvent = ReadableSpan["events"][number];
@@ -321,20 +377,27 @@ export function createRedactor(option: RedactionOption): Redactor {
 
   // typed as the whole set, so that a surface left out here does not compile;
   // most spans have no events and no links, and for those nothing is allocated
-  const span = (input: ReadableSpan): RedactedSpan => ({
-    name: text("span.name", input.name),
-    attributes: attributes("span", input.attributes),
-    status: spanStatus(input.status),
-    events: input.events.length === 0 ? input.events : input.events.map(spanEvent),
-    links:
-      input.links.length === 0
-        ? input.links
-        : input.links.map((link) => ({
-            ...link,
-            attributes: attributes("link", link.attributes),
-          })),
-    instrumentationScope: scope(input.instrumentationScope),
-  });
+  const span = (input: ReadableSpan): RedactedSpan => {
+    const context = input.spanContext();
+    const cleanContext = withTraceState("span.traceState", context);
+    return {
+      name: text("span.name", input.name),
+      attributes: attributes("span", input.attributes),
+      status: spanStatus(input.status),
+      events: input.events.length === 0 ? input.events : input.events.map(spanEvent),
+      links:
+        input.links.length === 0
+          ? input.links
+          : input.links.map((link) => ({
+              ...link,
+              context: withTraceState("link.traceState", link.context),
+              attributes: attributes("link", link.attributes),
+            })),
+      instrumentationScope: scope(input.instrumentationScope),
+      // where nothing changed, the span's own method: called on the view, it reads the same context
+      spanContext: cleanContext === context ? input.spanContext : () => cleanContext,
+    };
+  };
 
   const logRecord = (input: ReadableLogRecord): RedactedLogRecord => {
     // the whole record at once, and the two optional texts only where the record has them:
