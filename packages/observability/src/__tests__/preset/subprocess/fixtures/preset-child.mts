@@ -10,8 +10,10 @@
  */
 
 import {
+  createTraceState,
   isSpanContextValid,
   metrics,
+  ROOT_CONTEXT,
   SpanStatusCode,
   trace,
   TraceFlags,
@@ -112,7 +114,21 @@ const endpointVariablesRestored =
 
 // ===== emit =====
 const scopeName = scenario.scopeName ?? "preset-child";
-const tracer = trace.getTracer(scopeName);
+const scopeOptions = {
+  ...(scenario.scopeSchemaUrl !== undefined && { schemaUrl: scenario.scopeSchemaUrl }),
+};
+// through the provider: the API's own getTracer() drops the schema URL
+const tracer = trace.getTracerProvider().getTracer(scopeName, scenario.scopeVersion, scopeOptions);
+const parent =
+  scenario.parentTraceState === undefined
+    ? undefined
+    : trace.setSpanContext(ROOT_CONTEXT, {
+        traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+        spanId: "00f067aa0ba902b7",
+        traceFlags: TraceFlags.SAMPLED,
+        isRemote: true,
+        traceState: createTraceState(scenario.parentTraceState),
+      });
 const spans: ChildResult["spans"] = [];
 const total = scenario.spans ?? 1;
 for (let i = 0; i < total; i++) {
@@ -120,8 +136,25 @@ for (let i = 0; i < total; i++) {
     scenario.spanNameAsGiven && scenario.spanName !== undefined
       ? scenario.spanName
       : `${scenario.spanName ?? "child-span"}-${i}`,
-    { ...(scenario.spanAttributes && { attributes: scenario.spanAttributes }) },
+    {
+      ...(scenario.spanAttributes && { attributes: scenario.spanAttributes }),
+      ...(scenario.spanLink && {
+        links: [
+          {
+            context: {
+              traceId: "0af7651916cd43dd8448eb211c80319c",
+              spanId: "b7ad6b7169203331",
+              traceFlags: TraceFlags.SAMPLED,
+              traceState: createTraceState(scenario.spanLink.traceState),
+            },
+            attributes: scenario.spanLink.attributes,
+          },
+        ],
+      }),
+    },
+    parent,
   );
+  if (scenario.spanEvent) span.addEvent(scenario.spanEvent.name, scenario.spanEvent.attributes);
   if (scenario.spanStatusMessage !== undefined) {
     span.setStatus({ code: SpanStatusCode.ERROR, message: scenario.spanStatusMessage });
   }
@@ -137,15 +170,16 @@ for (let i = 0; i < total; i++) {
 }
 
 if (scenario.metric !== false) {
-  metrics.getMeter(scopeName).createCounter("child_counter").add(1);
+  metrics.getMeter(scopeName, scenario.scopeVersion, scopeOptions).createCounter("child_counter").add(1);
 }
 
 if (scenario.log !== false) {
   logs
-    .getLogger(scopeName, undefined, {
+    .getLogger(scopeName, scenario.scopeVersion, {
+      ...scopeOptions,
       ...(scenario.scopeAttributes && { attributes: scenario.scopeAttributes }),
     })
-    .emit({ body: "child-log-line", severityText: "INFO" });
+    .emit({ body: "child-log-line", severityText: "INFO", ...scenario.logRecord });
 }
 
 // ===== overflow: fill the span queue, let it drain, then one more span =====

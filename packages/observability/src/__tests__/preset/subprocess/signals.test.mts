@@ -383,7 +383,7 @@ describe("rejected configuration", () => {
 });
 
 describe("the register entry", () => {
-  const STANDARD_POLICY_LINE = "telemetry is exported under the standard redaction policy";
+  const STANDARD_POLICY_LINE = "telemetry exporters are configured with the standard redaction policy";
   const policyLines = (run: { stderrLines: Record<string, unknown>[] }) =>
     run.stderrLines.filter((line) => line.msg === STANDARD_POLICY_LINE);
 
@@ -440,6 +440,75 @@ describe("the register entry", () => {
     expect(run.stderr).not.toContain("no redaction policy");
     expect(run.stderrLines.filter((line) => line.level === "error")).toEqual([]);
     expect(socketsOutside(run, sink)).toEqual([]);
+  });
+
+  it.each([
+    ["metrics", { OTEL_TRACES_EXPORTER: "none" }],
+    ["logs", { OTEL_TRACES_EXPORTER: "none", OTEL_METRICS_EXPORTER: "none", OTEL_LOGS_EXPORTER: "otlp" }],
+  ] as const)("writes that line when only %s are exported", async (signal, env) => {
+    const run = await runChild({ start: "register" }, { ...endpoint(), ...env });
+
+    expect(run.code).toBe(0);
+    const enabled = Object.entries(run.result.status.signals)
+      .filter(([, status]) => status.enabled)
+      .map(([name]) => name);
+    expect(enabled).toEqual([signal]);
+    expect(policyLines(run)).toHaveLength(1);
+  });
+
+  /** beside that span: a parent's trace state, an event, a link, a scope version and schema URL, and a log line */
+  const SENSITIVE_EVERYWHERE = {
+    ...SENSITIVE_SPAN,
+    parentTraceState: "vendor=jane.doe@example.com",
+    spanEvent: { name: "retry", attributes: { password: "SENTINEL-event", note: "sent to jane.doe@example.com" } },
+    spanLink: {
+      traceState: "linked=jane.doe@example.com",
+      attributes: { password: "SENTINEL-link", "enduser.contact": "jane.doe@example.com" },
+    },
+    scopeVersion: "1.0.0 jane.doe@example.com",
+    scopeSchemaUrl: "https://schemas.example.com/1.0?owner=jane.doe@example.com",
+    logRecord: {
+      body: "card declined for jane.doe@example.com",
+      attributes: { password: "SENTINEL-log", "enduser.contact": "jane.doe@example.com" },
+      eventName: "payment.failed for jane.doe@example.com",
+    },
+  } as const;
+
+  it("redacts every other surface on the wire too: trace states, an event, a link, the scope and a log record", async () => {
+    const run = await runChild(
+      { start: "register", ...SENSITIVE_EVERYWHERE },
+      { ...endpoint(), OTEL_LOGS_EXPORTER: "otlp" },
+    );
+
+    expect(run.code).toBe(0);
+    const span = sink.spans()[0]!;
+    // the parent's trace state, which the SDK copied onto the span
+    expect(span.traceState).toBe("vendor=[EMAIL]");
+    expect(span.events).toEqual([
+      { name: "retry", attributes: { password: "[REDACTED]", note: "sent to [EMAIL]" } },
+    ]);
+    expect(span.links).toEqual([
+      {
+        traceId: "0af7651916cd43dd8448eb211c80319c",
+        traceState: "linked=[EMAIL]",
+        attributes: { password: "[REDACTED]", "enduser.contact": "[EMAIL]" },
+      },
+    ]);
+    const redactedScope = { version: "1.0.0 [EMAIL]", schemaUrl: "https://schemas.example.com/1.0" };
+    expect(span.scope).toMatchObject(redactedScope);
+    expect(sink.metrics().find((metric) => metric.name === "child_counter")?.scope).toMatchObject(redactedScope);
+    const records = sink.logRecords();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      scope: redactedScope,
+      body: "card declined for [EMAIL]",
+      attributes: { password: "[REDACTED]", "enduser.contact": "[EMAIL]" },
+      eventName: "payment.failed for [EMAIL]",
+    });
+    // the raw values are in none of the requests either, logs among them, under any field
+    // the assertions above do not read
+    expect(sink.requestsTo("/v1/logs")).not.toEqual([]);
+    expectRedactedAtTheSink();
   });
 
   // an unknown value is read as the default, warning

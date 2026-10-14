@@ -45,7 +45,8 @@ describe("register", () => {
     }));
   };
 
-  it("does not report a failed start when telemetry started and only its own line could not be written", async () => {
+  /** start() succeeds with traces exported; returns the mock to assert it was called */
+  async function startSucceeds() {
     vi.resetModules();
     const { standardPolicy } = await import("@satoshibits/redaction");
     const start = vi.fn(() => ({
@@ -58,9 +59,22 @@ describe("register", () => {
       },
     }));
     vi.doMock("../../preset/runtime.mjs", () => ({ start }));
-    const createDiagnostics = vi.fn(() => {
-      throw new Error("SENTINEL diagnostics cannot be made");
+    return () => expect(start).toHaveBeenCalledExactlyOnceWith({ redaction: standardPolicy });
+  }
+
+  it("does not report a failed start when telemetry started and only its own line could not be written", async () => {
+    const startedUnderTheStandardPolicy = await startSucceeds();
+    const actual = await vi.importActual<typeof import("../../preset/diagnostics.mjs")>(
+      "../../preset/diagnostics.mjs",
+    );
+    const report = vi.fn(() => {
+      throw new Error("SENTINEL the line cannot be written");
     });
+    // the first call resolves the level for real; the second makes the instance that writes the line
+    const createDiagnostics = vi
+      .fn()
+      .mockImplementationOnce(actual.createDiagnostics)
+      .mockImplementationOnce(() => ({ activate: vi.fn(), report }));
     vi.doMock("../../preset/diagnostics.mjs", () => ({ createDiagnostics }));
     // a level that wants the line, whatever the shell running the tests has set
     vi.stubEnv("OTEL_LOG_LEVEL", "info");
@@ -68,10 +82,25 @@ describe("register", () => {
 
     await expect(import("../../register.mjs")).resolves.toBeDefined();
 
-    expect(start).toHaveBeenCalledExactlyOnceWith({ redaction: standardPolicy });
-    // the notice was attempted, so the silence below is the containment and not a skipped line
-    expect(createDiagnostics).toHaveBeenCalled();
+    startedUnderTheStandardPolicy();
+    // the line was attempted and its writing threw, so the silence below is the containment
+    expect(report).toHaveBeenCalledOnce();
     // not even the fixed fallback line: nothing failed to start
+    expect(lines()).toEqual([]);
+  });
+
+  it("does not report a failed start either when the level that decides on the line cannot be read", async () => {
+    const startedUnderTheStandardPolicy = await startSucceeds();
+    const createDiagnostics = vi.fn(() => {
+      throw new Error("SENTINEL diagnostics cannot be made");
+    });
+    vi.doMock("../../preset/diagnostics.mjs", () => ({ createDiagnostics }));
+    const lines = captureStderr();
+
+    await expect(import("../../register.mjs")).resolves.toBeDefined();
+
+    startedUnderTheStandardPolicy();
+    expect(createDiagnostics).toHaveBeenCalledOnce();
     expect(lines()).toEqual([]);
   });
 

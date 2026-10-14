@@ -163,8 +163,8 @@ describe("resource", () => {
     // found by how its name ends: under a policy the name is a surface too, and arrives marked
     span: sink.spans().find((s) => s.name.endsWith("child-span-0"))?.scope,
     metric: sink.metrics().find((m) => m.name === "child_counter")?.scope,
-    // the body is a log-record surface, which this batch does not yet pass to the policy
-    log: sink.logRecords().find((r) => String(r.body).includes("child-log-line"))?.scope,
+    // the body is a surface too: under a policy it arrives marked, so it is found by how it ends
+    log: sink.logRecords().find((r) => String(r.body).endsWith("child-log-line"))?.scope,
   });
 
   it("hands a scope's name and attributes to the named policy, on every signal that carries one", async () => {
@@ -175,6 +175,8 @@ describe("resource", () => {
     expect(span?.name).toBe("[probe:scope.name] scope carol.sentinel@example.com");
     expect(metric?.name).toBe("[probe:scope.name] scope carol.sentinel@example.com");
     expect(log?.name).toBe("[probe:scope.name] scope carol.sentinel@example.com");
+    // the record that scope came with went through the policy as well
+    expect(sink.logRecords().map((record) => record.body)).toEqual(["[probe:log.record] child-log-line"]);
     // the logger's scope attributes (the API gives tracers and meters none)
     expect(log?.attributes).toEqual({
       api_key: "[probe:scope] SENTINEL-SCOPE-SECRET",
