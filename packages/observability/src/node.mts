@@ -2,7 +2,6 @@
  * Node.js Entry Point - Direct Static Import
  *
  * Optimized for Node.js bundles - only imports Node.js SDK code
- * No browser dependencies included
  */
 
 import type { BaseSDKState } from "./sdk-factory.mjs";

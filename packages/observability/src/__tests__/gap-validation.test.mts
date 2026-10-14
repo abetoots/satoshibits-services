@@ -145,7 +145,7 @@ describe("SmartClient lifecycle", () => {
 
 // NOTE: "Smart Sampling Integration" tests removed - redundant with sampler-config.test.mts (700+ lines)
 
-describe("Browser/Node API Parity", () => {
+describe("Client API", () => {
   let client: UnifiedObservabilityClient;
   let spanExporter: InMemorySpanExporter;
   let metricReader: PeriodicExportingMetricReader;
@@ -245,7 +245,7 @@ describe("Method Naming and Structure", () => {
   });
 
   // note: SmartClient.initialize and context.business.run are tested
-  // in "Browser/Node API Parity" section above - no duplicates needed
+  // in "Client API" section above - no duplicates needed
 });
 
 describe("Integration Between Modules", () => {

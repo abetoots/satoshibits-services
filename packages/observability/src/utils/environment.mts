@@ -41,17 +41,6 @@ export function isNode(): boolean {
 }
 
 /**
- * Get environment-specific global object
- */
-export function getGlobalObject() {
-  if (isNode()) {
-    return global;
-  }
-  // Fallback
-  return typeof globalThis !== "undefined" ? globalThis : {};
-}
-
-/**
  * Safe access to process.env (returns an empty object outside Node.js)
  */
 export function getProcessEnv(): Record<string, string | undefined> {

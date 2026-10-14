@@ -94,7 +94,7 @@ describe("the browser removal", () => {
     const BROWSER_CODE = [
       /typeof (window|document|navigator|self)\b/,
       /globalThis\.(window|document|navigator)\b/,
-      /\b(window|document|navigator)\./,
+      /\b(window|document|navigator)\.[A-Za-z_$]/,
       /\bisBrowser\b/,
       /["']browser["']/,
       /from ["'](zone\.js|web-vitals|@opentelemetry\/(sdk-trace-web|auto-instrumentations-web|context-zone[^"']*|instrumentation-fetch|instrumentation-xml-http-request))["']/,

@@ -61,7 +61,6 @@ export interface IsolationTestConfig {
  *   });
  * });
  * ```
-
  */
 export function runInstanceIsolationTests(config: IsolationTestConfig) {
   const prefix = config.metricPrefix ?? config.environment;

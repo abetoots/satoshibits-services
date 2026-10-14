@@ -1,8 +1,7 @@
 /**
  * Global test setup
  *
- * Environment setup (browser globals, Node.js APIs) is handled by Vitest's
- * environment configuration (jsdom/node), not here.
+ * Every test project runs in Vitest's node environment.
  *
  * This file only contains setup that must be truly global across all tests.
  */

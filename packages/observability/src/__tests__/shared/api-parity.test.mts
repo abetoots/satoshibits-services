@@ -1,8 +1,8 @@
 /**
  * API Parity Tests - Scoped Instrumentation API
  *
- * Validates that the SmartClient provides a scoped instrumentation API that works
- * identically across Node.js and browser environments following OpenTelemetry specifications.
+ * Validates that the SmartClient provides a scoped instrumentation API that follows
+ * the OpenTelemetry specifications.
  */
 
 import {
