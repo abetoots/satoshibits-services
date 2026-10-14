@@ -13,7 +13,7 @@ Migrating from 1.x:
 5. **The browser entry is removed.** `@satoshibits/observability/browser`, `BrowserClientConfig` and the browser instrumentation presets are gone; 1.3.x stays on npm. For browser telemetry use Grafana Faro, or `@opentelemetry/browser-sdk`, directly.
 6. **`MockObservabilityClient` is removed** from `/testing`, with `createMockClient`, `withMockClient` and the `Recorded*` types. Use `startTestTelemetry()`, which runs the real pipeline with in-memory exporters.
 7. **`@opentelemetry/api` is now a peer dependency.** Add it to your own dependencies (`pnpm add @opentelemetry/api@~1.9.0`; the range is `>=1.9.0 <1.10.0`, the one the OpenTelemetry SDK it is built on accepts), so that your app and the library share one copy of the API.
-8. **Other changes** (each with its 1.x behaviour, its 2.0 behaviour and why, in `COMPATIBILITY.md`):
+8. **Other changes** (each with its 1.x behaviour, its 2.0 behaviour and why, in [COMPATIBILITY.md](https://github.com/abetoots/satoshibits-services/blob/main/packages/observability/COMPATIBILITY.md)):
    - a service name given in code now wins over `OTEL_SERVICE_NAME`;
    - `service.version` is no longer `0.0.0` by default;
    - `deployment.environment` no longer comes from `NODE_ENV`; set `deployment.environment.name` in `OTEL_RESOURCE_ATTRIBUTES` or the `deploymentEnvironment` option;

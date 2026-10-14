@@ -96,7 +96,7 @@ describe("the browser removal", () => {
       /globalThis\.(window|document|navigator)\b/,
       /\b(window|document|navigator)\.[A-Za-z_$]/,
       /\bisBrowser\b/,
-      /["']browser["']/,
+      /["'`]browser["'`]/,
       /from ["'](zone\.js|web-vitals|@opentelemetry\/(sdk-trace-web|auto-instrumentations-web|context-zone[^"']*|instrumentation-fetch|instrumentation-xml-http-request))["']/,
       /import\(["'][^"']*browser[^"']*["']\)/,
     ];

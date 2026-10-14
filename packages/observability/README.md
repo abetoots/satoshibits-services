@@ -14,8 +14,11 @@ pnpm add @satoshibits/observability @opentelemetry/api@~1.9.0
 ```
 
 `@opentelemetry/api` is a peer dependency: your app installs it, so that your app and this package
-share one copy, and its version must stay inside this package's peer range (`>=1.9.0 <1.10.0`). It needs Node.js 18.19 or later on the 18 line, or 20.6 or later: the versions with
-`--import`. To name a redaction policy of your own, also add `@satoshibits/redaction`.
+share one copy, and its version must stay inside this package's peer range (`>=1.9.0 <1.10.0`). To
+name a redaction policy of your own, also add `@satoshibits/redaction`.
+
+This package needs Node.js 18.19 or later on the 18 line, or 20.6 or later. Those are the versions
+with the `--import` flag.
 
 ## Quick start
 
@@ -42,7 +45,7 @@ The variables, all from the OpenTelemetry specification:
 | Variable | What it does |
 |---|---|
 | `OTEL_SERVICE_NAME` | the service's name; required |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | where to send every **signal** (kind of telemetry: traces, metrics or logs). `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` and `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` set one signal's, and turn that signal on by themselves. A signal with neither is not exported |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | where to send every **signal** (kind of telemetry: traces, metrics or logs). `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` set that signal's endpoint, and turn that signal on by themselves. `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` sets the logs endpoint, but logs also need `OTEL_LOGS_EXPORTER=otlp`. A signal with no endpoint is not exported |
 | `OTEL_EXPORTER_OTLP_HEADERS` | headers for every request, such as `Authorization=Basic …` for Grafana Cloud |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` (the default) or `http/json`; `grpc` is not supported |
 | `OTEL_LOGS_EXPORTER` | `otlp` to export logs; they are off otherwise, because application logs are the signal most likely to carry personal data |
@@ -57,7 +60,7 @@ The variables, all from the OpenTelemetry specification:
 
 A preload runs before your application's code, and it reads `process.env` directly. Variables your
 application loads from a `.env` file itself (with dotenv, say) are read too late. Set them on the
-command line, or have Node read the file first:
+command line, or have Node read the file first (`--env-file` needs Node.js 20.6 or later):
 
 <!-- snippet: env-file -->
 ```sh
@@ -121,7 +124,7 @@ These are deliberate:
 <!-- departures:start -->
 - **No endpoint, no export.** The specification sends to `localhost:4318` when no endpoint is set; here nothing is sent, and stderr says so.
 - **An invalid sampler stops telemetry from starting.** An unknown `OTEL_TRACES_SAMPLER`, or a ratio outside 0 to 1, is an error; the specification falls back to the default with a warning.
-- **`OTEL_SDK_DISABLED=true` also disables propagators**, so no trace context is read from or added to requests.
+- **`OTEL_SDK_DISABLED=true` also disables propagators.** Propagators read and write the request headers (such as `traceparent`) that connect one service's part of a trace to the next service's; with them off, a request is neither joined to the caller's trace nor passed on to the next service.
 - **Logs are opt-in.** They are exported only with `OTEL_LOGS_EXPORTER=otlp`; the specification exports them by default. Application logs are the signal most likely to carry personal data, so sending them is always a stated choice.
 - **Only `otlp` and `none` are accepted** in `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER` and `OTEL_LOGS_EXPORTER`; any other value, such as `console`, stops telemetry from starting.
 <!-- departures:end -->
