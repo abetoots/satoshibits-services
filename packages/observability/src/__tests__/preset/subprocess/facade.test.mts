@@ -124,3 +124,84 @@ describe("the facade after a preload", () => {
     expect(run.result.status.state).toBe("shut-down");
   });
 });
+
+// rows of COMPATIBILITY.md: what the facade's config does now, as against 1.x
+describe("the facade's config, as against 1.x", () => {
+  it("strips a trailing /v1/traces from the endpoint, as 1.x did", async () => {
+    await runChild({ start: "facade", facade: { endpoint: `${sink.url}/v1/traces` } });
+
+    const paths = new Set(sink.requests.map((request) => request.path));
+    expect([...paths].sort()).toEqual(["/v1/metrics", "/v1/traces"]);
+  });
+
+  it("exports nothing without an endpoint: the implicit localhost:4318 of 1.x is gone", async () => {
+    const run = await runChild({ start: "facade" });
+
+    expect(run.result.statusAfterFacade).toMatchObject({
+      state: "running",
+      signals: {
+        traces: { enabled: false, reason: "no-endpoint" },
+        metrics: { enabled: false, reason: "no-endpoint" },
+      },
+    });
+    expect(run.result.sockets).toEqual([]);
+    expect(run.stderrLines.filter((line) => line.reason === "no-endpoint")).toHaveLength(2);
+  });
+
+  it("exports logs only when OTEL_LOGS_EXPORTER=otlp asks for them, where 1.x always did", async () => {
+    const quiet = await runChild({ start: "facade", facade: { endpoint: sink.url } });
+    expect(quiet.result.statusAfterFacade?.signals.logs).toEqual({
+      enabled: false,
+      reason: "not-requested",
+    });
+    expect(sink.logRecords()).toEqual([]);
+
+    await runChild({ start: "facade", facade: { endpoint: sink.url } }, { OTEL_LOGS_EXPORTER: "otlp" });
+    expect(sink.logRecords().map((record) => record.body)).toEqual(["child-log-line"]);
+  });
+
+  it("puts the service name and version given in code on the resource, and no 1.x defaults", async () => {
+    await runChild(
+      { start: "facade", facade: { endpoint: sink.url, serviceName: "from-code", serviceVersion: "2.3.4" } },
+      { OTEL_SERVICE_NAME: "from-environment", NODE_ENV: "production" },
+    );
+    const resource = sink.spans()[0]!.resource;
+    expect(resource["service.name"]).toBe("from-code");
+    expect(resource["service.version"]).toBe("2.3.4");
+    // 1.x set deployment.environment from NODE_ENV (default "production")
+    expect(resource["deployment.environment"]).toBeUndefined();
+    expect(resource["deployment.environment.name"]).toBeUndefined();
+
+    sink.requests.length = 0;
+    await runChild({ start: "facade", facade: { endpoint: sink.url } });
+    // 1.x set service.version to "0.0.0" when none was given
+    expect(sink.spans()[0]!.resource["service.version"]).toBeUndefined();
+  });
+
+  it("refuses an empty service name with no OTEL_SERVICE_NAME, and runs without telemetry", async () => {
+    const run = await runChild({ start: "facade", facade: { endpoint: sink.url, serviceName: "" } });
+
+    expect(run.result.statusAfterFacade).toMatchObject({ state: "not-started" });
+    expect(run.stderr).toContain("no service name");
+    expect(sink.connections).toEqual([]);
+  });
+
+  it("installs the auto-instrumentation unless disableInstrumentation or autoInstrument: false", async () => {
+    const on = await runChild({ start: "facade", facade: { disableInstrumentation: false } });
+    const off = await runChild({ start: "facade", facade: { disableInstrumentation: true } });
+
+    expect(on.result.httpPatched).toBe(true);
+    expect(off.result.httpPatched).toBe(false);
+  });
+
+  it("does not start again after a shutdown outside test mode: the second initialize attaches", async () => {
+    const run = await runChild({
+      start: "facade",
+      facade: { endpoint: sink.url },
+      facadeAgain: true,
+    });
+
+    expect(run.result.statusAfterSecondFacade).toMatchObject({ state: "shut-down" });
+    expect(run.stderr).not.toContain("Failed to initialize");
+  });
+});
