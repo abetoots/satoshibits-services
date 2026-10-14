@@ -3,6 +3,7 @@
  */
 
 import {
+  createTraceState,
   diag,
   metrics,
   ROOT_CONTEXT,
@@ -40,7 +41,7 @@ import type { DiagnosticsEvent } from "../../preset/diagnostics.mjs";
 import type { ResolvedConfig } from "../../preset/config.mjs";
 import type { PolicyAttributes, PolicyLogRecord, RedactionPolicy } from "../../preset/redaction.mjs";
 import type { ProbeCall } from "./probe-policy.mjs";
-import type { Context, Tracer } from "@opentelemetry/api";
+import type { Context, TracerProvider as TracerProviderApi } from "@opentelemetry/api";
 import type { Logger } from "@opentelemetry/api-logs";
 import type { InstrumentationConfigMap } from "@opentelemetry/auto-instrumentations-node";
 import type { LogRecordExporter, LogRecordProcessor, ReadableLogRecord } from "@opentelemetry/sdk-logs";
@@ -301,12 +302,31 @@ describe("startTestTelemetry", () => {
     traceFlags: 1,
   };
 
+  /** a link's context with a trace state of its own */
+  const LINKED_WITH_STATE = { ...LINKED, traceState: createTraceState("linked=erin") };
+
+  /** a remote parent whose trace state the SDK copies onto its child, as it would an inbound header's */
+  const UNDER_A_PARENT = trace.setSpanContext(ROOT_CONTEXT, {
+    traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+    spanId: "00f067aa0ba902b7",
+    traceFlags: 1,
+    isRemote: true,
+    traceState: createTraceState("vendor=erin"),
+  });
+
   /** one span with something on every surface of a span a policy is handed */
-  function emitOnEverySurface(tracer: Tracer = trace.getTracer("kit")): void {
-    const span = tracer.startSpan("checkout", {
-      attributes: { customer: "erin", attempt: 2 },
-      links: [{ context: LINKED, attributes: { reason: "retry of" } }],
-    });
+  function emitOnEverySurface(provider: TracerProviderApi = trace.getTracerProvider()): void {
+    // the version and schema URL are any text a caller passes, as the name is (through a
+    // provider: the API's own getTracer() drops the schema URL)
+    const tracer = provider.getTracer("kit", "1.0.0-erin", { schemaUrl: "https://schemas.example.com/erin" });
+    const span = tracer.startSpan(
+      "checkout",
+      {
+        attributes: { customer: "erin", attempt: 2 },
+        links: [{ context: LINKED_WITH_STATE, attributes: { reason: "retry of" } }],
+      },
+      UNDER_A_PARENT,
+    );
     span.addEvent("cache miss", { key: "cart" });
     span.recordException(new Error("card declined"));
     span.setStatus({ code: SpanStatusCode.ERROR, message: "payment failed" });
@@ -355,6 +375,31 @@ describe("startTestTelemetry", () => {
         (span) => span.links[0]?.attributes,
         { reason: "[probe:link] retry of" },
         { reason: "retry of" },
+      ],
+      [
+        // the probe puts a member in front: the preset parses the policy's answer back into a trace state
+        "the trace state of its own context, as span.traceState",
+        (span) => span.spanContext().traceState?.serialize(),
+        "probe=span.traceState,vendor=erin",
+        "vendor=erin",
+      ],
+      [
+        "a link's trace state, as link.traceState",
+        (span) => span.links[0]?.context.traceState?.serialize(),
+        "probe=link.traceState,linked=erin",
+        "linked=erin",
+      ],
+      [
+        "its scope's version, as scope.version",
+        (span) => span.instrumentationScope.version,
+        "[probe:scope.version] 1.0.0-erin",
+        "1.0.0-erin",
+      ],
+      [
+        "its scope's schema URL, as scope.schemaUrl",
+        (span) => span.instrumentationScope.schemaUrl,
+        "[probe:scope.schemaUrl] https://schemas.example.com/erin",
+        "https://schemas.example.com/erin",
       ],
     ];
 
@@ -414,6 +459,50 @@ describe("startTestTelemetry", () => {
       expect("message" in span!.status).toBe(false);
     });
 
+    it("is handed no trace state, version or schema URL where there is none", async () => {
+      const calls: ProbeCall[] = [];
+      telemetry = startTestTelemetry({ redaction: createProbePolicy(calls) });
+      // a root span from a scope with a name only, linked to a context without a trace state
+      trace.getTracer("bare").startSpan("s", { links: [{ context: LINKED }] }).end();
+      const [span] = await telemetry.spans();
+      expect(span!.spanContext().traceState).toBeUndefined();
+      expect(span!.links[0]!.context.traceState).toBeUndefined();
+      expect(span!.instrumentationScope.version).toBeUndefined();
+      expect(span!.instrumentationScope.schemaUrl).toBeUndefined();
+      const textSurfaces = calls.filter((call) => call.fn === "text").map((call) => call.surface);
+      expect(textSurfaces.sort()).toEqual(["scope.name", "span.name"]);
+
+      // and the recording would have shown them: the same under a parent with a trace state
+      calls.length = 0;
+      emitOnEverySurface();
+      await telemetry.spans();
+      expect(calls.filter((call) => call.fn === "text").map((call) => call.surface).sort()).toEqual([
+        "link.traceState",
+        "scope.name",
+        "scope.schemaUrl",
+        "scope.version",
+        "span.name",
+        "span.traceState",
+      ]);
+    });
+
+    it("exports no trace state where the policy returns an empty text for one", async () => {
+      const probe = createProbePolicy();
+      telemetry = startTestTelemetry({
+        redaction: {
+          ...probe,
+          text: (surface, value) => (surface.endsWith(".traceState") ? "" : probe.text(surface, value)),
+        },
+      });
+      emitOnEverySurface();
+      const [span] = await telemetry.spans();
+      expect(span!.spanContext().traceState).toBeUndefined();
+      expect(span!.links[0]!.context.traceState).toBeUndefined();
+      // the rest of each context is the original's
+      expect(span!.spanContext().traceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
+      expect(span!.links[0]!.context).toEqual(LINKED);
+    });
+
     // The kit's start() takes one span exporter and puts it behind the simple processor; the batch
     // processor is reached only with a real endpoint (the subprocess tests), and no public API adds
     // a processor to a provider that is already built. So the next tests build a provider of their
@@ -439,7 +528,7 @@ describe("startTestTelemetry", () => {
         new SimpleSpanProcessor({ exporter: beside }),
       );
       try {
-        emitOnEverySurface(provider.getTracer("kit"));
+        emitOnEverySurface(provider);
         await provider.forceFlush();
 
         const [marked] = behindThePolicy.getFinishedSpans();
@@ -449,9 +538,11 @@ describe("startTestTelemetry", () => {
           expect(read(original!), surface).toEqual(given);
         }
         // what the policy has no say in is read through to the same span
-        expect(marked!.spanContext()).toEqual(original!.spanContext());
+        const { traceState: _markedState, ...markedContext } = marked!.spanContext();
+        const { traceState: _originalState, ...originalContext } = original!.spanContext();
+        expect(markedContext).toEqual(originalContext);
         expect(marked!.events.map((event) => event.time)).toEqual(original!.events.map((event) => event.time));
-        expect(marked!.links.map((link) => link.context)).toEqual([LINKED]);
+        expect(marked!.links.map(({ context: { traceState: _, ...context } }) => context)).toEqual([LINKED]);
         expect(marked!.startTime).toBe(original!.startTime);
       } finally {
         await provider.shutdown();
@@ -530,7 +621,7 @@ describe("startTestTelemetry", () => {
       const exporter = new InMemorySpanExporter();
       const provider = providerWith(processorFor(wrapped(exporter)));
       try {
-        emitOnEverySurface(provider.getTracer("kit"));
+        emitOnEverySurface(provider);
         await provider.forceFlush();
         const spans = exporter.getFinishedSpans();
         expect(spans).toHaveLength(1);
@@ -1350,6 +1441,25 @@ describe("startTestTelemetry", () => {
           expect(copy).toEqual({ customer: "erin", tags: ["a"] });
           expect(copy.tags).not.toBe(given.tags);
         }
+      });
+
+      it.each<[string, (given: Record<string | symbol, unknown>) => unknown]>([
+        ["an attribute set", (given) => handed(given).set],
+        ["a log record's attributes", (given) => handed(given).record.attributes],
+        ["a body", (given) => handed({}, given).record.body],
+        ["a value nested in a body", (given) => (handed({}, { nested: [given] }).record.body as { nested: unknown[] }).nested[0]],
+      ])("leaves a symbol-keyed property out of %s, so a policy cannot reach the original through it", (_where, copyOf) => {
+        const key = Symbol("held by the application");
+        const given = { kept: "as it was", [key]: { value: "the application's own" } };
+        const copy = copyOf(given) as Record<string | symbol, unknown>;
+        // a policy that writes through every key it finds, symbols included
+        for (const own of Reflect.ownKeys(copy)) {
+          const inner = copy[own];
+          if (typeof inner === "object" && inner !== null) (inner as { value?: string }).value = "changed by the policy";
+        }
+        expect(given[key]).toEqual({ value: "the application's own" });
+        expect(Object.getOwnPropertySymbols(copy)).toEqual([]);
+        expect(copy).toEqual({ kept: "as it was" });
       });
 
       it("copies a flat set and a nested one alike: what was shared stays shared, at any depth", () => {

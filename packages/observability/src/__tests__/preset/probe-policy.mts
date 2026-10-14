@@ -17,6 +17,14 @@ import { isPlainObject } from "../../preset/redaction.mjs";
 export const probed = (surface: string, value: string): string =>
   `[probe:${surface}] ${value}`;
 
+/**
+ * A trace state marked: a list member put in front. The preset parses what a
+ * policy returns for a trace state back into one, and a member that is not
+ * valid trace-state syntax (as the plain mark is not) is dropped on the way.
+ */
+export const probedTraceState = (surface: string, value: string): string =>
+  `probe=${surface},${value}`;
+
 /** every string value marked; other values as they were */
 const marked = (surface: string, attributes: PolicyAttributes): PolicyAttributes =>
   Object.fromEntries(
@@ -56,7 +64,9 @@ export function createProbePolicy(calls?: ProbeCall[]): RedactionPolicy {
   return {
     text: (surface, value) => {
       calls?.push({ fn: "text", surface, given: value });
-      return probed(surface, value);
+      return surface.endsWith(".traceState")
+        ? probedTraceState(surface, value)
+        : probed(surface, value);
     },
     attributes: (surface, attributes) => {
       calls?.push({ fn: "attributes", surface, given: Object.keys(attributes) });
