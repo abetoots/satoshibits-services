@@ -189,7 +189,8 @@ const logger = pino({
 
 That passes the fields of a log call through `redactFields`, and describes and redacts an error given
 as `err`. The limits at the top of this page apply to every field: an error under another key, a `URL`
-or any other class instance is written as pino serializes it, unread. And it does not redact the
+or any other class instance is not looked into, and is written as pino serializes it (its key is
+still judged: under `password` it is replaced like anything else). And it does not redact the
 message, a child logger's bindings or the `base` fields: keep values out of those, give a message of
 your own when you log an error, and put what varies in the fields of the call.
 
