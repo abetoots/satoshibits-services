@@ -22,6 +22,7 @@
 
 export { forceFlush, getStatus, shutdown, start } from "./preset/runtime.mjs";
 export { PresetConfigError } from "./preset/config.mjs";
+export { TelemetryExportError } from "./preset/exporters.mjs";
 
 export type {
   PresetStatus,
@@ -36,6 +37,7 @@ export type {
   Signal,
   SignalOffReason,
 } from "./preset/config.mjs";
+export type { ExportFailure } from "./preset/exporters.mjs";
 export type {
   DiagnosticsEvent,
   DiagnosticsLevel,

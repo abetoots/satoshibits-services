@@ -35,7 +35,8 @@ import type {
 } from "@opentelemetry/sdk-metrics";
 import type { ReadableSpan, SpanExporter } from "@opentelemetry/sdk-trace";
 
-import { createRateLimiter } from "./diagnostics.mjs";
+import { SIGNALS } from "./config.mjs";
+import { createRateLimiter, isPlainShortToken } from "./diagnostics.mjs";
 
 type EnabledSignal = Extract<SignalConfig, { enabled: true }>;
 
@@ -47,6 +48,124 @@ export interface ExporterContext {
   redactor: Redactor;
   /** shown in failure reports; never the full URL, which can carry credentials */
   endpointHost?: string;
+  /** where a failed export is recorded for the forceFlush or shutdown call it belongs to */
+  failures?: ExportFailureLog;
+}
+
+/** one failed export, as the preset's error states it: identifiers only */
+export interface ExportFailure {
+  signal: Signal;
+  /** the error's name when it is a short identifier, `Error` otherwise */
+  error: string;
+  /** the HTTP status the far end answered with */
+  status?: number;
+  /** the error's code (`ECONNREFUSED`, say) when it is a short identifier; never a policy's */
+  code?: string;
+}
+
+const describeFailure = (failure: ExportFailure): string =>
+  [
+    failure.error,
+    ...(failure.status !== undefined ? [`status ${failure.status}`] : []),
+    ...(failure.code !== undefined ? [`code ${failure.code}`] : []),
+  ].join(" ");
+
+/**
+ * What `forceFlush()` and `shutdown()` reject with when something they were
+ * to send could not be sent. It names each signal that failed with the
+ * failure's identifiers only: never the far end's status text or response
+ * body, never an error's message, and of an error a redaction policy threw
+ * only its name. The original errors are not attached, for the same reason
+ * (the diagnostics line for each failure says the same, by signal).
+ */
+export class TelemetryExportError extends Error {
+  readonly failures: readonly ExportFailure[];
+  constructor(failures: readonly ExportFailure[]) {
+    const bySignal = SIGNALS.flatMap((signal) => {
+      const described = [
+        ...new Set(failures.filter((f) => f.signal === signal).map(describeFailure)),
+      ];
+      return described.length > 0 ? [`${signal}: ${described.join(", ")}`] : [];
+    });
+    super(`@satoshibits/observability: telemetry could not be delivered (${bySignal.join("; ")})`);
+    this.name = "TelemetryExportError";
+    this.failures = failures;
+  }
+}
+
+/** errors a redaction policy threw: of these only the name is ever stated */
+const thrownByPolicy = new WeakSet<object>();
+
+/** run the policy; what it throws is marked as its own and thrown on */
+function byPolicy<T>(redact: () => T): T {
+  try {
+    return redact();
+  } catch (error) {
+    if (typeof error === "object" && error !== null) thrownByPolicy.add(error);
+    throw error;
+  }
+}
+
+/** a failed export's identifiers; anything that cannot be read, or is not an identifier, is left out */
+export function exportFailure(signal: Signal, error: unknown): ExportFailure {
+  const read = (key: "code"): unknown => {
+    try {
+      return (error as Record<string, unknown> | null | undefined)?.[key];
+    } catch {
+      return undefined;
+    }
+  };
+  const name = nameOf(error);
+  const code = read("code");
+  const fromPolicy = typeof error === "object" && error !== null && thrownByPolicy.has(error);
+  return {
+    signal,
+    error: isPlainShortToken(name) ? name : "Error",
+    // the upstream OTLP exporters' error carries the HTTP status as a numeric code
+    ...(!fromPolicy &&
+      typeof code === "number" &&
+      Number.isInteger(code) &&
+      code >= 100 &&
+      code <= 599 && { status: code }),
+    ...(!fromPolicy && typeof code === "string" && isPlainShortToken(code) && { code }),
+  };
+}
+
+/**
+ * Failed exports, by the `forceFlush()` or `shutdown()` call they belong to.
+ *
+ * The batch span processor rejects a flush whose export failed, but the
+ * batch log record processor and the periodic metric reader only hand the
+ * failure to the global error handler and resolve. Every export passes
+ * through the wrapper, which sees every result, so the wrapper records
+ * failures here and the call reads them, whatever the processor does.
+ *
+ * A failure belongs to the calls that are running when it arrives, whoever
+ * began the export: a flush waits for what was already in flight, and that
+ * is part of what it was asked to deliver. One that arrived before the call
+ * began is not the call's: it was reported when it failed, and a call is not
+ * failed by what went wrong before it was made (a processor that rejects a
+ * flush for it, as the simple processors do while it is still pending, is
+ * heard through its rejection).
+ */
+export class ExportFailureLog {
+  readonly #open = new Set<Map<unknown, ExportFailure>>();
+
+  /**
+   * collect the failures that arrive from now until `close()`, by the error
+   * the processor was handed (so a processor's rejection with that same
+   * error is not counted twice)
+   */
+  open(): { failures: Map<unknown, ExportFailure>; close: () => void } {
+    const failures = new Map<unknown, ExportFailure>();
+    this.#open.add(failures);
+    return { failures, close: () => this.#open.delete(failures) };
+  }
+
+  /** a failed export: recorded for every call running now */
+  record(error: unknown, failure: ExportFailure): void {
+    for (const failures of this.#open) failures.set(error, failure);
+  }
 }
 
 /** the host and port of an endpoint, for status and diagnostics */
@@ -110,6 +229,7 @@ function failureReporter(signal: Signal, context: ExporterContext) {
     });
   };
 }
+
 
 /**
  * The error of a failed export. Anything that is not an `Error` (a string
@@ -187,6 +307,11 @@ function guarded(
       } catch {
         // reporting must never keep the answer from the processor
       }
+      try {
+        context.failures?.record(result.error, exportFailure(signal, result.error));
+      } catch {
+        // nor may recording it for the call that is waiting
+      }
     }
     try {
       resultCallback(result);
@@ -251,7 +376,7 @@ export function wrapSpanExporter(
     export: (spans: ReadableSpan[], resultCallback) => {
       guarded("traces", context, report, resultCallback, (observed) => {
         return inner.export(
-          spans.map((span) => viewOf<ReadableSpan>(span, redactor.span(span))),
+          byPolicy(() => spans.map((span) => viewOf<ReadableSpan>(span, redactor.span(span)))),
           observed,
         );
       });
@@ -271,13 +396,13 @@ export function wrapMetricExporter(
     export: (metrics: ResourceMetrics, resultCallback) => {
       guarded("metrics", context, report, resultCallback, (observed) => {
         return inner.export(
-          {
+          byPolicy(() => ({
             ...metrics,
             scopeMetrics: metrics.scopeMetrics.map((scopeMetrics) => ({
               ...scopeMetrics,
               scope: redactor.scope(scopeMetrics.scope),
             })),
-          },
+          })),
           observed,
         );
       });
@@ -306,8 +431,10 @@ export function wrapLogRecordExporter(
     export: (records: ReadableLogRecord[], resultCallback) => {
       guarded("logs", context, report, resultCallback, (observed) => {
         return inner.export(
-          records.map((record) =>
-            viewOf<ReadableLogRecord>(record, redactor.logRecord(record)),
+          byPolicy(() =>
+            records.map((record) =>
+              viewOf<ReadableLogRecord>(record, redactor.logRecord(record)),
+            ),
           ),
           observed,
         );

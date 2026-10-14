@@ -25,7 +25,7 @@ import type { ChildResult, ChildScenario } from "../harness.mjs";
 import type { DiagnosticsEvent } from "../../../../preset/diagnostics.mjs";
 
 import { forceFlush, getStatus, shutdown, start } from "../../../../preset.mjs";
-import { createProbePolicy } from "../../probe-policy.mjs";
+import { createProbePolicy, createThrowingPolicy } from "../../probe-policy.mjs";
 
 const scenario = JSON.parse(
   process.env.OBS_CHILD_SCENARIO ?? "{}",
@@ -82,7 +82,12 @@ if (scenario.start === "register") {
       instrumentations: false,
       ...scenario.options,
       ...(scenario.redaction !== "none" && {
-        redaction: scenario.redaction === "probe" ? createProbePolicy() : false,
+        redaction:
+          scenario.redaction === "probe"
+            ? createProbePolicy()
+            : scenario.redaction === "throwing"
+              ? createThrowingPolicy()
+              : false,
       }),
       ...(scenario.collectDiagnostics && {
         diagnostics: () => {
@@ -195,7 +200,21 @@ if (scenario.lingerMillis) {
 }
 
 // ===== finish =====
+/** everything of an error a caller could print, so a test can search it for what must not be there */
+const printable = (error: unknown): string => {
+  const parts = [String(error), JSON.stringify(error) ?? ""];
+  if (typeof error === "object" && error !== null) {
+    for (const key of Object.getOwnPropertyNames(error)) {
+      const value: unknown = (error as Record<string, unknown>)[key];
+      parts.push(`${key}=${typeof value === "string" ? value : (JSON.stringify(value) ?? String(value))}`);
+    }
+  }
+  return parts.join("\n");
+};
+
 let finishError: string | null = null;
+let finishErrorName: string | null = null;
+let finishErrorText: string | null = null;
 const finishStarted = Date.now();
 try {
   if (scenario.finish === "forceFlush") {
@@ -205,13 +224,31 @@ try {
   }
 } catch (error) {
   finishError = error instanceof Error ? error.message : String(error);
+  finishErrorName = error instanceof Error ? error.name : null;
+  finishErrorText = printable(error);
+}
+const finishMillis = Date.now() - finishStarted;
+
+let againError: string | null = null;
+if (scenario.emitAgainAfterFinish) {
+  tracer.startSpan("after-finish").end();
+  metrics.getMeter(scopeName).createCounter("child_counter_after_finish").add(1);
+  logs.getLogger(scopeName).emit({ body: "after-finish-line", severityText: "INFO" });
+  try {
+    await forceFlush(scenario.timeoutMillis);
+  } catch (error) {
+    againError = error instanceof Error ? error.message : String(error);
+  }
 }
 
 const result: ChildResult = {
   status: getStatus(),
   startError,
   finishError,
-  finishMillis: Date.now() - finishStarted,
+  finishErrorName,
+  finishErrorText,
+  finishMillis,
+  againError,
   spans,
   sockets,
   diagnostics,

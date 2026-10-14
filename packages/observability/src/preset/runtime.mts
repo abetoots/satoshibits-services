@@ -69,8 +69,11 @@ import {
   createLogRecordExporter,
   createMetricExporter,
   createSpanExporter,
+  ExportFailureLog,
+  exportFailure,
   FAILURE_REPORT_INTERVAL_MILLIS,
   hostOf,
+  TelemetryExportError,
   wasReportedByExporter,
   wrapLogRecordExporter,
   wrapMetricExporter,
@@ -134,14 +137,26 @@ export interface PresetStatus {
   signals: Record<Signal, SignalStatus>;
 }
 
+/** a span or log record processor, or a metric reader: what forceFlush and shutdown act on */
+interface Part {
+  signal: Signal;
+  forceFlush: () => Promise<void>;
+  shutdown: () => Promise<void>;
+}
+
 interface Handle {
   status: PresetStatus;
   sdk?: NodeSDK;
-  flushables: { forceFlush: () => Promise<void> }[];
+  parts: Part[];
+  failures?: ExportFailureLog;
+  /** the first shutdown() call's promise, which every later call returns */
+  shutdown?: Promise<void>;
 }
 
 const HOOK_FLAG = Symbol.for("@satoshibits/observability.loader-hook");
 const DEFAULT_TIMEOUT_MILLIS = 10_000;
+/** the longest delay a Node timer holds; a longer one fires after 1 ms */
+const MAX_TIMER_MILLIS = 2 ** 31 - 1;
 
 let handle: Handle | undefined;
 
@@ -537,7 +552,7 @@ export function start(options: StartOptions = {}): PresetStatus {
         loaderHook: loaderHookInstalled(),
         signals: allOff("sdk-disabled"),
       },
-      flushables: [],
+      parts: [],
     };
     return snapshot(handle.status);
   }
@@ -545,6 +560,7 @@ export function start(options: StartOptions = {}): PresetStatus {
 
   // validation has passed: `redaction` is absent only when nothing is exported
   const redactor = createRedactor(options.redaction ?? false);
+  const failures = new ExportFailureLog();
   const diagnostics = createDiagnostics({
     logLevel: process.env.OTEL_LOG_LEVEL,
     sinkFactory: options.diagnostics,
@@ -584,7 +600,7 @@ export function start(options: StartOptions = {}): PresetStatus {
     pipelines = buildPipelines(
       config,
       testExporters,
-      { diagnostics, redactor },
+      { diagnostics, redactor, failures },
       options.redaction !== undefined,
     );
     if (options.loaderHook !== false) installLoaderHook();
@@ -613,12 +629,22 @@ export function start(options: StartOptions = {}): PresetStatus {
   diagnostics.activate();
   reportStartup(diagnostics, pipelines.signals);
 
+  const partsOf = (
+    signal: Signal,
+    parts: { forceFlush: () => Promise<void>; shutdown: () => Promise<void> }[],
+  ): Part[] =>
+    parts.map((part) => ({
+      signal,
+      forceFlush: () => part.forceFlush(),
+      shutdown: () => part.shutdown(),
+    }));
   handle = {
     sdk,
-    flushables: [
-      ...pipelines.spanProcessors,
-      ...pipelines.metricReaders,
-      ...pipelines.logRecordProcessors,
+    failures,
+    parts: [
+      ...partsOf("traces", pipelines.spanProcessors),
+      ...partsOf("metrics", pipelines.metricReaders.map(shutdownOnce)),
+      ...partsOf("logs", pipelines.logRecordProcessors),
     ],
     status: {
       state: "running",
@@ -631,54 +657,117 @@ export function start(options: StartOptions = {}): PresetStatus {
   return snapshot(handle.status);
 }
 
-/** reject when `work` has not settled within `timeoutMillis`; the timer never outlives the call */
-async function within(
-  work: Promise<unknown>,
-  timeoutMillis: number,
-  what: string,
-): Promise<void> {
+/**
+ * The processors shut themselves down once and hand a second caller the
+ * first call's promise; the metric reader runs its shutdown again instead.
+ * `shutdown()` awaits each part beside the SDK's own call to it, so the
+ * reader is given the processors' behaviour.
+ */
+function shutdownOnce(reader: MetricReader): MetricReader {
+  const shutdown = reader.shutdown.bind(reader);
+  let once: Promise<void> | undefined;
+  reader.shutdown = (options) => (once ??= shutdown(options));
+  return reader;
+}
+
+/**
+ * Reject when `work` has not settled within `timeoutMillis`; the timer never outlives the call.
+ * A delay longer than a timer holds is cut to the longest it does hold: Node would fire it at once.
+ */
+async function within<T>(work: Promise<T>, timeoutMillis: number, what: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      reject(
-        new Error(
-          `@satoshibits/observability: ${what} did not finish within ${timeoutMillis} ms`,
-        ),
-      );
-    }, timeoutMillis);
+    timer = setTimeout(
+      () => {
+        reject(
+          new Error(
+            `@satoshibits/observability: ${what} did not finish within ${timeoutMillis} ms`,
+          ),
+        );
+      },
+      Math.min(timeoutMillis, MAX_TIMER_MILLIS),
+    );
   });
   try {
-    await Promise.race([work, timeout]);
+    return await Promise.race([work, timeout]);
   } finally {
     clearTimeout(timer);
   }
 }
 
 /**
- * Send everything buffered, without shutting down. Rejects on failure or
+ * Run `act` on every part and wait for all of them, so one signal's failure
+ * neither stops nor hides another's; then reject with the preset's own error
+ * when any export this call began failed. A part's rejection is not passed on
+ * as it is: the batch span processor rejects with the exporter's error, whose
+ * message is the far end's status text.
+ */
+async function settleAll(
+  current: Handle,
+  what: string,
+  timeoutMillis: number,
+  act: (part: Part) => Promise<void>,
+  alongside: Promise<unknown>[] = [],
+): Promise<void> {
+  const call = current.failures?.open();
+  let outcomes: PromiseSettledResult<void>[];
+  try {
+    // async: a part that throws instead of rejecting is still one outcome among the others
+    const parts = Promise.allSettled(current.parts.map(async (part) => act(part)));
+    // awaited for its own sake only: what it rejects with, a part rejected with too
+    await within(Promise.allSettled([parts, ...alongside]), timeoutMillis, what);
+    outcomes = await parts;
+  } finally {
+    call?.close();
+  }
+  const failures = new Map(call?.failures);
+  outcomes.forEach((outcome, index) => {
+    // a part that rejects says this call failed, whatever its error: the batch span processor
+    // for a batch it sent, a simple processor for an export it was still waiting on, or a
+    // processor's own timeout. Stated by identifiers, once per error
+    if (outcome.status === "rejected" && !failures.has(outcome.reason)) {
+      failures.set(outcome.reason, exportFailure(current.parts[index]!.signal, outcome.reason));
+    }
+  });
+  if (failures.size > 0) throw new TelemetryExportError([...failures.values()]);
+}
+
+/**
+ * Send everything buffered, without shutting down. Rejects with a
+ * `TelemetryExportError` when something buffered could not be sent, and
  * when `timeoutMillis` passes.
  */
 export async function forceFlush(
   timeoutMillis = DEFAULT_TIMEOUT_MILLIS,
 ): Promise<void> {
-  if (handle?.status.state !== "running") return;
-  await within(
-    Promise.all(handle.flushables.map((flushable) => flushable.forceFlush())),
-    timeoutMillis,
-    "forceFlush",
-  );
+  const current = handle;
+  if (current?.status.state !== "running") return;
+  await settleAll(current, "forceFlush", timeoutMillis, (part) => part.forceFlush());
 }
 
 /**
- * Flush and stop telemetry. Rejects on failure or when `timeoutMillis`
- * passes. A process shuts down once; `start()` cannot be called again.
+ * Flush and stop telemetry. Rejects with a `TelemetryExportError` when
+ * something buffered could not be sent, and when `timeoutMillis` passes;
+ * every signal is shut down either way. A second call, during the first or
+ * after it, returns the first call's promise. A process shuts down once;
+ * `start()` cannot be called again.
  */
-export async function shutdown(
-  timeoutMillis = DEFAULT_TIMEOUT_MILLIS,
-): Promise<void> {
-  if (handle?.status.state !== "running" || !handle.sdk) return;
-  handle.status = { ...handle.status, state: "shut-down" };
-  await within(handle.sdk.shutdown(), timeoutMillis, "shutdown");
+export function shutdown(timeoutMillis = DEFAULT_TIMEOUT_MILLIS): Promise<void> {
+  const current = handle;
+  if (current?.shutdown) return current.shutdown;
+  if (current?.status.state !== "running" || !current.sdk) return Promise.resolve();
+  current.status = { ...current.status, state: "shut-down" };
+  // the SDK's call goes first: the providers mark themselves shut down and shut down their
+  // parts, and each part, asked again below, hands back that same shutdown's promise
+  const sdkShutdown = current.sdk.shutdown();
+  current.shutdown = settleAll(
+    current,
+    "shutdown",
+    timeoutMillis,
+    (part) => part.shutdown(),
+    [sdkShutdown],
+  );
+  return current.shutdown;
 }
 
 /** What is running: per signal on or off and why, and where data goes. Never header values. */

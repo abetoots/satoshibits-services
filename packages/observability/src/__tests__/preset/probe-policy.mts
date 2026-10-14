@@ -99,3 +99,29 @@ export function createProbePolicy(calls?: ProbeCall[]): RedactionPolicy {
     },
   };
 }
+
+/** what the throwing policy's error carries; none of it may reach a caller of forceFlush or shutdown */
+export const POLICY_ERROR_MESSAGE = "policy-message-sentinel";
+export const POLICY_ERROR_CODE = "POLICY_CODE_SENTINEL";
+export const POLICY_ERROR_NAME = "PolicyFault";
+
+/**
+ * The probe policy, except that it throws on a span's name, with an error
+ * whose message and code a caller must never see. Only spans fail to export:
+ * the resource, scopes and log records are redacted as by the probe.
+ */
+export function createThrowingPolicy(): RedactionPolicy {
+  const probe = createProbePolicy();
+  return {
+    ...probe,
+    text: (surface, value) => {
+      if (surface === "span.name") {
+        throw Object.assign(new Error(POLICY_ERROR_MESSAGE), {
+          name: POLICY_ERROR_NAME,
+          code: POLICY_ERROR_CODE,
+        });
+      }
+      return probe.text(surface, value);
+    },
+  };
+}
