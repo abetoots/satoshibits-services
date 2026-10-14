@@ -15,6 +15,7 @@ const COMPATIBILITY = readFileSync(join(PACKAGE_ROOT, "COMPATIBILITY.md"), "utf8
 const manifest = JSON.parse(readFileSync(join(PACKAGE_ROOT, "package.json"), "utf8")) as {
   exports: Record<string, unknown>;
   files: string[];
+  peerDependencies: Record<string, string>;
 };
 
 /** the prose: the README less its code blocks and marker comments */
@@ -102,6 +103,42 @@ describe("the README names nothing the package does not have", () => {
     const named = new Set(README.match(/OTEL_[A-Z0-9_]+/g) ?? []);
     expect(named.size).toBeGreaterThan(0);
     expect([...named].filter((name) => !known.has(name))).toEqual([]);
+  });
+
+  // a version the peer range refuses would make the SDK install a copy of the api of its own
+  it("installs @opentelemetry/api at a version the peer range accepts, and never 1.10", () => {
+    type Version = [number, number, number];
+    const version = (text: string): Version => {
+      const parts = /^(\d+)\.(\d+)\.(\d+)$/.exec(text);
+      if (!parts) throw new Error(`not a plain version: ${text}`);
+      return [Number(parts[1]), Number(parts[2]), Number(parts[3])];
+    };
+    const compare = (x: Version, y: Version) => x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+    /** [lowest accepted, lowest refused) of a `~x.y.z` spec or a `>=a.b.c <x.y.z` range */
+    const interval = (range: string): [Version, Version] => {
+      const tilde = /^~(\S+)$/.exec(range);
+      if (tilde) {
+        const low = version(tilde[1]!);
+        return [low, [low[0], low[1] + 1, 0]];
+      }
+      const bounded = /^>=\s*(\S+)\s+<\s*(\S+)$/.exec(range);
+      if (bounded) return [version(bounded[1]!), version(bounded[2]!)];
+      throw new Error(`a range of a form this check does not read: ${range}`);
+    };
+
+    const install = /pnpm add [^\n]*/.exec(README)?.[0] ?? "";
+    const word = install.split(/\s+/).find((w) => w.startsWith("@opentelemetry/api"));
+    expect(word, `the install command adds @opentelemetry/api: ${install}`).toBeDefined();
+    const spec = /^@opentelemetry\/api@(.+)$/.exec(word!)?.[1];
+    expect(spec, `the install command gives @opentelemetry/api a version: ${word}`).toBeDefined();
+    const [specLow, specHigh] = interval(spec!);
+    const [peerLow, peerHigh] = interval(
+      manifest.peerDependencies["@opentelemetry/api"]!,
+    );
+    expect(compare(specLow, peerLow), "the spec's lowest version is in the peer range").toBeGreaterThanOrEqual(0);
+    expect(compare(specLow, peerHigh), "the spec's lowest version is in the peer range").toBeLessThan(0);
+    expect(compare(specHigh, peerHigh), "the spec allows nothing the peer range refuses").toBeLessThanOrEqual(0);
+    expect(compare(specHigh, [1, 10, 0]), "the spec allows no 1.10").toBeLessThanOrEqual(0);
   });
 
   it("links only to files that exist and are published", () => {

@@ -10,11 +10,11 @@ standard `OTEL_*` environment variables, and redacts what it exports.
 
 <!-- illustrative: installs the packages; the tests run against this repository's build -->
 ```sh
-pnpm add @satoshibits/observability @opentelemetry/api
+pnpm add @satoshibits/observability @opentelemetry/api@~1.9.0
 ```
 
 `@opentelemetry/api` is a peer dependency: your app installs it, so that your app and this package
-share one copy. It needs Node.js 18.19 or later on the 18 line, or 20.6 or later: the versions with
+share one copy, and its version must stay inside this package's peer range (`>=1.9.0 <1.10.0`). It needs Node.js 18.19 or later on the 18 line, or 20.6 or later: the versions with
 `--import`. To name a redaction policy of your own, also add `@satoshibits/redaction`.
 
 ## Quick start
