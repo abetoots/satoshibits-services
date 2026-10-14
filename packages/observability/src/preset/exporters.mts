@@ -251,11 +251,7 @@ export function wrapSpanExporter(
     export: (spans: ReadableSpan[], resultCallback) => {
       guarded("traces", context, report, resultCallback, (observed) => {
         return inner.export(
-          spans.map((span) =>
-            viewOf(span, {
-              instrumentationScope: redactor.scope(span.instrumentationScope),
-            }),
-          ),
+          spans.map((span) => viewOf(span, redactor.span(span))),
           observed,
         );
       });
