@@ -32,20 +32,26 @@ function rowsOf(table: string): string[][] {
     .map((line) => line.trim().slice(1, -1).split("|").map((cell) => cell.trim().replace(/^`|`$/g, "")));
 }
 
-/** every `OTEL_*` name the package's own code reads, as written there */
+/** every `OTEL_*` name the package's own code reads, as written there (comments left out) */
 function variablesInSource(): Set<string> {
   const names = new Set<string>();
   const src = join(PACKAGE_ROOT, "src");
   for (const entry of readdirSync(src, { recursive: true, withFileTypes: true })) {
     const file = join(entry.parentPath, entry.name);
     if (!entry.isFile() || relative(src, file).startsWith("__tests__")) continue;
-    for (const name of readFileSync(file, "utf8").match(/OTEL_[A-Z0-9_]+/g) ?? []) names.add(name);
+    // block comments, then line comments (a `//` after a colon is a URL's)
+    const code = readFileSync(file, "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/(^|[^:])\/\/.*$/gm, "$1");
+    for (const name of code.match(/OTEL_[A-Z0-9_]+/g) ?? []) names.add(name);
   }
   return names;
 }
 
 // read by the preset under a name it builds from the signal's, so not written out in the source
 const BUILT_NAMES = ["OTEL_TRACES_EXPORTER", "OTEL_METRICS_EXPORTER"];
+// read by OpenTelemetry's OTLP exporters themselves, which the preset constructs
+const UPSTREAM_NAMES = ["OTEL_EXPORTER_OTLP_HEADERS"];
 
 describe("the README's code blocks", () => {
   const blocks = readmeBlocks();
@@ -92,7 +98,7 @@ describe("the README names nothing the package does not have", () => {
   });
 
   it("names only OTEL_* variables the package reads", () => {
-    const known = new Set([...variablesInSource(), ...BUILT_NAMES]);
+    const known = new Set([...variablesInSource(), ...BUILT_NAMES, ...UPSTREAM_NAMES]);
     const named = new Set(README.match(/OTEL_[A-Z0-9_]+/g) ?? []);
     expect(named.size).toBeGreaterThan(0);
     expect([...named].filter((name) => !known.has(name))).toEqual([]);
@@ -100,6 +106,7 @@ describe("the README names nothing the package does not have", () => {
 
   it("links only to files that exist and are published", () => {
     const links = [...README.matchAll(/\]\((?!https?:|#)([^)#\s]+)/g)].map((m) => m[1]!);
+    expect(links).toContain("COMPATIBILITY.md");
     for (const link of links) {
       expect(existsSync(join(PACKAGE_ROOT, link)), link).toBe(true);
       expect(manifest.files, `${link} is not in package.json files`).toContain(link);
@@ -124,6 +131,7 @@ describe("the README states", () => {
     const from = README.indexOf("<!-- departures:start -->");
     const to = README.indexOf("<!-- departures:end -->");
     expect(from, "a departures list between markers").toBeGreaterThan(-1);
+    expect(to, "the departures list's end marker").toBeGreaterThan(from);
     const list = README.slice(from, to);
     expect(list.split("\n").filter((line) => line.startsWith("- "))).toHaveLength(5);
     expect(list).toMatch(/localhost/);
@@ -133,8 +141,9 @@ describe("the README states", () => {
     expect(list).toMatch(/`otlp`[^\n]*`none`/);
   });
 
-  it("that metric attributes are not passed to the policy, and why", () => {
-    expect(prose).toMatch(/metric attributes are not passed to the policy[^\n]*series/i);
+  it("that metric attributes are not redacted, and why", () => {
+    expect(prose).toMatch(/metrics are not redacted[^\n]*series/i);
+    expect(prose).toMatch(/never put user data in a metric attribute/i);
   });
 
   it("that Prisma's instrumentation is the project's to add", () => {

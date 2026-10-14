@@ -6,7 +6,7 @@
 
 Migrating from 1.x:
 
-1. **No more `localhost:4318` default.** 1.x exported to `http://localhost:4318` when no endpoint was given. 2.0 exports nothing without an endpoint (the `endpoint` option or `OTEL_EXPORTER_OTLP_ENDPOINT`) and writes one warning per signal. Set the endpoint wherever you relied on the default.
+1. **No more `localhost:4318` default.** 1.x exported to `http://localhost:4318` when no endpoint was given. 2.0 exports nothing without an endpoint (the `endpoint` option or `OTEL_EXPORTER_OTLP_ENDPOINT`) and writes a warning for each signal that would otherwise export: traces and metrics, and logs only when `OTEL_LOGS_EXPORTER=otlp` asks for them. Set the endpoint wherever you relied on the default.
 2. **Start telemetry with a preload.** `node --import @satoshibits/observability/register app.js` replaces initialising in application code; it reads only the environment. A project that sets values in code writes its own preload that calls `start(options)` from `/preset` inside a try/catch. Preloads read `process.env` before your app loads any `.env` file: use the command line or `node --env-file`.
 3. **`redaction` is required when anything is exported.** `start()` throws when a signal would be exported and no `redaction` option was given. Pass `standardPolicy` from `@satoshibits/redaction` (what `register` and the 1.x facade use), a policy of your own, or `false` to export as given. A preload that names a policy depends on `@satoshibits/redaction` itself.
 4. **The root entry is deprecated.** `SmartClient.initialize()` and the 1.x helpers still work: `initialize()` starts the preset's runtime under the standard policy, or attaches to the one a preload started. The root entry is removed in 3.0.0.

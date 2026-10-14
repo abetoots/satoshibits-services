@@ -2,7 +2,8 @@
 
 > **2.0 note.** The frontend uses the browser entry, which `@satoshibits/observability` 2.0 removed: run
 > it against `@satoshibits/observability@^1`. The backend still runs on the root entry's 1.x client,
-> which 2.0 keeps as a deprecated facade (see the package's `COMPATIBILITY.md`).
+> which 2.0 keeps as a deprecated facade (see the package's `COMPATIBILITY.md`). The backend's own test
+> imports `MockClient` from `/testing`, which 2.0 removed.
 
 A production-ready demonstration of end-to-end observability using the `@satoshibits/observability` package. This demo shows how to instrument both frontend (React) and backend (Express) applications with distributed tracing, metrics collection, and error tracking.
 
