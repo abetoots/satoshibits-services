@@ -851,7 +851,6 @@ function shutdownOnce(reader: MetricReader): void {
   reader.shutdown = (options) => (once ??= shutdown(options));
 }
 
-/** a timeout as given, or the default for NaN, within what a timer can hold */
 /** a timeout as given when it is a number (NaN aside), within what a timer can hold; the default otherwise */
 const timeoutOf = (given: unknown): number =>
   typeof given !== "number" || Number.isNaN(given)
@@ -930,7 +929,7 @@ async function settleAll(
       } catch {
         waited = false;
       }
-      if (!waited || Date.now() >= deadline) {
+      if (!waited || Date.now() > deadline) {
         if (options.actAnyway) void begin().all;
         throw timeoutError(what, timeoutMillis);
       }
