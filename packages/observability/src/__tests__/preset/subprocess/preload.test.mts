@@ -190,6 +190,27 @@ describe.each(Object.entries(NODES))("node --import …/register on Node %s", (_
     expect(offSink.requestsTo("/v1/logs")).toEqual([]);
   });
 
+  it("a partial setting for the dns instrumentation keeps the preset's `enabled: false` for it", async () => {
+    // log sending cannot show a kept default (with logs off nothing could arrive either way); a span can
+    const preload = ["--import", `./${FIXTURES}/dns-override-preload.mjs`];
+    const lookup = { OBS_FIXTURE_DNS_LOOKUP: "1" };
+    const dnsSpans = (at: OtlpSink) => at.spans().filter((s) => s.name === "dns.lookup");
+
+    await runApp(node, [...preload, APP], { ...environment("off"), ...lookup });
+    requestSpans(sink);
+    expect(dnsSpans(sink)).toEqual([]);
+
+    // control: the same partial setting with `enabled: true` does record the lookup
+    const enabledSink = await sinks.extra();
+    await runApp(node, [...preload, APP], {
+      ...environment("off"),
+      ...lookup,
+      OTEL_EXPORTER_OTLP_ENDPOINT: enabledSink.url,
+      OBS_FIXTURE_DNS_ENABLED: "1",
+    });
+    expect(dnsSpans(enabledSink).length).toBeGreaterThan(0);
+  });
+
   it("control: the same application without the flag sends nothing and its lines carry no trace id", async () => {
     const run = await runApp(node, [APP], environment("on"));
 
