@@ -22,6 +22,7 @@ import type {
 
 import * as root from "../../index.mjs";
 import { resetForTesting } from "../../preset/runtime.mjs";
+import { startTestTelemetry } from "../../testing/in-memory.mjs";
 
 const PACKAGE = path.join(import.meta.dirname, "../../..");
 const DOC = readFileSync(path.join(PACKAGE, "COMPATIBILITY.md"), "utf8");
@@ -37,22 +38,41 @@ afterEach(async () => {
 });
 
 /** the rows of the table between `<!-- name:start -->` and `<!-- name:end -->`, as cells */
-function tableRows(name: string): string[][] {
+/** the lines of the table between `<!-- name:start -->` and `<!-- name:end -->`, as cells, header first */
+function tableLines(name: string): string[][] {
   const from = DOC.indexOf(`<!-- ${name}:start -->`);
   const to = DOC.indexOf(`<!-- ${name}:end -->`);
   if (from === -1 || to <= from) throw new Error(`COMPATIBILITY.md has no ${name} table`);
   return DOC.slice(from, to)
     .split("\n")
-    .filter((line) => line.startsWith("|"))
-    .slice(2) // the header and its rule
+    .filter((line) => line.trim().startsWith("|"))
     .map((line) =>
       // no cell holds a pipe
       line
+        .trim()
         .slice(1, -1)
         .split("|")
         .map((cell) => cell.trim()),
     );
 }
+
+/** the rows of a table, as cells (the header and its rule left out) */
+const tableRows = (name: string): string[][] => tableLines(name).slice(2);
+
+/** the rows of a table, each cell by its column's header */
+function tableRecords(name: string): Record<string, string>[] {
+  const [header, , ...rows] = tableLines(name);
+  return rows.map((cells) => Object.fromEntries(header!.map((column, i) => [column, cells[i] ?? ""])));
+}
+
+const TABLES = ["root-exports", "signature-types", "facade-behaviour", "removed-exports"] as const;
+
+/** the 1.x export list, pinned from the code at 6f3dbab (see the fixture's `source`) */
+const EXPORTS_1X = (
+  JSON.parse(readFileSync(path.join(import.meta.dirname, "fixtures/root-exports-1x.json"), "utf8")) as {
+    names: string[];
+  }
+).names;
 
 const unquote = (cell: string) => cell.replace(/^`|`$/g, "");
 
@@ -74,7 +94,9 @@ function exportsOf(entry: string): Map<string, "value" | "type"> {
     noEmit: true,
   });
   const checker = program.getTypeChecker();
-  const module = checker.getSymbolAtLocation(program.getSourceFile(entry)!)!;
+  const source = program.getSourceFile(entry);
+  const module = source && checker.getSymbolAtLocation(source);
+  if (!module) throw new Error(`the entry ${entry} could not be read as a module`);
   const found = new Map<string, "value" | "type">();
   for (const symbol of checker.getExportsOfModule(module)) {
     const target = symbol.flags & SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
@@ -207,24 +229,39 @@ const CHECKS: Record<string, () => void | Promise<void>> = {
     root.clearSanitizationCache();
     expect(root.getCacheStats().size).toBe(0);
   },
-  createSmartCounter: () => {
+  createSmartCounter: async () => {
+    const telemetry = startTestTelemetry({ serviceName: "compat" });
     const counter = root.createSmartCounter("compat_counter", metrics.getMeter("compat"));
-    expect(() => counter.increment(2, { route: "/a" })).not.toThrow();
+    counter.increment(2, { route: "/a" });
+    expect(await telemetry.metricPoints("compat_counter")).toEqual([
+      { attributes: expect.objectContaining({ route: "/a" }) as unknown, value: 2 },
+    ]);
   },
-  createSmartGauge: () => {
+  createSmartGauge: async () => {
+    const telemetry = startTestTelemetry({ serviceName: "compat" });
     const gauge = root.createSmartGauge("compat_gauge", metrics.getMeter("compat"));
-    expect(typeof gauge).toBe("object");
+    gauge.set(17, { pool: "db" });
+    expect(await telemetry.metricPoints("compat_gauge")).toEqual([
+      { attributes: expect.objectContaining({ pool: "db" }) as unknown, value: 17 },
+    ]);
   },
-  createSmartHistogram: () => {
+  createSmartHistogram: async () => {
+    const telemetry = startTestTelemetry({ serviceName: "compat" });
     const histogram = root.createSmartHistogram("compat_histogram", metrics.getMeter("compat"));
-    expect(typeof histogram.record).toBe("function");
+    histogram.record(40);
+    histogram.record(60);
+    const [point] = await telemetry.metricPoints("compat_histogram");
+    expect(point?.value).toMatchObject({ count: 2, sum: 100, min: 40, max: 60 });
   },
   createSmartSampler: () => {
     expect(root.createSmartSampler({ baseRate: 0.1 })).toBeInstanceOf(root.SmartSampler);
   },
-  createSmartUpDownCounter: () => {
+  createSmartUpDownCounter: async () => {
+    const telemetry = startTestTelemetry({ serviceName: "compat" });
     const counter = root.createSmartUpDownCounter("compat_updown", metrics.getMeter("compat"));
-    expect(typeof counter).toBe("object");
+    counter.add(5);
+    counter.add(-2);
+    expect((await telemetry.metricPoints("compat_updown")).map((point) => point.value)).toEqual([3]);
   },
   extractResultError: () => {
     const error = new Error("no");
@@ -303,8 +340,31 @@ const CHECKS: Record<string, () => void | Promise<void>> = {
     expect(root.normalizeHash(-2147483648)).toBe(1);
     expect(root.normalizeHash(2147483647)).toBe(1);
   },
-  reportError: () => {
-    expect(() => root.reportError(new Error("reported"), { where: "compat" })).not.toThrow();
+  reportError: async () => {
+    const telemetry = startTestTelemetry({ serviceName: "compat" });
+    const error = new TypeError("lookup failed");
+
+    // with no active span: an `error.report` span carrying the exception, and an ERROR log line
+    root.reportError(error, { where: "compat" });
+    const [reported] = await telemetry.spans();
+    expect(reported?.name).toBe("error.report");
+    expect(reported?.events.map((event) => event.name)).toEqual(["exception"]);
+    expect(reported?.attributes).toMatchObject({ where: "compat", "breadcrumbs.count": 0 });
+    const [line] = await telemetry.logRecords();
+    expect(line?.severityText).toBe("ERROR");
+    expect(line?.body).toBe("lookup failed");
+    expect(line?.attributes).toMatchObject({ where: "compat" });
+
+    // with an active span: recorded on that span, whose status becomes ERROR
+    telemetry.clear();
+    trace.getTracer("compat").startActiveSpan("handler", (span) => {
+      root.reportError(error);
+      span.end();
+    });
+    const spans = await telemetry.spans();
+    expect(spans.map((span) => span.name)).toEqual(["handler"]);
+    expect(spans[0]?.status).toEqual({ code: ApiSpanStatusCode.ERROR, message: "lookup failed" });
+    expect(spans[0]?.events.map((event) => event.name)).toEqual(["exception"]);
   },
   runWithBusinessContext: async () => {
     await withContextManager();
@@ -339,6 +399,23 @@ const CHECKS: Record<string, () => void | Promise<void>> = {
   },
 };
 
+describe("every table", () => {
+  it.each(TABLES)("%s has rows", (name) => {
+    expect(tableRows(name).length).toBeGreaterThan(0);
+  });
+
+  it.each(TABLES)("%s gives the 1.x behaviour, the new one and why in every changed row", (name) => {
+    for (const row of tableRecords(name)) {
+      const status = row.Status ?? "";
+      if (!status.startsWith("changed")) continue;
+      const label = Object.values(row)[0];
+      for (const column of ["1.x", "2.x", "Why"]) {
+        expect(row[column], `${name} › ${label} has no ${column}`).toBeTruthy();
+      }
+    }
+  });
+});
+
 describe("the root entry's table", () => {
   it("has one row for every root export, of the right kind, and no row for anything else", () => {
     const exported = rootExports();
@@ -351,6 +428,12 @@ describe("the root entry's table", () => {
     for (const row of ROWS.filter((r) => exported.has(r.name))) {
       expect(row.kind, row.name).toBe(exported.get(row.name));
     }
+  });
+
+  it("has a row for every name 1.x exported, so an export cannot leave with its row", () => {
+    expect(EXPORTS_1X.length).toBeGreaterThan(0);
+    const rowNames = ROWS.map((row) => row.name);
+    expect(EXPORTS_1X.filter((name) => !rowNames.includes(name)), "1.x exports with no row").toEqual([]);
   });
 
   it("says unchanged, changed or removed in every row", () => {

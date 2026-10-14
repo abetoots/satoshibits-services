@@ -46,6 +46,7 @@ export interface ChildScenario {
     headers?: Record<string, string>;
     testSpanProcessor?: boolean;
     disableInstrumentation?: boolean;
+    autoInstrument?: boolean;
   };
   /** after the facade's shutdown, initialize it again with the same config */
   facadeAgain?: boolean;
