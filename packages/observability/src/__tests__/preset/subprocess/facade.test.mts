@@ -178,6 +178,23 @@ describe("the facade's config, as against 1.x", () => {
     expect(sink.spans()[0]!.resource["service.version"]).toBeUndefined();
   });
 
+  it("drops the host, process and OS keys 1.x's detectors added, and keeps only the OS type", async () => {
+    await runChild({ start: "facade", facade: { endpoint: sink.url } });
+
+    const keys = Object.keys(sink.spans()[0]!.resource);
+    expect(keys.filter((key) => /^(host|process)\./.test(key))).toEqual([]);
+    expect(keys.filter((key) => key.startsWith("os."))).toEqual(["os.type"]);
+  });
+
+  it("takes deployment.environment.name from OTEL_RESOURCE_ATTRIBUTES, not NODE_ENV", async () => {
+    await runChild(
+      { start: "facade", facade: { endpoint: sink.url } },
+      { NODE_ENV: "production", OTEL_RESOURCE_ATTRIBUTES: "deployment.environment.name=staging" },
+    );
+
+    expect(sink.spans()[0]!.resource["deployment.environment.name"]).toBe("staging");
+  });
+
   it("refuses an empty service name with no OTEL_SERVICE_NAME, and runs without telemetry", async () => {
     const run = await runChild({ start: "facade", facade: { endpoint: sink.url, serviceName: "" } });
 
