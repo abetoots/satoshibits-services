@@ -242,6 +242,8 @@ export interface NodeRun {
   args: string[];
   /** as for runChild: the only telemetry-related environment the child sees */
   env?: Record<string, string>;
+  /** where the child runs (default: the package directory) */
+  cwd?: string;
 }
 
 /**
@@ -251,17 +253,18 @@ export interface NodeRun {
  * exist, so a missing node version fails a test and never skips it.
  */
 export function runNode<R extends ReportsSockets>(run: NodeRun): Promise<ChildRun<R>> {
-  return spawnForResult<R>(run.node ?? process.execPath, run.args, run.env ?? {});
+  return spawnForResult<R>(run.node ?? process.execPath, run.args, run.env ?? {}, run.cwd);
 }
 
 function spawnForResult<R extends ReportsSockets>(
   command: string,
   args: string[],
   env: Record<string, string>,
+  cwd = PACKAGE_ROOT,
 ): Promise<ChildRun<R>> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
-      cwd: PACKAGE_ROOT,
+      cwd,
       env: childEnvironment(env),
       stdio: ["ignore", "pipe", "pipe"],
     });

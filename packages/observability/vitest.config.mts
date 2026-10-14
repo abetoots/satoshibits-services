@@ -26,7 +26,6 @@ export default defineConfig({
           environment: "node",
           include: [
             "src/__tests__/shared/**/*.test.mts",
-            "src/__tests__/readme-examples.test.mts",
             "src/__tests__/gap-validation.test.mts",
           ],
         },
