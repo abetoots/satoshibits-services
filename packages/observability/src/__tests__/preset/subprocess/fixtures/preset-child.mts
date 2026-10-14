@@ -12,6 +12,7 @@
 import {
   isSpanContextValid,
   metrics,
+  SpanStatusCode,
   trace,
   TraceFlags,
 } from "@opentelemetry/api";
@@ -115,7 +116,15 @@ const tracer = trace.getTracer(scopeName);
 const spans: ChildResult["spans"] = [];
 const total = scenario.spans ?? 1;
 for (let i = 0; i < total; i++) {
-  const span = tracer.startSpan(`${scenario.spanName ?? "child-span"}-${i}`);
+  const span = tracer.startSpan(
+    scenario.spanNameAsGiven && scenario.spanName !== undefined
+      ? scenario.spanName
+      : `${scenario.spanName ?? "child-span"}-${i}`,
+    { ...(scenario.spanAttributes && { attributes: scenario.spanAttributes }) },
+  );
+  if (scenario.spanStatusMessage !== undefined) {
+    span.setStatus({ code: SpanStatusCode.ERROR, message: scenario.spanStatusMessage });
+  }
   const spanContext = span.spanContext();
   if (i < 50) {
     spans.push({

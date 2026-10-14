@@ -1,12 +1,15 @@
 /**
- * The register entry's failure path: whatever made `start()` throw is reported
- * on stderr through diagnostics, and the import itself never throws.
+ * The register entry's failure paths: whatever made `start()` throw is reported
+ * on stderr through diagnostics, and the import itself never throws. What it
+ * exports, and under which policy, is asserted in a child process
+ * (subprocess/signals.test.mts).
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 afterEach(() => {
   vi.doUnmock("../../preset/runtime.mjs");
+  vi.doUnmock("../../preset/diagnostics.mjs");
   vi.resetModules();
   vi.restoreAllMocks();
 });
@@ -40,6 +43,33 @@ describe("register", () => {
       },
     }));
   };
+
+  it("does not report a failed start when telemetry started and only its own line could not be written", async () => {
+    vi.resetModules();
+    const { standardPolicy } = await import("@satoshibits/redaction");
+    const start = vi.fn(() => ({
+      state: "running",
+      loaderHook: false,
+      signals: {
+        traces: { enabled: true },
+        metrics: { enabled: false, reason: "exporter-none" },
+        logs: { enabled: false, reason: "not-requested" },
+      },
+    }));
+    vi.doMock("../../preset/runtime.mjs", () => ({ start }));
+    vi.doMock("../../preset/diagnostics.mjs", () => ({
+      createDiagnostics: () => {
+        throw new Error("SENTINEL diagnostics cannot be made");
+      },
+    }));
+    const lines = captureStderr();
+
+    await expect(import("../../register.mjs")).resolves.toBeDefined();
+
+    expect(start).toHaveBeenCalledExactlyOnceWith({ redaction: standardPolicy });
+    // not even the fixed fallback line: nothing failed to start
+    expect(lines()).toEqual([]);
+  });
 
   it("says so, and carries on, when what start() threw is not an error", async () => {
     startThrows(() => "SENTINEL thrown as a string");

@@ -47,6 +47,12 @@ export interface ChildScenario {
   /** number of root spans to create (default 1) */
   spans?: number;
   spanName?: string;
+  /** use `spanName` as it is, without the span's index after it */
+  spanNameAsGiven?: boolean;
+  /** attributes set on every span */
+  spanAttributes?: Record<string, string>;
+  /** end every span with an error status carrying this message */
+  spanStatusMessage?: string;
   /** add 1 to a counter (default true) */
   metric?: boolean;
   /** emit one log record through the logs API (default true) */
