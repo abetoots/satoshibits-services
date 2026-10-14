@@ -347,6 +347,13 @@ describe("redactFields: the standard policy over a logger's fields", () => {
     ).toEqual({ msg: "to [EMAIL]", http: { "url.full": "https://h.example/a", status: 200 } });
   });
 
+  it("matches a dotted name as it is written, not the same name spelled as nesting", () => {
+    // each key is looked at by itself: here the keys are "address" and "full", which no standard rule names
+    const nested = { client: { address: "203.0.113.7" }, url: { full: "/a?k=v" } };
+    expect(redactFields(nested)).toEqual(nested);
+    expect(redactFields({ "client.address": "203.0.113.7", "url.full": "/a?k=v" })).toEqual({ "url.full": "/a" });
+  });
+
   it("keeps an error's message and stack, masked", () => {
     expect(redactFields({ err: { name: "Error", message: "no mailbox a@b.io", stack: "Error: no mailbox a@b.io" } })).toEqual({
       err: { name: "Error", message: "no mailbox [EMAIL]", stack: "Error: no mailbox [EMAIL]" },
