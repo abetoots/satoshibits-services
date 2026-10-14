@@ -203,10 +203,22 @@ describe("the pino wiring in the redaction package's README", () => {
     logger.error(new Error("bare jane@example.com"));
     expect(logged().msg).toBe("bare jane@example.com");
     expect((logged().err as { message: string }).message).toBe("bare [EMAIL]");
+    // the same when the error is given as a field and no message with it
+    logger.error({ err: new Error("field jane@example.com") });
+    expect(logged().msg).toBe("field jane@example.com");
     // with a message of one's own, nothing of the error's is copied
     logger.error({ err: new Error("bare jane@example.com") }, "send failed");
     expect(logged().msg).toBe("send failed");
     expect(lines.at(-1)).not.toContain("jane@example.com");
+  });
+
+  it("writes an error under another key, and a class instance, as pino serializes them, as the README says", () => {
+    const error = Object.assign(new Error("x"), { detail: "jane@example.com" });
+    logger.info({ failure: error, link: new URL("https://h.example/a?e=jane@example.com") }, "m");
+    expect(logged()).toMatchObject({
+      failure: { detail: "jane@example.com" },
+      link: "https://h.example/a?e=jane@example.com",
+    });
   });
 
   it("does not redact a child logger's bindings or the base fields, as the README says", () => {
