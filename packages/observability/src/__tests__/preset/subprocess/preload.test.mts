@@ -15,9 +15,9 @@
  */
 
 import { build } from "esbuild";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,14 +33,21 @@ const PACKAGE_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
 // relative to the package directory, where every child runs
 const FIXTURES = "src/__tests__/preset/subprocess/fixtures";
 const APP = `${FIXTURES}/consumer-app.mjs`;
-// inside dist/ (git-ignored, and not under node_modules, where a package cannot import itself by name)
-const BUNDLE = "dist/__consumer__/consumer-app.mjs";
+// inside dist/ (git-ignored, and not under node_modules, where a package cannot import
+// itself by name); package.json `files` leaves it out of the published package
+const BUNDLE_DIR = "dist/__consumer__";
+const BUNDLE = `${BUNDLE_DIR}/consumer-app.mjs`;
 const REGISTER = ["--import", "@satoshibits/observability/register"];
 
-const NODES = {
-  "22": join(homedir(), ".nvm/versions/node/v22.21.0/bin/node"),
-  "25": join(homedir(), ".nvm/versions/node/v25.0.0/bin/node"),
+/** each binary by the variable that names it; unset, the development machine's nvm install */
+const NODE_VARIABLES = {
+  "22": ["OBS_TEST_NODE_22", join(homedir(), ".nvm/versions/node/v22.21.0/bin/node")],
+  "25": ["OBS_TEST_NODE_25", join(homedir(), ".nvm/versions/node/v25.0.0/bin/node")],
 } as const;
+const NODES = {
+  "22": process.env[NODE_VARIABLES["22"][0]] ?? NODE_VARIABLES["22"][1],
+  "25": process.env[NODE_VARIABLES["25"][0]] ?? NODE_VARIABLES["25"][1],
+};
 
 interface AppResult {
   status: number;
@@ -55,13 +62,21 @@ beforeEach(() => {
 });
 
 beforeAll(async () => {
-  for (const [version, binary] of Object.entries(NODES)) {
+  for (const version of ["22", "25"] as const) {
+    const binary = NODES[version];
     // the harness's rule for the sink port: a missing prerequisite fails, it never skips
-    if (!existsSync(binary)) throw new Error(`node ${version} is required at ${binary}`);
+    if (!existsSync(binary)) {
+      throw new Error(
+        `node ${version} is required at ${binary}; set ${NODE_VARIABLES[version][0]} to its binary`,
+      );
+    }
   }
-  // built here rather than checked for staleness: the build takes seconds, and a
-  // stale dist/ would test code that is not the source under review
-  await promisify(execFile)("pnpm", ["run", "build"], { cwd: PACKAGE_ROOT });
+  // built here rather than checked for staleness: the build takes seconds, and a stale
+  // dist/ would test code that is not the source under review. The release workflow sets
+  // OBS_TEST_DIST_FRESH because turbo has just built dist/ before running the tests there
+  if (process.env.OBS_TEST_DIST_FRESH !== "1") {
+    await promisify(execFile)("pnpm", ["run", "build"], { cwd: PACKAGE_ROOT });
+  }
   await build({
     entryPoints: [join(PACKAGE_ROOT, APP)],
     outfile: join(PACKAGE_ROOT, BUNDLE),
@@ -72,6 +87,10 @@ beforeAll(async () => {
     logLevel: "silent",
   });
 }, 120_000);
+
+afterAll(() => {
+  rmSync(join(PACKAGE_ROOT, BUNDLE_DIR), { recursive: true, force: true });
+});
 
 const environment = (logs: "on" | "off"): Record<string, string> => ({
   OTEL_SERVICE_NAME: "preload-test",
@@ -98,7 +117,13 @@ function stdoutLines(run: ChildRun<AppResult>): Partial<Record<LineName, Record<
   const lines: Partial<Record<LineName, Record<string, unknown>>> = {};
   for (const text of run.stdout.split("\n")) {
     if (!text.startsWith("{")) continue;
-    const line = JSON.parse(text) as Record<string, unknown>;
+    let line: Record<string, unknown>;
+    try {
+      line = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      // not a logger's line
+      continue;
+    }
     if (typeof line.logger === "string") lines[line.logger as LineName] = line;
   }
   return lines;

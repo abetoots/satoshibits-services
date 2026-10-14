@@ -109,7 +109,7 @@ export interface ChildRun<R = ChildResult> {
 }
 
 /** what every child reports, so the checks shared by a file can read its sockets */
-interface ReportsSockets {
+export interface ReportsSockets {
   sockets: ChildResult["sockets"];
 }
 

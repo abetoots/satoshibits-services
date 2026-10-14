@@ -85,7 +85,8 @@ export default defineConfig({
           include: ["src/__tests__/preset/subprocess/*.test.mts"],
           pool: "forks",
           poolOptions: { forks: { singleFork: true } },
-          // a test runs up to two children, each allowed 20 s by the harness before it is killed
+          // a test runs up to two children, each allowed 20 s by the harness before it is killed;
+          // a test that runs two relies on that kill to finish inside this limit
           testTimeout: 50_000,
         },
       },
