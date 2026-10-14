@@ -852,10 +852,11 @@ function shutdownOnce(reader: MetricReader): void {
 }
 
 /** a timeout as given, or the default for NaN, within what a timer can hold */
-const timeoutOf = (given: unknown): number => {
-  const millis = Number(given);
-  return Number.isNaN(millis) ? DEFAULT_TIMEOUT_MILLIS : Math.min(Math.max(0, millis), MAX_TIMER_MILLIS);
-};
+/** a timeout as given when it is a number (NaN aside), within what a timer can hold; the default otherwise */
+const timeoutOf = (given: unknown): number =>
+  typeof given !== "number" || Number.isNaN(given)
+    ? DEFAULT_TIMEOUT_MILLIS
+    : Math.min(Math.max(0, given), MAX_TIMER_MILLIS);
 
 const timeoutError = (what: string, shownMillis: number): Error =>
   new Error(`@satoshibits/observability: ${what} did not finish within ${shownMillis} ms`);
@@ -938,6 +939,9 @@ async function settleAll(
     // the SDK's shutdown is awaited for timing only; its rejection is dropped, since the
     // parts reject with the same failures
     await within(all, Math.max(0, deadline - Date.now()), what, timeoutMillis);
+    // the timer may not have run yet although the deadline passed (synchronous work held the
+    // event loop while the parts finished): the deadline decides, not which callback ran first
+    if (Date.now() > deadline) throw timeoutError(what, timeoutMillis);
     outcomes = await parts;
   } finally {
     call?.close();
@@ -967,7 +971,7 @@ async function settleAll(
 /**
  * Send everything buffered, without shutting down. Rejects with a
  * `TelemetryExportError` when something buffered could not be sent, and
- * when `timeoutMillis` passes.
+ * with a plain `Error` saying so when `timeoutMillis` passes first.
  *
  * A call made while another runs returns that one's promise (and its
  * timeout): the batch log processor answers a second flush at once, before
@@ -992,22 +996,28 @@ export function forceFlush(timeoutMillis = DEFAULT_TIMEOUT_MILLIS): Promise<void
 
 /**
  * Flush and stop telemetry. Rejects with a `TelemetryExportError` when
- * something buffered could not be sent, and when `timeoutMillis` passes;
- * every signal is shut down either way. A flush that is running is waited
- * for first, within the same timeout (its outcome is its own caller's, but a
- * failure that arrives meanwhile is this call's too): the processors'
- * shutdown, run during it, would return without sending what was emitted
- * since it began. A second call, during the first or after it, returns the
- * first call's promise. A process shuts down once; `start()` cannot be
- * called again.
+ * something buffered could not be sent, and with a plain `Error` saying so
+ * when `timeoutMillis` passes first; every signal is shut down either way.
+ *
+ * A flush that is running is waited for first, within the same timeout (its
+ * outcome is its own caller's, but a failure that arrives meanwhile is this
+ * call's too): the processors' shutdown, run during it, would return
+ * without sending what was emitted since it began. When that wait runs out,
+ * the call rejects at once and the shutdown still starts in the background,
+ * where what was emitted after the flush began may not be sent.
+ *
+ * A second call, during the first or after it, returns the first call's
+ * promise. A process shuts down once; `start()` cannot be called again.
  */
 export function shutdown(timeoutMillis = DEFAULT_TIMEOUT_MILLIS): Promise<void> {
   const current = handle;
   if (current?.shutdown) return current.shutdown;
   if (current?.status.state !== "running" || !current.sdk) return Promise.resolve();
+  // read before any state changes
+  const timeout = timeoutOf(timeoutMillis);
   current.status = { ...current.status, state: "shut-down" };
   const { sdk } = current;
-  current.shutdown = settleAll(current, "shutdown", timeoutOf(timeoutMillis), (part) => part.shutdown(), {
+  current.shutdown = settleAll(current, "shutdown", timeout, (part) => part.shutdown(), {
     waitFor: current.flushing?.catch(() => undefined),
     actAnyway: true,
     // the SDK's call goes first: the providers mark themselves shut down and shut down their

@@ -224,7 +224,8 @@ describe("a start() that fails part of the way", () => {
     for (const [key, value] of Object.entries(registrations())) {
       expect(value, key).toBe(before[key as keyof typeof before]);
     }
-    expect(probes[0]!.enabled).toBe(false);
+    // every one built, the one that failed to enable included
+    expect(probes.map((probe) => probe.enabled)).toEqual(probes.map(() => false));
     expect(trace.getTracer("t").startSpan("s").isRecording()).toBe(false);
     expectDiagnosticsGivenBack(events);
     expect(undoReports(events)).toEqual([]);
@@ -247,7 +248,7 @@ describe("a start() that fails part of the way", () => {
       for (const [key, value] of Object.entries(registrations())) {
         expect(value, key).toBe(foreign[key as keyof typeof foreign]);
       }
-      expect(probes[0]!.enabled).toBe(false);
+      expect(probes.map((probe) => probe.enabled)).toEqual(probes.map(() => false));
     },
   );
 
@@ -264,7 +265,11 @@ describe("a start() that fails part of the way", () => {
     expect(undoReports(events).map((event) => event.message)).toEqual([
       expect.stringContaining("could not be fully undone"),
     ]);
-    expect(JSON.stringify(events)).not.toContain("SENTINEL");
+    // each message, and each field as it would print (JSON shows an error in a field as {})
+    for (const event of events) {
+      expect(event.message).not.toContain("SENTINEL");
+      for (const value of Object.values(event.fields ?? {})) expect(String(value)).not.toContain("SENTINEL");
+    }
     expect(() => start(startOptions())).toThrow(/an earlier start\(\) failed and could not be fully undone/);
     expect(() => startTestTelemetry()).toThrow(/could not be fully undone/);
   });
