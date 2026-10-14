@@ -170,6 +170,31 @@ describe("a failed export behind a metric reader", () => {
     expect(JSON.stringify(events)).not.toContain("refused by the far end");
   });
 
+  it("is reported once across failures whose far-end texts differ, behind an injected reader", async () => {
+    const events: DiagnosticsEvent[] = [];
+    const texts = ["refused by alpha", "refused by beta"];
+    const exporter: PushMetricExporter = {
+      export: (_metrics, resultCallback) => {
+        resultCallback({ code: ExportResultCode.FAILED, error: new Error(texts.shift() ?? "refused") });
+      },
+      forceFlush: () => Promise.resolve(),
+      shutdown: () => Promise.resolve(),
+    };
+    startWithTestHooks(
+      { ...BASE, diagnostics: () => (event) => events.push(event) },
+      { metricReader: new PeriodicExportingMetricReader({ exporter, exportIntervalMillis: 2 ** 31 - 1 }) },
+    );
+
+    const counter = metrics.getMeter("facade-test").createCounter("facade_counter");
+    counter.add(1);
+    await forceFlush().catch(() => undefined);
+    counter.add(1);
+    await forceFlush().catch(() => undefined);
+
+    // the far end's text is not part of the kind: the second failure falls in the first's interval
+    expect(errorsOf(events)).toHaveLength(1);
+  });
+
   it("is still reported once, not twice, when the exporter is the preset's own (wrapped)", async () => {
     const events: DiagnosticsEvent[] = [];
     start({
