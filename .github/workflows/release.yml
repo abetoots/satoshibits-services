@@ -39,6 +39,20 @@ jobs:
         with:
           run_install: false
 
+      # the observability preload tests run the preset on Node 22 and Node 25 by these
+      # binaries; installed first so the setup step below leaves the default node as it was
+      - name: ⎔ Setup node 22 for the observability preload tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: echo "OBS_TEST_NODE_22=$(command -v node)" >> "$GITHUB_ENV"
+
+      - name: ⎔ Setup node 25 for the observability preload tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: 25
+      - run: echo "OBS_TEST_NODE_25=$(command -v node)" >> "$GITHUB_ENV"
+
       - name: ⎔ Setup node
         uses: actions/setup-node@v4
 
@@ -75,4 +89,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_AUTH_TOKEN }}
+          # turbo builds every package before its tests here, so the preload tests use that dist/
+          OBS_TEST_DIST_FRESH: "1"
 # TODO Add step for publishing to JSR
