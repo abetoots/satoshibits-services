@@ -14,6 +14,7 @@
  * without telemetry: a mistyped variable must not stop a service from booting.
  */
 
+import { DiagLogLevel } from "@opentelemetry/api";
 import { standardPolicy } from "@satoshibits/redaction";
 import { types } from "node:util";
 
@@ -21,18 +22,14 @@ import { PresetConfigError } from "./preset/config.mjs";
 import { createDiagnostics } from "./preset/diagnostics.mjs";
 import { start } from "./preset/runtime.mjs";
 
-/**
- * Whether the environment asked for errors only, or for nothing. Read the way
- * the diagnostics module reads the variable (trimmed, any case); it exports
- * no parser of its own, so the two spellings are mirrored here.
- */
-const quietRequested = (): boolean =>
-  ["NONE", "ERROR"].includes(process.env.OTEL_LOG_LEVEL?.trim().toUpperCase() ?? "");
-
 try {
   const status = start({ redaction: standardPolicy });
-  if (Object.values(status.signals).some((signal) => signal.enabled) && !quietRequested()) {
-    try {
+  try {
+    // the diagnostics module resolves the level the environment asks for (warning when
+    // unset or unknown); an operator who asked for errors only, or nothing, is not told
+    const wanted =
+      createDiagnostics({ logLevel: process.env.OTEL_LOG_LEVEL }).diagLevel >= DiagLogLevel.WARN;
+    if (wanted && Object.values(status.signals).some((signal) => signal.enabled)) {
       // an instance of its own, at the level of this line: the preset's default drops
       // informational lines, and the choice of policy was made here, not by the operator
       const diagnostics = createDiagnostics({ logLevel: "info" });
@@ -42,9 +39,9 @@ try {
         message: "telemetry is exported under the standard redaction policy",
         fields: { policy: "@satoshibits/redaction standardPolicy" },
       });
-    } catch {
-      // telemetry is running; a line that cannot be written must not look like a failed start
     }
+  } catch {
+    // telemetry is running; a line that cannot be written must not look like a failed start
   }
 } catch (error) {
   try {

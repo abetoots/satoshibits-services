@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 afterEach(() => {
   vi.doUnmock("../../preset/runtime.mjs");
   vi.doUnmock("../../preset/diagnostics.mjs");
+  vi.unstubAllEnvs();
   vi.resetModules();
   vi.restoreAllMocks();
 });
@@ -57,16 +58,19 @@ describe("register", () => {
       },
     }));
     vi.doMock("../../preset/runtime.mjs", () => ({ start }));
-    vi.doMock("../../preset/diagnostics.mjs", () => ({
-      createDiagnostics: () => {
-        throw new Error("SENTINEL diagnostics cannot be made");
-      },
-    }));
+    const createDiagnostics = vi.fn(() => {
+      throw new Error("SENTINEL diagnostics cannot be made");
+    });
+    vi.doMock("../../preset/diagnostics.mjs", () => ({ createDiagnostics }));
+    // a level that wants the line, whatever the shell running the tests has set
+    vi.stubEnv("OTEL_LOG_LEVEL", "info");
     const lines = captureStderr();
 
     await expect(import("../../register.mjs")).resolves.toBeDefined();
 
     expect(start).toHaveBeenCalledExactlyOnceWith({ redaction: standardPolicy });
+    // the notice was attempted, so the silence below is the containment and not a skipped line
+    expect(createDiagnostics).toHaveBeenCalled();
     // not even the fixed fallback line: nothing failed to start
     expect(lines()).toEqual([]);
   });

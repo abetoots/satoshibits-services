@@ -7,6 +7,7 @@
  * unless a test configured that address on purpose.
  */
 
+import { SpanStatusCode } from "@opentelemetry/api";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { OtlpSink } from "../../../testing/otlp-sink.mjs";
@@ -399,7 +400,6 @@ describe("the register entry", () => {
     },
     spanStatusMessage: "lookup failed for SENTINEL-status",
   } as const;
-  const STATUS_CODE_ERROR = 2;
 
   const expectRedactedAtTheSink = () => {
     const spans = sink.spans();
@@ -410,7 +410,7 @@ describe("the register entry", () => {
       password: "[REDACTED]",
       "order.kind": "subscription",
     });
-    expect(span.status).toEqual({ code: STATUS_CODE_ERROR });
+    expect(span.status).toEqual({ code: SpanStatusCode.ERROR });
     expect(span.resource["service.name"]).toBe("signals-test");
     const sent = sink.requests.map((request) => request.bodyText).join("\n");
     expect(sent).not.toContain("SENTINEL");
@@ -442,12 +442,14 @@ describe("the register entry", () => {
     expect(socketsOutside(run, sink)).toEqual([]);
   });
 
-  it("writes that line when OTEL_LOG_LEVEL asks for informational lines", async () => {
+  // an unknown value is read as the default, warning
+  it.each(["info", "warn", "nonsense"])("writes that line with OTEL_LOG_LEVEL=%j", async (level) => {
     const run = await runChild(
       { start: "register", ...SENSITIVE_SPAN },
-      { ...endpoint(), OTEL_LOG_LEVEL: "info" },
+      { ...endpoint(), OTEL_LOG_LEVEL: level },
     );
 
+    expect(run.code).toBe(0);
     expectRedactedAtTheSink();
     expect(policyLines(run)).toHaveLength(1);
   });
@@ -460,6 +462,7 @@ describe("the register entry", () => {
         { ...endpoint(), OTEL_LOG_LEVEL: level },
       );
 
+      expect(run.code).toBe(0);
       expect(run.result.status.signals.traces).toMatchObject({ enabled: true });
       expectRedactedAtTheSink();
       expect(policyLines(run)).toEqual([]);
@@ -467,6 +470,7 @@ describe("the register entry", () => {
     },
   );
 
+  // these rows guard the "something is exported" check; they passed before register named a policy
   it.each([
     ["no endpoint is configured", NAME, "shut-down"],
     ["OTEL_SDK_DISABLED=true", { OTEL_SDK_DISABLED: "true" }, "disabled"],
@@ -499,7 +503,7 @@ describe("the register entry", () => {
     expect(spans.map((span) => span.name)).toEqual([SENSITIVE_SPAN.spanName]);
     expect(spans[0]!.attributes).toEqual(SENSITIVE_SPAN.spanAttributes);
     expect(spans[0]!.status).toEqual({
-      code: STATUS_CODE_ERROR,
+      code: SpanStatusCode.ERROR,
       message: SENSITIVE_SPAN.spanStatusMessage,
     });
     // the line is register's: a preload that names its own policy is not told about the standard one
