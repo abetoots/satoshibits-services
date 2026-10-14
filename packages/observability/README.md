@@ -13,6 +13,12 @@ standard `OTEL_*` environment variables, and redacts what it exports.
 pnpm add @satoshibits/observability
 ```
 
+It needs Node.js 18.19 or later on the 18 line, or 20.6 or later: the versions with `--import`. Two
+more packages are yours to add when you use them, as dependencies of your own project:
+`@opentelemetry/api`, which your code imports to make spans by hand and which the test kit's example
+below uses (this package depends on it too, but your code imports it directly), and
+`@satoshibits/redaction`, to name a redaction policy of your own.
+
 ## Quick start
 
 Set the service's name and where to send telemetry, and load the package before your application
@@ -26,7 +32,7 @@ node --import @satoshibits/observability/register app.js
 ```
 
 That is the whole setup. HTTP, Express, database drivers and the other libraries of OpenTelemetry's
-Node bundle are traced automatically (the noisy `fs`, `net` and `dns` ones are off), and lines written
+Node bundle (`@opentelemetry/auto-instrumentations-node`) are traced automatically (the noisy `fs`, `net` and `dns` ones are off), and lines written
 with pino, winston or bunyan carry the trace id of the request that wrote them. Everything exported
 passes the standard redaction policy (below), and one line on stderr says so.
 
@@ -38,10 +44,10 @@ The variables, all from the OpenTelemetry specification:
 | Variable | What it does |
 |---|---|
 | `OTEL_SERVICE_NAME` | the service's name; required |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | where to send; nothing is exported without it. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` and `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` set one signal's |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | where to send every **signal** (kind of telemetry: traces, metrics or logs). `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` and `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` set one signal's, and turn that signal on by themselves. A signal with neither is not exported |
 | `OTEL_EXPORTER_OTLP_HEADERS` | headers for every request, such as `Authorization=Basic …` for Grafana Cloud |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` (the default) or `http/json`; `grpc` is not supported |
-| `OTEL_LOGS_EXPORTER` | `otlp` to export logs; they are off otherwise |
+| `OTEL_LOGS_EXPORTER` | `otlp` to export logs; they are off otherwise, because application logs are the signal most likely to carry personal data |
 | `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER` | `none` turns that signal off |
 | `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | which traces to keep, e.g. `parentbased_traceidratio` and `0.1` for a tenth |
 | `OTEL_RESOURCE_ATTRIBUTES` | facts about the process, e.g. `deployment.environment.name=production,service.version=1.4.0` |
@@ -69,9 +75,12 @@ which `register` uses, comes from [`@satoshibits/redaction`](https://github.com/
 - cuts every URL down to scheme, host and path, so query strings go;
 - masks email addresses, `Bearer` tokens, JWTs, keys with a vendor's prefix and `password: value` pairs;
 - replaces the value of any key that names a password, secret, token, cookie or authorization;
-- drops the caller's IP address, and an exception's message and stack trace from spans.
+- drops the caller's IP address;
+- on a span (one step of a trace), drops its status message and an error's message and stack trace;
+  a log record keeps them, masked like any text.
 
-Metric attributes are not passed to the policy: they are bounded names chosen in code, and a masked value would merge separate series.
+Metrics are not redacted. Their labels (attributes, such as `route` or `status`) are a small set of values your code chooses, and masking one would lump separate series of counts together.
+So never put user data in a metric attribute.
 
 ### A policy of your own
 
@@ -103,9 +112,9 @@ try {
 OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.example.com node --import ./telemetry.mjs app.js
 ```
 
-`redaction: false` exports everything as given. When something is to be exported and `redaction` is
-not given, `start()` throws. Keep the preload's imports to the three named in its first line: a
-package imported before `start()` has run is not instrumented.
+`redaction: false` exports everything as given. If anything is set to be exported and you pass no
+`redaction`, `start()` throws, so nothing goes out unredacted by accident. Import nothing else in this
+file: OpenTelemetry can only trace a library that loads after `start()` has run.
 
 ## Departures from the specification
 
@@ -113,10 +122,10 @@ These are deliberate:
 
 <!-- departures:start -->
 - **No endpoint, no export.** The specification sends to `localhost:4318` when no endpoint is set; here nothing is sent, and stderr says so.
-- **An invalid sampler stops startup.** An unknown `OTEL_TRACES_SAMPLER`, or a ratio outside 0 to 1, is an error; the specification falls back to the default with a warning.
+- **An invalid sampler stops telemetry from starting.** An unknown `OTEL_TRACES_SAMPLER`, or a ratio outside 0 to 1, is an error; the specification falls back to the default with a warning.
 - **`OTEL_SDK_DISABLED=true` also disables propagators**, so no trace context is read from or added to requests.
-- **Logs are opt-in.** They are exported only with `OTEL_LOGS_EXPORTER=otlp`; the specification exports them by default.
-- **Only `otlp` and `none` are accepted** in `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER` and `OTEL_LOGS_EXPORTER`; any other value, such as `console`, stops startup.
+- **Logs are opt-in.** They are exported only with `OTEL_LOGS_EXPORTER=otlp`; the specification exports them by default. Application logs are the signal most likely to carry personal data, so sending them is always a stated choice.
+- **Only `otlp` and `none` are accepted** in `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER` and `OTEL_LOGS_EXPORTER`; any other value, such as `console`, stops telemetry from starting.
 <!-- departures:end -->
 
 ## Good to know
@@ -127,8 +136,8 @@ These are deliberate:
 
 ## Testing
 
-`@satoshibits/observability/testing` runs the same pipeline in your tests, with in-memory exporters in
-place of the network. Data is collected as emitted, unredacted, unless the test names a policy:
+`@satoshibits/observability/testing` runs the same pipeline in your tests, and sends telemetry to
+memory instead of the network. Nothing is redacted unless you pass a `redaction` policy:
 
 <!-- snippet: test-kit -->
 ```js
@@ -141,8 +150,9 @@ const spans = await telemetry.spans();
 await telemetry.stop();
 ```
 
-`telemetry.metrics()` and `telemetry.logRecords()` do the same for the other signals. `startOtlpSink()`
-is a local OTLP receiver, for tests that run a whole process.
+`telemetry.metrics()` and `telemetry.logRecords()` do the same for the other signals. `startOtlpSink()`,
+also from `@satoshibits/observability/testing`, is a local OTLP receiver, for tests that run a whole
+process.
 
 ## The 1.x client (deprecated)
 

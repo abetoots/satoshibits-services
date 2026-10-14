@@ -2,9 +2,10 @@
  * The README's snippets, run as a consumer runs them: from a package of its
  * own, outside this repository, whose node_modules holds this package (the
  * built `dist/`, rebuilt before the file's tests), `@satoshibits/redaction`
- * and `@opentelemetry/api`, and nothing else. A preload that names its own
- * policy can only import the redaction package because that package depends
- * on it directly.
+ * and `@opentelemetry/api`. The links resolve to the real packages, so their
+ * own dependencies (dev ones included) stay visible to them; a preload in the
+ * consumer imports the redaction package through the consumer's own
+ * dependency on it.
  *
  * Each snippet is read from README.md (see ../readme-snippets.mts); `app.js`
  * is fixtures/readme-app.mjs, and the README's example endpoint is replaced
