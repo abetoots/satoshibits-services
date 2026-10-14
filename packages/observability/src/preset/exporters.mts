@@ -247,7 +247,7 @@ const asError = (value: unknown): Error =>
       );
 
 /** an error's name for a report; `Error` when it has none that can be read as text */
-function nameOf(error: unknown): string {
+export function nameOf(error: unknown): string {
   try {
     const name = types.isNativeError(error) ? (error.name as unknown) : undefined;
     return typeof name === "string" ? name : "Error";

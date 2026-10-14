@@ -15,8 +15,8 @@ import { context, diag, DiagLogLevel, metrics, propagation, ProxyTracerProvider,
 import { logs } from "@opentelemetry/api-logs";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import { globalErrorHandler, W3CTraceContextPropagator } from "@opentelemetry/core";
-import { InMemoryLogRecordExporter } from "@opentelemetry/sdk-logs";
-import { AggregationTemporality, InMemoryMetricExporter } from "@opentelemetry/sdk-metrics";
+import { InMemoryLogRecordExporter, LoggerProvider } from "@opentelemetry/sdk-logs";
+import { AggregationTemporality, InMemoryMetricExporter, MeterProvider } from "@opentelemetry/sdk-metrics";
 import { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } from "@opentelemetry/sdk-trace";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -26,11 +26,15 @@ import type { Instrumentation, InstrumentationConfig } from "@opentelemetry/inst
 import { getStatus, start } from "../../preset.mjs";
 import { instrumentationsForTesting, resetForTesting } from "../../preset/runtime.mjs";
 import { startTestTelemetry } from "../../testing/in-memory.mjs";
+import { startOtlpSink } from "../../testing/otlp-sink.mjs";
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   instrumentationsForTesting(undefined);
   await resetForTesting();
 });
+
+const sleep = (millis: number) => new Promise((resolve) => setTimeout(resolve, millis));
 
 /** an instrumentation that says whether it is enabled; enabled when made, as the bundle's are */
 class ProbeInstrumentation implements Instrumentation {
@@ -172,6 +176,10 @@ describe("a start() that fails part of the way", () => {
     });
     const foreignContextManager = new AsyncLocalStorageContextManager().enable();
     const foreignPropagator = new W3CTraceContextPropagator();
+    const foreignMeterProvider = new MeterProvider();
+    const foreignLoggerProvider = new LoggerProvider();
+    metrics.setGlobalMeterProvider(foreignMeterProvider);
+    logs.setGlobalLoggerProvider(foreignLoggerProvider);
     trace.setGlobalTracerProvider(foreignTracerProvider);
     context.setGlobalContextManager(foreignContextManager);
     propagation.setGlobalPropagator(foreignPropagator);
@@ -190,9 +198,10 @@ describe("a start() that fails part of the way", () => {
     expect(registrations().tracerProvider).toBe(foreignTracerProvider);
     expect(registrations().contextManager).toBe(foreignContextManager);
     expect(registrations().propagator).toBe(foreignPropagator);
+    expect(metrics.getMeterProvider()).toBe(foreignMeterProvider);
+    expect(logs.getLoggerProvider()).toBe(foreignLoggerProvider);
+    expect(registrations()).toEqual(before);
     // and what the preset did register is gone
-    expect(metrics.getMeterProvider()).toBe(before.meterProvider);
-    expect(registrations().loggerProvider).toBe(before.loggerProvider);
     expect(probe.enabled).toBe(false);
   });
 
@@ -229,5 +238,79 @@ describe("the test kit's stop()", () => {
     expect(registrations().tracerProvider).toBe(tracerProvider);
     expect(registrations().contextManager).toBe(contextManager);
     expect(registrations().propagator).toBe(propagator);
+  });
+});
+
+describe("what a failed start built", () => {
+  it("is stopped as well as deregistered: its metric reader exports no more", async () => {
+    const sink = await startOtlpSink();
+    try {
+      vi.stubEnv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", `${sink.url}/v1/metrics`);
+      vi.stubEnv("OTEL_METRIC_EXPORT_INTERVAL", "100");
+      vi.stubEnv("OTEL_METRIC_EXPORT_TIMEOUT", "100");
+      // after the meter provider is registered: a counter on it, so the reader has something to send
+      const original = trace.setGlobalTracerProvider.bind(trace);
+      vi.spyOn(trace, "setGlobalTracerProvider").mockImplementation((provider) => {
+        original(provider);
+        metrics.getMeter("m").createCounter("c").add(1);
+        throw new Error(INJECTED);
+      });
+
+      expect(() =>
+        start({
+          serviceName: "rollback",
+          instrumentations: false,
+          loaderHook: false,
+          redaction: false,
+          diagnostics: () => () => undefined,
+        }),
+      ).toThrow(INJECTED);
+      vi.restoreAllMocks();
+
+      // the undo may send what was buffered once; after that, nothing
+      await sleep(400);
+      const settled = sink.requestsTo("/v1/metrics").length;
+      await sleep(400);
+      expect(sink.requestsTo("/v1/metrics").length).toBe(settled);
+    } finally {
+      await sink.close();
+    }
+  });
+});
+
+describe("the API's readers for the context manager and the propagator", () => {
+  it("exist on the installed API and return what was set (the undo relies on them)", () => {
+    const contextManager = new AsyncLocalStorageContextManager().enable();
+    const propagator = new W3CTraceContextPropagator();
+    context.setGlobalContextManager(contextManager);
+    propagation.setGlobalPropagator(propagator);
+
+    const api = { context, propagation } as unknown as {
+      context: { _getContextManager?: unknown };
+      propagation: { _getGlobalPropagator?: unknown };
+    };
+    expect(typeof api.context._getContextManager).toBe("function");
+    expect(typeof api.propagation._getGlobalPropagator).toBe("function");
+    expect(registrations().contextManager).toBe(contextManager);
+    expect(registrations().propagator).toBe(propagator);
+  });
+
+  it("when one is missing, start() does not throw for it; that registration is left alone and the gap reported", () => {
+    // as an API version without the reader would be
+    Object.defineProperty(context, "_getContextManager", { value: undefined, configurable: true });
+    try {
+      failAfter(logs, "setGlobalLoggerProvider");
+      const events: DiagnosticsEvent[] = [];
+
+      expect(() => start(startOptions(events))).toThrow(INJECTED);
+      vi.restoreAllMocks();
+      expect(events.map((event) => event.message)).toContainEqual(
+        expect.stringContaining("context manager"),
+      );
+    } finally {
+      delete (context as unknown as Record<string, unknown>)._getContextManager;
+    }
+    // what could be checked was undone
+    expect(metrics.getMeterProvider()).not.toBeInstanceOf(MeterProvider);
   });
 });
