@@ -94,9 +94,10 @@ What `SmartClient.initialize` does with its Node config, as against 1.x. A "chan
 | `logs` | always exported beside traces and metrics | exported only with `OTEL_LOGS_EXPORTER=otlp` | changed | application logs usually have a destination already; logs are opt-in in the preset | `subprocess/facade.test.mts` › exports logs only when OTEL_LOGS_EXPORTER=otlp asks for them, where 1.x always did |
 | `metric-interval` | metrics exported every 10 s | every 60 s, or `OTEL_METRIC_EXPORT_INTERVAL` | changed | the specification's default; the interval is the environment's to set | `facade.test.mts` › builds the metric reader for an endpoint with a 60 s interval, where 1.x used 10 s |
 | `serviceName` | on the resource; won over `OTEL_SERVICE_NAME` | the same | unchanged | | `subprocess/facade.test.mts` › puts the service name and version given in code on the resource, and no 1.x defaults |
-| `service-version-default` | `service.version` was `0.0.0` when none was given | not set unless given | changed | the preset sets no value nobody gave | `subprocess/facade.test.mts` › puts the service name and version given in code on the resource, and no 1.x defaults |
-| `NODE_ENV` | `deployment.environment` from `NODE_ENV` (default `production`) | not set; use `OTEL_RESOURCE_ATTRIBUTES` or the preset's `deploymentEnvironment` | changed | the resource comes from the preset's options and the `OTEL_*` variables only | `subprocess/facade.test.mts` › puts the service name and version given in code on the resource, and no 1.x defaults |
-| `empty-service-name` | started with an empty service name | refused unless `OTEL_SERVICE_NAME` is set: the facade logs the configuration error and runs without telemetry | changed | the preset requires a service name | `subprocess/facade.test.mts` › refuses an empty service name with no OTEL_SERVICE_NAME, and runs without telemetry |
+| `service-version-default` | `service.version` was `0.0.0` when none was given | not set unless given in code or `OTEL_RESOURCE_ATTRIBUTES` | changed, by design | by design (plan, Design › Resource): `service.version` comes from options or the environment | `subprocess/facade.test.mts` › puts the service name and version given in code on the resource, and no 1.x defaults |
+| `NODE_ENV` | `deployment.environment` from `NODE_ENV` (default `production`) | `deployment.environment.name` from the preset's `deploymentEnvironment` option or `OTEL_RESOURCE_ATTRIBUTES`; `NODE_ENV` is not read | changed, by design | by design (plan, Design › Resource): `deployment.environment.name` comes from options or the environment | `subprocess/facade.test.mts` › takes deployment.environment.name from OTEL_RESOURCE_ATTRIBUTES, not NODE_ENV |
+| `resource-detectors` | host, process, OS and service-instance detectors added `host.*`, `process.*` and `os.*` keys | `host.*`, the process command line, executable path and OS user keys are dropped; of the OS keys only `os.type` is kept | changed, by design | by design (plan, Design › Resource): host, process command line, executable path and OS user keys are dropped, and only the OS type is kept | `subprocess/facade.test.mts` › drops the host, process and OS keys 1.x's detectors added, and keeps only the OS type |
+| `empty-service-name` | started with an empty service name | refused unless `OTEL_SERVICE_NAME` is set: the facade logs the configuration error and runs without telemetry | changed, by design | by design (plan, Design › Resource): `service.name` is required and startup fails without it | `subprocess/facade.test.mts` › refuses an empty service name with no OTEL_SERVICE_NAME, and runs without telemetry |
 | `redaction` | the client's sanitizer masked attributes set through the client's own API; the rest (instrumentation, the raw OTel API) was exported as given | every export also goes through `@satoshibits/redaction`'s standard policy | changed | a 1.x consumer expected redaction by default; the preset redacts at the exporter, where everything passes | `subprocess/facade.test.mts` › exports under the standard redaction policy |
 | `sampling` | installed `SmartSampler` | no effect, with a warning | changed | the preset takes a sampler by name only; use `OTEL_TRACES_SAMPLER` | `facade.test.mts` › warns that sampling no longer has an effect |
 | `OTEL_TRACES_SAMPLER` | honoured | honoured | unchanged | | `facade.test.mts` › honours OTEL_TRACES_SAMPLER, as 1.x did |
@@ -116,3 +117,21 @@ What `SmartClient.initialize` does with its Node config, as against 1.x. A "chan
 | `enableProcessHandlers` | registered the process handlers, removed at shutdown | the same | unchanged | | `facade.test.mts` › registers its process handlers with enableProcessHandlers and removes them at shutdown, as 1.x did |
 | `sanitizerOptions` | configured the root entry's sanitize helpers | the same | unchanged | | `facade.test.mts` › configures the root entry's sanitize helpers with sanitizerOptions, as 1.x did |
 <!-- facade-behaviour:end -->
+
+## Removed exports of the other entries
+
+Exports of `/testing` that 2.x removes. The test checks that each is gone from its entry.
+
+<!-- removed-exports:start -->
+| Entry | Export | Kind | Status | Why |
+| --- | --- | --- | --- | --- |
+| `/testing` | `MockObservabilityClient` | value | removed | a hand-written imitation of the client, tested only against itself; use `startTestTelemetry` from `/testing`, which runs the real pipeline |
+| `/testing` | `createMockClient` | value | removed | as for `MockObservabilityClient` |
+| `/testing` | `withMockClient` | value | removed | as for `MockObservabilityClient` |
+| `/testing` | `RecordedMetric` | type | removed | described the mock's recordings |
+| `/testing` | `RecordedSpan` | type | removed | described the mock's recordings |
+| `/testing` | `RecordedLog` | type | removed | described the mock's recordings |
+| `/testing` | `RecordedError` | type | removed | described the mock's recordings |
+| `/testing` | `RecordedBreadcrumb` | type | removed | described the mock's recordings |
+| `/testing` | `RecordedTag` | type | removed | described the mock's recordings |
+<!-- removed-exports:end -->

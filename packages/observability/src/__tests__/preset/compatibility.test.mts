@@ -58,19 +58,29 @@ const unquote = (cell: string) => cell.replace(/^`|`$/g, "");
 
 /** what the root entry exports, by name and kind, read from the code */
 function rootExports(): Map<string, "value" | "type"> {
-  const program = createProgram([ROOT_ENTRY], {
+  return exportsOf(ROOT_ENTRY);
+}
+
+const exportsCache = new Map<string, Map<string, "value" | "type">>();
+
+/** what an entry module exports, by name and kind, read from the code */
+function exportsOf(entry: string): Map<string, "value" | "type"> {
+  const cached = exportsCache.get(entry);
+  if (cached) return cached;
+  const program = createProgram([entry], {
     module: ModuleKind.NodeNext,
     moduleResolution: ModuleResolutionKind.NodeNext,
     target: ScriptTarget.ES2022,
     noEmit: true,
   });
   const checker = program.getTypeChecker();
-  const module = checker.getSymbolAtLocation(program.getSourceFile(ROOT_ENTRY)!)!;
+  const module = checker.getSymbolAtLocation(program.getSourceFile(entry)!)!;
   const found = new Map<string, "value" | "type">();
   for (const symbol of checker.getExportsOfModule(module)) {
     const target = symbol.flags & SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
     found.set(symbol.name, target.flags & SymbolFlags.Value ? "value" : "type");
   }
+  exportsCache.set(entry, found);
   return found;
 }
 
@@ -405,8 +415,10 @@ describe("the facade's table", () => {
 
   it("says why for every changed row", () => {
     for (const row of rows) {
-      expect(["unchanged", "changed"], row.row).toContain(row.status);
-      if (row.status === "changed") expect(row.why, row.row).not.toBe("");
+      expect(["unchanged", "changed", "changed, by design"], row.row).toContain(row.status);
+      if (row.status !== "unchanged") expect(row.why, row.row).not.toBe("");
+      // a change made by design cites the plan's rule
+      if (row.status === "changed, by design") expect(row.why, row.row).toMatch(/^by design \(plan, Design › \w+\):/);
     }
   });
 
@@ -422,4 +434,17 @@ describe("the facade's table", () => {
       ]),
     );
   });
+});
+
+describe("the removed exports' table", () => {
+  const ENTRIES: Record<string, string> = { "/testing": "src/testing.mts" };
+
+  it.each(tableRows("removed-exports").map((cells) => [unquote(cells[0]!), unquote(cells[1]!), cells[3]!] as const))(
+    "%s no longer exports %s",
+    (entry, name, status) => {
+      expect(status).toBe("removed");
+      expect(ENTRIES[entry], `no source file known for ${entry}`).toBeDefined();
+      expect([...exportsOf(path.join(PACKAGE, ENTRIES[entry]!)).keys()]).not.toContain(name);
+    },
+  );
 });
