@@ -17,6 +17,7 @@
 
 import type { Attributes } from "@opentelemetry/api";
 import type { InstrumentationScope } from "@opentelemetry/core";
+import type { ReadableLogRecord } from "@opentelemetry/sdk-logs";
 import type { ReadableSpan } from "@opentelemetry/sdk-trace";
 
 /** an attribute set as a policy sees it: plain keys and values */
@@ -112,12 +113,20 @@ export interface Redactor {
   scope: (scope: InstrumentationScope) => InstrumentationScope;
   /** what is exported in place of the span's own, by property; the span is not changed */
   span: (span: ReadableSpan) => Partial<RedactedSpan>;
+  /** the same for a log record */
+  logRecord: (record: ReadableLogRecord) => Partial<RedactedLogRecord>;
 }
 
 /** the properties of a span a policy has a say in: all of them are replaced under one */
 export type RedactedSpan = Pick<
   ReadableSpan,
   "name" | "attributes" | "status" | "events" | "links" | "instrumentationScope"
+>;
+
+/** the properties of a log record a policy has a say in: all of them are replaced under one */
+export type RedactedLogRecord = Pick<
+  ReadableLogRecord,
+  "body" | "attributes" | "eventName" | "severityText" | "instrumentationScope"
 >;
 
 /**
@@ -170,13 +179,27 @@ function refuse(message: string, ...results: unknown[]): never {
   throw new TypeError(message);
 }
 
-const NOTHING_REPLACED: Partial<RedactedSpan> = Object.freeze({});
+/**
+ * A log body for a policy to work on: plain objects and arrays copied all the
+ * way down, so that one changed in place leaves the record's own as it was.
+ * Anything else (a text, a number, bytes) is handed over as it is.
+ */
+const copyOfBody = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(copyOfBody);
+  if (!isPlainObject(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, inner]) => [key, copyOfBody(inner)]),
+  );
+};
+
+const NOTHING_REPLACED = Object.freeze({});
 
 const AS_GIVEN: Redactor = {
   text: (_surface, value) => value,
   attributes: (_surface, attributes) => attributes,
   scope: (scope) => scope,
   span: () => NOTHING_REPLACED,
+  logRecord: () => NOTHING_REPLACED,
 };
 
 export function createRedactor(option: RedactionOption): Redactor {
@@ -278,5 +301,48 @@ export function createRedactor(option: RedactionOption): Redactor {
     instrumentationScope: scope(input.instrumentationScope),
   });
 
-  return { text, attributes, scope, span };
+  const logRecord = (input: ReadableLogRecord): RedactedLogRecord => {
+    // the whole record at once, and the two optional texts only where the record has them:
+    // a policy that copies what it is handed must not thereby add a key
+    const result: unknown = policy.logRecord({
+      body: copyOfBody(input.body),
+      attributes: { ...input.attributes },
+      ...(input.eventName !== undefined && { eventName: input.eventName }),
+      ...(input.severityText !== undefined && { severityText: input.severityText }),
+    });
+    // read once each: what is checked is what is exported
+    const {
+      body,
+      attributes: recordAttributes,
+      eventName,
+      severityText,
+    } = isPlainResult(result) ? result : {};
+    if (
+      !isPlainResult(recordAttributes) ||
+      // a body may be any value but a promise of one
+      isThenable(body) ||
+      (eventName !== undefined && typeof eventName !== "string") ||
+      (severityText !== undefined && typeof severityText !== "string")
+    ) {
+      // a promise may be the record itself or sit where any part of it belongs
+      refuse(
+        "the redaction policy's logRecord() did not return a log record",
+        result,
+        body,
+        recordAttributes,
+        eventName,
+        severityText,
+      );
+    }
+    return {
+      body: body as ReadableLogRecord["body"],
+      attributes: recordAttributes as ReadableLogRecord["attributes"],
+      // a text the policy left out is exported as absent, not as the record's own
+      eventName,
+      severityText,
+      instrumentationScope: scope(input.instrumentationScope),
+    };
+  };
+
+  return { text, attributes, scope, span, logRecord };
 }

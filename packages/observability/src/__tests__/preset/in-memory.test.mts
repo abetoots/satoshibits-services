@@ -10,9 +10,14 @@ import {
   trace,
   DiagLogLevel,
 } from "@opentelemetry/api";
-import { logs } from "@opentelemetry/api-logs";
+import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import { globalErrorHandler } from "@opentelemetry/core";
-import { InMemoryLogRecordExporter } from "@opentelemetry/sdk-logs";
+import {
+  BatchLogRecordProcessor,
+  InMemoryLogRecordExporter,
+  LoggerProvider,
+  SimpleLogRecordProcessor,
+} from "@opentelemetry/sdk-logs";
 import { AggregationTemporality, InMemoryMetricExporter } from "@opentelemetry/sdk-metrics";
 import {
   BatchSpanProcessor,
@@ -27,7 +32,7 @@ import type { TestTelemetry } from "../../testing/in-memory.mjs";
 
 import { forceFlush, getStatus, PresetConfigError, shutdown, start } from "../../preset.mjs";
 import { createDiagnostics } from "../../preset/diagnostics.mjs";
-import { wrapSpanExporter } from "../../preset/exporters.mjs";
+import { wrapLogRecordExporter, wrapSpanExporter } from "../../preset/exporters.mjs";
 import { createRedactor } from "../../preset/redaction.mjs";
 import { buildPipelines, instrumentationConfigFor, resetForTesting } from "../../preset/runtime.mjs";
 import { startTestTelemetry } from "../../testing/in-memory.mjs";
@@ -35,8 +40,10 @@ import type { DiagnosticsEvent } from "../../preset/diagnostics.mjs";
 import type { ResolvedConfig } from "../../preset/config.mjs";
 import type { RedactionPolicy } from "../../preset/redaction.mjs";
 import type { ProbeCall } from "./probe-policy.mjs";
-import type { Tracer } from "@opentelemetry/api";
+import type { Context, Tracer } from "@opentelemetry/api";
+import type { Logger } from "@opentelemetry/api-logs";
 import type { InstrumentationConfigMap } from "@opentelemetry/auto-instrumentations-node";
+import type { LogRecordExporter, LogRecordProcessor, ReadableLogRecord } from "@opentelemetry/sdk-logs";
 import type { ReadableSpan, SpanExporter, SpanProcessor } from "@opentelemetry/sdk-trace";
 
 import { createProbePolicy } from "./probe-policy.mjs";
@@ -522,6 +529,288 @@ describe("startTestTelemetry", () => {
         await provider.shutdown();
       }
     });
+  });
+
+  /** three records: one with something in every part a policy is handed, two whose body is a nested value */
+  function emitLogRecords(logger: Logger = logs.getLogger("kit"), context?: Context): void {
+    logger.emit({
+      ...(context !== undefined && { context }),
+      body: "card declined for erin",
+      attributes: { customer: "erin", attempt: 2 },
+      eventName: "payment.failed",
+      severityText: "ERROR",
+      severityNumber: SeverityNumber.ERROR,
+    });
+    logger.emit({ body: { customer: "erin", attempt: 2 } });
+    logger.emit({ body: ["erin", 2] });
+  }
+
+  describe("the policy on a log record", () => {
+    // one row per part, so that a part the policy's answer is no longer exported for fails its own row
+    const PARTS: [string, (records: ReadableLogRecord[]) => unknown, unknown, unknown][] = [
+      [
+        "a string body",
+        (records) => records[0]?.body,
+        "[probe:log.record] card declined for erin",
+        "card declined for erin",
+      ],
+      [
+        "a string inside a nested body",
+        (records) => records[1]?.body,
+        { customer: "[probe:log.record] erin", attempt: 2 },
+        { customer: "erin", attempt: 2 },
+      ],
+      ["a string inside a body that is a list", (records) => records[2]?.body, ["[probe:log.record] erin", 2], ["erin", 2]],
+      [
+        "a string attribute",
+        (records) => records[0]?.attributes,
+        { customer: "[probe:log.record] erin", attempt: 2 },
+        { customer: "erin", attempt: 2 },
+      ],
+      ["its event name", (records) => records[0]?.eventName, "[probe:log.record] payment.failed", "payment.failed"],
+      ["its severity text", (records) => records[0]?.severityText, "[probe:log.record] ERROR", "ERROR"],
+    ];
+
+    it.each(PARTS)("is applied to %s", async (_part, read, marked) => {
+      telemetry = startTestTelemetry({ redaction: createProbePolicy() });
+      emitLogRecords();
+      const records = await telemetry.logRecords();
+      expect(records).toHaveLength(3);
+      expect(read(records)).toEqual(marked);
+    });
+
+    it.each(PARTS)("redaction: false exports %s as given", async (_part, read, _marked, given) => {
+      telemetry = startTestTelemetry({ redaction: false });
+      emitLogRecords();
+      const records = await telemetry.logRecords();
+      expect(records).toHaveLength(3);
+      expect(read(records)).toEqual(given);
+    });
+
+    it("redaction: false exports a nested body and the attributes themselves, not copies of them", async () => {
+      const exported = new InMemoryLogRecordExporter();
+      const beside = new InMemoryLogRecordExporter();
+      const provider = providerWith(
+        new SimpleLogRecordProcessor({ exporter: wrapped(exported, false) }),
+        new SimpleLogRecordProcessor({ exporter: beside }),
+      );
+      try {
+        const body = { customer: "erin", order: { items: ["cart"] } };
+        provider.getLogger("kit").emit({ body, attributes: { customer: "erin" } });
+        await provider.forceFlush();
+        const [record] = exported.getFinishedLogRecords();
+        expect(record!.body).toBe(body);
+        expect(record!.attributes).toBe(beside.getFinishedLogRecords()[0]!.attributes);
+      } finally {
+        await provider.shutdown();
+      }
+    });
+
+    it("is handed a record without an event name or a severity text as one without those keys, and none is exported", async () => {
+      const calls: ProbeCall[] = [];
+      telemetry = startTestTelemetry({ redaction: createProbePolicy(calls) });
+      logs.getLogger("kit").emit({ body: "a line", attributes: { customer: "erin" } });
+
+      const [bare] = await telemetry.logRecords();
+      expect(calls.filter((call) => call.fn === "logRecord")).toEqual([
+        { fn: "logRecord", given: ["body", "attributes"] },
+      ]);
+      expect(bare!.eventName).toBeUndefined();
+      expect(bare!.severityText).toBeUndefined();
+
+      // and the recording would have shown the keys: a record that has both is handed both
+      calls.length = 0;
+      logs.getLogger("kit").emit({ body: "a line", eventName: "payment.failed", severityText: "ERROR" });
+      await telemetry.logRecords();
+      expect(calls.filter((call) => call.fn === "logRecord")).toEqual([
+        { fn: "logRecord", given: ["body", "attributes", "eventName", "severityText"] },
+      ]);
+    });
+
+    it.each(["severityText", "eventName"] as const)(
+      "drops the %s when the policy returns a record without one, and keeps the other",
+      async (dropped) => {
+        const probe = createProbePolicy();
+        telemetry = startTestTelemetry({
+          redaction: {
+            ...probe,
+            logRecord: (record) => {
+              const { [dropped]: _dropped, ...rest } = probe.logRecord(record);
+              return rest;
+            },
+          },
+        });
+        emitLogRecords();
+        const [record] = await telemetry.logRecords();
+        expect({ eventName: record!.eventName, severityText: record!.severityText }).toEqual({
+          eventName: "[probe:log.record] payment.failed",
+          severityText: "[probe:log.record] ERROR",
+          [dropped]: undefined,
+        });
+      },
+    );
+
+    it.each<[string, unknown]>([
+      ["nothing", undefined],
+      ["a number", 7],
+      ["a nested value", { kept: ["as", { it: "is" }] }],
+    ])("exports the body the policy returned, whatever it is (%s)", async (_what, body) => {
+      telemetry = startTestTelemetry({
+        redaction: { ...createProbePolicy(), logRecord: (record) => ({ ...record, body }) },
+      });
+      emitLogRecords();
+      const [record] = await telemetry.logRecords();
+      expect(record!.body).toBe(body);
+    });
+
+    // as for spans: the kit puts one exporter behind the simple processor, so these tests build a
+    // provider of their own from the SDK's parts and put the preset's wrapper in it themselves
+    function providerWith(...processors: LogRecordProcessor[]): LoggerProvider {
+      return new LoggerProvider({ processors });
+    }
+    const wrapped = (
+      exporter: LogRecordExporter,
+      policy: RedactionPolicy | false = createProbePolicy(),
+    ): LogRecordExporter =>
+      wrapLogRecordExporter(exporter, {
+        diagnostics: createDiagnostics(),
+        redactor: createRedactor(policy),
+      });
+
+    it("leaves the record itself as it was: an exporter beside the wrapped one receives the original", async () => {
+      const behindThePolicy = new InMemoryLogRecordExporter();
+      const beside = new InMemoryLogRecordExporter();
+      // the wrapped one first: were the record changed for it, the one after it would see the change
+      const provider = providerWith(
+        new SimpleLogRecordProcessor({ exporter: wrapped(behindThePolicy) }),
+        new SimpleLogRecordProcessor({ exporter: beside }),
+      );
+      try {
+        emitLogRecords(provider.getLogger("kit"), trace.setSpanContext(ROOT_CONTEXT, LINKED));
+        await provider.forceFlush();
+
+        const marked = behindThePolicy.getFinishedLogRecords();
+        const original = beside.getFinishedLogRecords();
+        for (const [part, read, whenMarked, given] of PARTS) {
+          expect(read(marked), part).toEqual(whenMarked);
+          expect(read(original), part).toEqual(given);
+        }
+        // what the policy has no say in is read through to the same record
+        expect(marked[0]!.hrTime).toBe(original[0]!.hrTime);
+        expect(marked[0]!.hrTimeObserved).toBe(original[0]!.hrTimeObserved);
+        expect(marked[0]!.severityNumber).toBe(SeverityNumber.ERROR);
+        expect(marked[0]!.spanContext).toBe(original[0]!.spanContext);
+        expect(marked[0]!.spanContext).toEqual(LINKED);
+        expect(marked[0]!.resource).toBe(original[0]!.resource);
+        expect(marked[0]!.droppedAttributesCount).toBe(0);
+      } finally {
+        await provider.shutdown();
+      }
+    });
+
+    it("hands the policy copies: one that changes what it is given changes nothing of the record", async () => {
+      const behindThePolicy = new InMemoryLogRecordExporter();
+      const beside = new InMemoryLogRecordExporter();
+      const provider = providerWith(
+        new SimpleLogRecordProcessor({
+          exporter: wrapped(behindThePolicy, {
+            ...createProbePolicy(),
+            logRecord: (record) => {
+              const body = record.body as { customer: string; order: { items: unknown[] }; added?: string };
+              body.customer = "changed by the policy";
+              body.added = "by the policy";
+              // below the first level too: the copy goes all the way down
+              body.order.items.push("added by the policy");
+              record.attributes.customer = "changed by the policy";
+              record.attributes.added = "by the policy";
+              return record;
+            },
+          }),
+        }),
+        new SimpleLogRecordProcessor({ exporter: beside }),
+      );
+      try {
+        const body = { customer: "erin", order: { items: ["cart"] } };
+        provider.getLogger("kit").emit({ body, attributes: { customer: "erin" } });
+        await provider.forceFlush();
+
+        // the policy's changes are what it returned, so they are exported
+        const [changed] = behindThePolicy.getFinishedLogRecords();
+        expect(changed!.body).toEqual({
+          customer: "changed by the policy",
+          added: "by the policy",
+          order: { items: ["cart", "added by the policy"] },
+        });
+        expect(changed!.attributes).toEqual({ customer: "changed by the policy", added: "by the policy" });
+
+        // and the record itself has none of them, nor has the value the application logged
+        const [original] = beside.getFinishedLogRecords();
+        expect(original!.body).toEqual({ customer: "erin", order: { items: ["cart"] } });
+        expect(original!.attributes).toEqual({ customer: "erin" });
+        expect(body).toEqual({ customer: "erin", order: { items: ["cart"] } });
+      } finally {
+        await provider.shutdown();
+      }
+    });
+
+    it.each<[string, (exporter: LogRecordExporter) => LogRecordProcessor]>([
+      ["simple", (exporter) => new SimpleLogRecordProcessor({ exporter })],
+      ["batch", (exporter) => new BatchLogRecordProcessor({ exporter })],
+    ])("is applied the same under the %s log record processor", async (_which, processorFor) => {
+      const exporter = new InMemoryLogRecordExporter();
+      const provider = providerWith(processorFor(wrapped(exporter)));
+      try {
+        emitLogRecords(provider.getLogger("kit"));
+        await provider.forceFlush();
+        const records = exporter.getFinishedLogRecords();
+        expect(records).toHaveLength(3);
+        for (const [part, read, marked] of PARTS) {
+          expect(read(records), part).toEqual(marked);
+        }
+      } finally {
+        await provider.shutdown();
+      }
+    });
+  });
+
+  it("does not hand a metric's attributes to the policy, and still hands it the metric's scope", async () => {
+    const calls: ProbeCall[] = [];
+    const record = () => {
+      metrics
+        .getMeter("meter frank.sentinel@example.com")
+        .createCounter("orders_total")
+        .add(1, { "customer.tier": "gold" });
+    };
+    telemetry = startTestTelemetry({ redaction: createProbePolicy(calls) });
+    record();
+    expect(await telemetry.metricPoints("orders_total")).toEqual([
+      { attributes: { "customer.tier": "gold" }, value: 1 },
+    ]);
+    // neither as an attribute set nor as a text, under any function of the policy
+    expect(calls.flatMap((call) => call.given)).not.toContain("customer.tier");
+    expect(JSON.stringify(calls)).not.toContain("gold");
+    // and the recording would have shown it: the scope was handed over
+    expect(calls).toContainEqual({ fn: "text", surface: "scope.name", given: "meter frank.sentinel@example.com" });
+    await telemetry.stop();
+
+    // the kit does not hand out a metric's scope, so the exporter is read directly for it
+    const exporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
+    start({
+      serviceName: "test",
+      instrumentations: false,
+      loaderHook: false,
+      redaction: createProbePolicy(),
+      testExporters: { metricExporter: exporter },
+    });
+    record();
+    await forceFlush();
+    const scopeMetrics = exporter.getMetrics().flatMap((collection) => collection.scopeMetrics);
+    expect(scopeMetrics.map((scoped) => scoped.scope.name)).toEqual([
+      "[probe:scope.name] meter frank.sentinel@example.com",
+    ]);
+    expect(scopeMetrics[0]!.metrics[0]!.dataPoints.map((point) => point.attributes)).toEqual([
+      { "customer.tier": "gold" },
+    ]);
   });
 
   describe("a policy that misbehaves", () => {
@@ -1094,6 +1383,80 @@ describe("startTestTelemetry", () => {
       const events = await reportedForASpan(eventFor(failing), /the policy is broken SENTINEL/);
       expect(events.map((reported) => [reported.message, reported.fields?.signal])).toEqual([
         ["traces export failed", "traces"],
+      ]);
+      expect(JSON.stringify(events)).not.toContain("SENTINEL");
+    });
+
+    const recordFor = (result: () => unknown): Partial<RedactionPolicy> => ({ logRecord: result as never });
+
+    /**
+     * Emit one log record under `passing` with `how` in place of part of it, with no rejection
+     * left unhandled. Resolves to what diagnostics reported.
+     */
+    async function reportedForALogRecord(how: Partial<RedactionPolicy>): Promise<DiagnosticsEvent[]> {
+      const events: DiagnosticsEvent[] = [];
+      telemetry = startTestTelemetry({
+        diagnostics: () => (reported) => events.push(reported),
+        redaction: { ...passing, ...how },
+      });
+      const running = telemetry;
+      const unhandled = await unhandledDuring(async () => {
+        logs.getLogger("kit").emit({ body: "a line", attributes: { customer: "erin" } });
+        // for this signal the SDK swallows the failed export: the read resolves, and the record
+        // is not in it, so it did not go out as it was
+        await expect(running.logRecords()).resolves.toEqual([]);
+      });
+      expect(unhandled).toEqual([]);
+      return events;
+    }
+
+    // made when the policy is called: a promise that rejects must not exist before anything can let go of it
+    const recordWith = (part: () => Record<string, unknown>) => () => ({ body: "a line", attributes: {}, ...part() });
+    it.each<[string, () => unknown]>([
+      ["a record is nothing", () => undefined],
+      ["a record is a string", () => "a line"],
+      ["a record is null", () => null],
+      ["a record is an array", () => []],
+      ["a record is a Map", () => new Map()],
+      ["a record is a promise", () => Promise.resolve({ body: "a line", attributes: {} })],
+      ["a record is a promise that rejects", rejecting],
+      ["a record is an object with a then()", recordWith(() => adapterOf(rejecting()))],
+      ["a record has no attributes", () => ({ body: "a line" })],
+      ["a record's attributes are an array", recordWith(() => ({ attributes: [] }))],
+      ["a record's attributes are a string", recordWith(() => ({ attributes: "abc" }))],
+      ["a record's attributes are an object with a then()", recordWith(() => ({ attributes: adapterOf(rejecting()) }))],
+      ["a record's attributes are a promise that rejects", recordWith(() => ({ attributes: rejecting() }))],
+      ["a record's event name is a number", recordWith(() => ({ eventName: 7 }))],
+      ["a record's event name is null", recordWith(() => ({ eventName: null }))],
+      ["a record's event name is a promise that rejects", recordWith(() => ({ eventName: rejecting() }))],
+      ["a record's severity text is a number", recordWith(() => ({ severityText: 7 }))],
+      ["a record's severity text is null", recordWith(() => ({ severityText: null }))],
+      ["a record's severity text is a promise that rejects", recordWith(() => ({ severityText: rejecting() }))],
+      ["a record's body is a promise", recordWith(() => ({ body: Promise.resolve("a line") }))],
+      ["a record's body is a promise that rejects", recordWith(() => ({ body: rejecting() }))],
+      ["a record's body is an object with a then()", recordWith(() => ({ body: adapterOf(rejecting()) }))],
+    ])("on a log record (%s): the export fails closed and is reported once", async (_how, result) => {
+      const events = await reportedForALogRecord(recordFor(result));
+      // the flush does not carry the error for this signal; the report names its kind
+      expect(events.map((reported) => [reported.message, reported.fields?.signal, reported.fields?.error])).toEqual([
+        ["logs export failed", "logs", "TypeError"],
+      ]);
+    });
+
+    it("on a log record: what is thrown for a wrong kind names the policy's function", async () => {
+      telemetry = startTestTelemetry();
+      logs.getLogger("kit").emit({ body: "a line" });
+      const [given] = await telemetry.logRecords();
+      const redactor = createRedactor({ ...passing, ...recordFor(() => undefined) });
+      expect(() => redactor.logRecord(given!)).toThrow(
+        new TypeError("the redaction policy's logRecord() did not return a log record"),
+      );
+    });
+
+    it("on a log record (the policy throws): the export fails closed, reported once and without the error's text", async () => {
+      const events = await reportedForALogRecord(recordFor(failing));
+      expect(events.map((reported) => [reported.message, reported.fields?.signal, reported.fields?.error])).toEqual([
+        ["logs export failed", "logs", "Error"],
       ]);
       expect(JSON.stringify(events)).not.toContain("SENTINEL");
     });
