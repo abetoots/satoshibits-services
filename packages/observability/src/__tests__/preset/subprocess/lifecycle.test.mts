@@ -128,6 +128,18 @@ describe("a failed export of what was buffered", () => {
   });
 });
 
+describe("no timer outlives a call", () => {
+  it("after a shutdown with a long timeout succeeds, the process exits by itself at once", async () => {
+    const run = await runChild({ finish: "shutdown", timeoutMillis: 60_000, exit: "natural" }, allSignals());
+
+    expect(run.result.finishError).toBeNull();
+    expect(sink.spans().map((s) => s.name)).toEqual(["child-span-0"]);
+    // a call's own deadline timer, left running, would hold the process for a minute
+    expect(run.exitMillisAfterResult).toBeLessThan(3000);
+    expect(run.code).toBe(0);
+  });
+});
+
 describe("a sink that never answers", () => {
   it("shutdown rejects at its timeout, and the process then exits by itself", async () => {
     sink.respondWith({ hang: true });

@@ -151,6 +151,8 @@ interface Handle {
   failures?: ExportFailureLog;
   /** the first shutdown() call's promise, which every later call returns */
   shutdown?: Promise<void>;
+  /** the forceFlush() running now, which a call made meanwhile joins */
+  flushing?: Promise<void>;
 }
 
 const HOOK_FLAG = Symbol.for("@satoshibits/observability.loader-hook");
@@ -674,14 +676,19 @@ function shutdownOnce(reader: MetricReader): MetricReader {
  * Reject when `work` has not settled within `timeoutMillis`; the timer never outlives the call.
  * A delay longer than a timer holds is cut to the longest it does hold: Node would fire it at once.
  */
-async function within<T>(work: Promise<T>, timeoutMillis: number, what: string): Promise<T> {
+async function within<T>(
+  work: Promise<T>,
+  timeoutMillis: number,
+  what: string,
+  shownMillis = timeoutMillis,
+): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(
       () => {
         reject(
           new Error(
-            `@satoshibits/observability: ${what} did not finish within ${timeoutMillis} ms`,
+            `@satoshibits/observability: ${what} did not finish within ${shownMillis} ms`,
           ),
         );
       },
@@ -708,6 +715,8 @@ async function settleAll(
   timeoutMillis: number,
   act: (part: Part) => Promise<void>,
   alongside: Promise<unknown>[] = [],
+  /** the timeout the caller gave, for the message, when less than it is left */
+  shownMillis = timeoutMillis,
 ): Promise<void> {
   const call = current.failures?.open();
   let outcomes: PromiseSettledResult<void>[];
@@ -715,11 +724,15 @@ async function settleAll(
     // async: a part that throws instead of rejecting is still one outcome among the others
     const parts = Promise.allSettled(current.parts.map(async (part) => act(part)));
     // awaited for its own sake only: what it rejects with, a part rejected with too
-    await within(Promise.allSettled([parts, ...alongside]), timeoutMillis, what);
+    await within(Promise.allSettled([parts, ...alongside]), timeoutMillis, what, shownMillis);
     outcomes = await parts;
   } finally {
     call?.close();
   }
+  // a limit: the batch log processor and the metric reader also swallow their own export
+  // timeout (`exportTimeoutMillis`, 30 s by default). An exporter whose request deadline is
+  // longer than that (the OTLP default is 10 s) is abandoned with no result reaching the
+  // wrapper, and the call resolves with nothing sent
   const failures = new Map(call?.failures);
   outcomes.forEach((outcome, index) => {
     // a part that rejects says this call failed, whatever its error: the batch span processor
@@ -736,38 +749,69 @@ async function settleAll(
  * Send everything buffered, without shutting down. Rejects with a
  * `TelemetryExportError` when something buffered could not be sent, and
  * when `timeoutMillis` passes.
+ *
+ * A call made while another runs returns that one's promise (and its
+ * timeout): the batch log processor answers a second flush at once, before
+ * anything is sent, so a flush of its own would resolve early. What was
+ * emitted after the running flush began is left for the next one.
  */
-export async function forceFlush(
-  timeoutMillis = DEFAULT_TIMEOUT_MILLIS,
-): Promise<void> {
+export function forceFlush(timeoutMillis = DEFAULT_TIMEOUT_MILLIS): Promise<void> {
   const current = handle;
-  if (current?.status.state !== "running") return;
-  await settleAll(current, "forceFlush", timeoutMillis, (part) => part.forceFlush());
+  if (current?.status.state !== "running") return Promise.resolve();
+  if (current.flushing) return current.flushing;
+  const flushing = settleAll(current, "forceFlush", timeoutMillis, (part) =>
+    part.forceFlush(),
+  ).finally(() => {
+    if (current.flushing === flushing) current.flushing = undefined;
+  });
+  current.flushing = flushing;
+  return flushing;
 }
 
 /**
  * Flush and stop telemetry. Rejects with a `TelemetryExportError` when
  * something buffered could not be sent, and when `timeoutMillis` passes;
- * every signal is shut down either way. A second call, during the first or
- * after it, returns the first call's promise. A process shuts down once;
- * `start()` cannot be called again.
+ * every signal is shut down either way. A flush that is running is waited
+ * for first (its outcome is its own caller's), within the same timeout: the
+ * processors' shutdown, run during it, would return without sending what was
+ * emitted since it began. A second call, during the first or after it,
+ * returns the first call's promise. A process shuts down once; `start()`
+ * cannot be called again.
  */
 export function shutdown(timeoutMillis = DEFAULT_TIMEOUT_MILLIS): Promise<void> {
   const current = handle;
   if (current?.shutdown) return current.shutdown;
   if (current?.status.state !== "running" || !current.sdk) return Promise.resolve();
   current.status = { ...current.status, state: "shut-down" };
+  current.shutdown = shutDown(current, current.sdk, timeoutMillis);
+  return current.shutdown;
+}
+
+async function shutDown(current: Handle, sdk: NodeSDK, timeoutMillis: number): Promise<void> {
+  const started = Date.now();
+  const flushing = current.flushing;
+  if (flushing) {
+    try {
+      await within(
+        flushing.catch(() => undefined),
+        timeoutMillis,
+        "shutdown",
+      );
+    } catch {
+      // out of time: the shutdown below still starts, and rejects at once with the timeout
+    }
+  }
   // the SDK's call goes first: the providers mark themselves shut down and shut down their
   // parts, and each part, asked again below, hands back that same shutdown's promise
-  const sdkShutdown = current.sdk.shutdown();
-  current.shutdown = settleAll(
+  const sdkShutdown = sdk.shutdown();
+  await settleAll(
     current,
     "shutdown",
-    timeoutMillis,
+    Math.max(0, timeoutMillis - (Date.now() - started)),
     (part) => part.shutdown(),
     [sdkShutdown],
+    timeoutMillis,
   );
-  return current.shutdown;
 }
 
 /** What is running: per signal on or off and why, and where data goes. Never header values. */

@@ -31,6 +31,7 @@ import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
 
 import type { TestExporters } from "../../preset.mjs";
+import type { OtlpSink } from "../../testing/otlp-sink.mjs";
 import type { TestTelemetry } from "../../testing/in-memory.mjs";
 
 import {
@@ -47,6 +48,7 @@ import { createRedactor } from "../../preset/redaction.mjs";
 import { decodeOtlpRequest } from "../../testing/otlp-decode.mjs";
 import { buildPipelines, instrumentationConfigFor, resetForTesting } from "../../preset/runtime.mjs";
 import { startTestTelemetry } from "../../testing/in-memory.mjs";
+import { startOtlpSink } from "../../testing/otlp-sink.mjs";
 import type { DiagnosticsEvent } from "../../preset/diagnostics.mjs";
 import type { ResolvedConfig } from "../../preset/config.mjs";
 import type { PolicyAttributes, PolicyLogRecord, RedactionPolicy } from "../../preset/redaction.mjs";
@@ -2402,5 +2404,58 @@ describe("forceFlush and shutdown", () => {
     expect(error).toBeInstanceOf(TelemetryExportError);
     expect((error as Error).message).toContain("traces");
     expect(JSON.stringify(error)).not.toContain("far end text");
+  });
+
+  describe("with the batch log processor, whose flush returns at once to a second caller", () => {
+    let sink: OtlpSink | undefined;
+    afterEach(async () => {
+      // stopped before the sink closes, so nothing is left sending to it
+      await resetForTesting();
+      await sink?.close();
+      sink = undefined;
+    });
+
+    /** logs only, to a sink that answers each request after `delayMs` */
+    async function startSlowLogs(delayMs: number): Promise<OtlpSink> {
+      sink = await startOtlpSink();
+      sink.respondWith({ delayMs });
+      vi.stubEnv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", `${sink.url}/v1/logs`);
+      vi.stubEnv("OTEL_LOGS_EXPORTER", "otlp");
+      vi.stubEnv("OTEL_TRACES_EXPORTER", "none");
+      vi.stubEnv("OTEL_METRICS_EXPORTER", "none");
+      vi.stubEnv("OTEL_BLRP_SCHEDULE_DELAY", "60000");
+      start({ serviceName: "lifecycle", instrumentations: false, loaderHook: false, redaction: false });
+      logs.getLogger("l").emit({ body: "held line" });
+      return sink;
+    }
+
+    it("a forceFlush that starts while one is running joins it, and settles only once the logs are sent", async () => {
+      const slow = await startSlowLogs(600);
+
+      const first = forceFlush();
+      const second = forceFlush();
+      expect(second).toBe(first);
+      expect(await settledSoon(second)).toBe(false);
+
+      await expect(second).resolves.toBeUndefined();
+      expect(slow.logRecords().map((record) => record.body)).toEqual(["held line"]);
+    });
+
+    it("a shutdown that starts while a flush is running waits for it, and then shuts down", async () => {
+      const slow = await startSlowLogs(600);
+      const settled: string[] = [];
+
+      const flushing = forceFlush().then(() => settled.push("flush"));
+      // emitted after the flush took what was buffered: only the shutdown can send it, and the
+      // processor's own shutdown, run during the flush, would return without sending anything
+      logs.getLogger("l").emit({ body: "late line" });
+      const stopping = shutdown().then(() => settled.push("shutdown"));
+      expect(await settledSoon(stopping)).toBe(false);
+
+      await Promise.all([flushing, stopping]);
+      expect(settled).toEqual(["flush", "shutdown"]);
+      expect(slow.logRecords().map((record) => record.body)).toEqual(["held line", "late line"]);
+      expect(getStatus().state).toBe("shut-down");
+    });
   });
 });
