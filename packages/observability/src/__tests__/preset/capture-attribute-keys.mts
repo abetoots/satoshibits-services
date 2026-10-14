@@ -56,7 +56,7 @@ const telemetry = startTestTelemetry({ instrumentations: {} });
 // with no loader hook registered here an import would pass them by
 const requireFromHere = createRequire(import.meta.url);
 const express = requireFromHere("express") as () => ExpressApp;
-const pino = requireFromHere("pino") as typeof import("pino").default;
+const pino = requireFromHere("pino") as typeof import("pino");
 const http = requireFromHere("node:http") as typeof import("node:http");
 
 const logger = pino({ level: "info" }, pino.destination({ dest: "/dev/null", sync: true }));
