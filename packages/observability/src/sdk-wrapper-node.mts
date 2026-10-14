@@ -1,43 +1,37 @@
 import { SpanStatusCode, trace } from "@opentelemetry/api";
-import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
-import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
-import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
-import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
-import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import {
-  detectResources,
-  envDetector,
-  hostDetector,
-  osDetector,
-  processDetector,
-  serviceInstanceIdDetector,
-} from "@opentelemetry/resources";
-import { BatchLogRecordProcessor } from "@opentelemetry/sdk-logs";
-import { PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
-import { NodeSDK as OTelNodeSDK } from "@opentelemetry/sdk-node";
-import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
+import { standardPolicy } from "@satoshibits/redaction";
 
 import type {
   NodeClientConfig,
   ProcessHandlerOptions,
 } from "./config/client-config.mjs";
+import type { StartOptions } from "./preset/runtime.mjs";
 import type { BaseSDK, BaseSDKState } from "./sdk-factory.mjs";
-import type { SpanProcessor } from "@opentelemetry/sdk-trace-base";
 
 import { initializeSanitizer } from "./enrichment/sanitizer.mjs";
-import { createResource } from "./internal/resource-factory.mjs";
-import { SmartSampler } from "./sampling.mjs";
+import {
+  getStatus,
+  resetForTesting,
+  shutdown as shutdownRuntime,
+  start as startRuntime,
+  startWithTestHooks,
+} from "./preset/runtime.mjs";
 
 /**
- * Node SDK - Server-side OpenTelemetry initialization
+ * Node SDK - the deprecated 1.x facade over the preset's runtime.
  *
- * Follows the same class-based pattern as BrowserSDK for consistency (H2 fix).
- * Separates configuration (constructor) from initialization (start method).
+ * There is one runtime per process. When one is already there (the project
+ * preloaded the preset), the facade attaches to it and builds nothing.
+ * Otherwise it calls the preset's `start()` with its config mapped onto the
+ * preset's options, under the standard redaction policy. The 1.x test hooks
+ * (`testSpanProcessor`, `testMetricReader`) are installed as given, and every
+ * signal without one is off; `OBS_TEST_NO_EXPORT=1` turns every signal off.
  */
 export class NodeSDK {
   private config: NodeClientConfig;
   private isStarted = false;
-  private sdk?: OTelNodeSDK;
+  /** started the runtime with test hooks, so its shutdown forgets it and a later start may follow */
+  private ownsTestRuntime = false;
   private sanitizer: ReturnType<typeof initializeSanitizer> | null = null;
 
   constructor(config: NodeClientConfig) {
@@ -46,7 +40,7 @@ export class NodeSDK {
   }
 
   /**
-   * Start the SDK following OpenTelemetry NodeSDK initialization pattern.
+   * Start telemetry through the preset, or attach to the runtime already there.
    * Returns state for caller to manage global updates.
    */
   public start(): {
@@ -58,123 +52,57 @@ export class NodeSDK {
       throw new Error("NodeSDK already started");
     }
 
-    // Validate sampling rate if provided
-    const validatedConfig = { ...this.config };
+    const config = this.config;
+
+    // as in 1.x: an invalid rate is reported (the rate itself was never applied)
     if (
-      validatedConfig.samplingRate !== undefined &&
-      (validatedConfig.samplingRate < 0 || validatedConfig.samplingRate > 1)
+      config.samplingRate !== undefined &&
+      (config.samplingRate < 0 || config.samplingRate > 1)
     ) {
-      console.warn(
-        `Invalid samplingRate: ${validatedConfig.samplingRate}. Using default.`,
-      );
-      validatedConfig.samplingRate = undefined;
+      console.warn(`Invalid samplingRate: ${config.samplingRate}. Using default.`);
     }
 
     // Warn about unimplemented Prometheus config (Gemini review finding)
-    // TODO: Implement Prometheus exporter when @opentelemetry/exporter-prometheus is added as dependency
-    if (validatedConfig.enablePrometheus) {
+    if (config.enablePrometheus) {
       console.warn(
         "enablePrometheus is configured but Prometheus exporter is not yet implemented. " +
           "Metrics will be exported via OTLP only. See GitHub issue for progress.",
       );
     }
 
-    // For tests or constrained environments, allow disabling network exporters
-    const disableExport =
-      process.env.OBS_TEST_NO_EXPORT === "1" ||
-      (validatedConfig.testSpanProcessor ?? validatedConfig.testMetricReader);
-
-    // Normalize endpoint - strip /v1/traces suffix if present (Gemini review finding)
-    // This aligns with Browser SDK behavior and supports both base URLs and full trace URLs
-    const rawEndpoint = validatedConfig.endpoint ?? "http://localhost:4318";
-    const baseEndpoint = rawEndpoint.replace(/\/v1\/traces\/?$/, "");
-
-    // Setup exporters - use injected test components if provided, otherwise network
-    let spanProcessor: SpanProcessor | undefined;
-    if (validatedConfig.testSpanProcessor) {
-      spanProcessor = validatedConfig.testSpanProcessor;
-    } else if (!disableExport) {
-      spanProcessor = new BatchSpanProcessor(
-        new OTLPTraceExporter({
-          url: `${baseEndpoint}/v1/traces`,
-          headers: validatedConfig.headers,
+    // a runtime in any state (running, disabled, shut down) is the process's one runtime
+    if (getStatus().state === "not-started") {
+      const testHooks =
+        process.env.OBS_TEST_NO_EXPORT === "1" ||
+        config.testSpanProcessor !== undefined ||
+        config.testMetricReader !== undefined;
+      const options: StartOptions = {
+        serviceName: config.serviceName,
+        ...(config.serviceVersion !== undefined && { serviceVersion: config.serviceVersion }),
+        // a full trace URL was accepted in 1.x: the base is what the preset takes
+        ...(config.endpoint !== undefined && {
+          endpoint: config.endpoint.replace(/\/v1\/traces\/?$/, ""),
         }),
-      );
+        ...(config.headers !== undefined && { headers: config.headers }),
+        redaction: standardPolicy,
+        ...((config.disableInstrumentation === true || config.autoInstrument === false) && {
+          instrumentations: false,
+        }),
+        // a test runner has loaders of its own
+        ...(testHooks && { loaderHook: false }),
+      };
+      if (testHooks) {
+        startWithTestHooks(options, {
+          spanProcessor: config.testSpanProcessor,
+          metricReader: config.testMetricReader,
+        });
+      } else {
+        startRuntime(options);
+      }
+      this.ownsTestRuntime = testHooks;
     }
 
-    const metricReader =
-      validatedConfig.testMetricReader ??
-      (disableExport
-        ? undefined
-        : new PeriodicExportingMetricReader({
-            exporter: new OTLPMetricExporter({
-              url: `${baseEndpoint}/v1/metrics`,
-              headers: validatedConfig.headers,
-            }),
-            exportIntervalMillis: 10000,
-          }));
-
-    // create service resource with explicit information using resource factory
-    const serviceResource = createResource({
-      serviceName: validatedConfig.serviceName,
-      serviceVersion: validatedConfig.serviceVersion,
-      environment: process.env.NODE_ENV ?? "development",
-    });
-
-    // detect resources automatically from environment (skip in tests to avoid network calls)
-    const resource = disableExport
-      ? serviceResource
-      : detectResources({
-          detectors: [
-            envDetector,
-            processDetector,
-            osDetector,
-            hostDetector,
-            serviceInstanceIdDetector,
-          ],
-        }).merge(serviceResource);
-
-    // Initialize SDK with all three signals
-    this.sdk = new OTelNodeSDK({
-      resource, // now includes auto-detected + service info
-      contextManager: new AsyncLocalStorageContextManager(), // Enable context propagation for Node.js
-      // Only set processors if not disabled - undefined processors will use no-op implementations
-      ...(spanProcessor && { spanProcessors: [spanProcessor] }),
-      ...(metricReader && { metricReaders: [metricReader] }),
-      ...(disableExport
-        ? {}
-        : {
-            logRecordProcessors: [
-              new BatchLogRecordProcessor({
-                exporter: new OTLPLogExporter({
-                  url: `${baseEndpoint}/v1/logs`,
-                  headers: validatedConfig.headers,
-                }),
-              }),
-            ],
-          }),
-      // use SmartSampler if sampling config is provided (AdaptiveSampler internalized)
-      sampler: validatedConfig.sampling
-        ? new SmartSampler(validatedConfig.sampling)
-        : undefined,
-      instrumentations:
-        validatedConfig.disableInstrumentation === true ||
-        validatedConfig.autoInstrument === false
-          ? []
-          : [
-              getNodeAutoInstrumentations({
-                "@opentelemetry/instrumentation-fs": {
-                  enabled: false, // reduce noise in tests
-                },
-              }),
-            ],
-    });
-
-    // Start the SDK - await to ensure initialization completes before first telemetry
-    this.sdk.start();
-    console.debug("OpenTelemetry SDK initialized successfully");
-
-    this.sanitizer = initializeSanitizer(validatedConfig.sanitizerOptions);
+    this.sanitizer = initializeSanitizer(config.sanitizerOptions);
     this.isStarted = true;
 
     return {
@@ -184,21 +112,27 @@ export class NodeSDK {
   }
 
   /**
-   * Shutdown the SDK gracefully
+   * Shut the runtime down gracefully (the one attached to included: there is
+   * one per process). A runtime this facade started with test hooks is then
+   * forgotten, so that the next test can initialize again.
    */
   public async shutdown(): Promise<void> {
-    if (!this.isStarted || !this.sdk) {
+    if (!this.isStarted) {
       return;
     }
 
     try {
-      await this.sdk.shutdown();
+      await shutdownRuntime();
       console.debug("OpenTelemetry SDK shutdown complete");
     } catch (error) {
       console.error("Error during SDK shutdown:", error);
     } finally {
       this.isStarted = false;
-      this.sdk = undefined;
+      if (this.ownsTestRuntime) {
+        this.ownsTestRuntime = false;
+        // the runtime was shut down above; what is left is the API's registrations
+        await resetForTesting().catch(() => undefined);
+      }
     }
   }
 }

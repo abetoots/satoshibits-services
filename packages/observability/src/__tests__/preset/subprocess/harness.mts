@@ -28,8 +28,23 @@ import { startOtlpSink } from "../../../testing/otlp-sink.mjs";
 
 /** What the child is asked to do; see fixtures/preset-child.mts */
 export interface ChildScenario {
-  /** `start` calls start(options) (default); `register` imports the register entry; `none` does neither */
-  start?: "start" | "register" | "none";
+  /**
+   * `start` calls start(options) (default); `register` imports the register entry; `none` does
+   * neither; `facade` calls the deprecated `SmartClient.initialize` with `facade`, and
+   * `start-then-facade` calls start(options) and then that
+   */
+  start?: "start" | "register" | "none" | "facade" | "start-then-facade";
+  /**
+   * The deprecated facade's config, over `{ environment: "node", disableInstrumentation: true }`.
+   * `testSpanProcessor: true` gives it a simple processor over an in-memory exporter. A facade
+   * run finishes with `SmartClient.shutdown()` in place of the preset's own.
+   */
+  facade?: {
+    serviceName?: string;
+    endpoint?: string;
+    headers?: Record<string, string>;
+    testSpanProcessor?: boolean;
+  };
   /** merged over `{ instrumentations: false }` */
   options?: Omit<StartOptions, "diagnostics" | "testExporters" | "redaction">;
   /**
@@ -113,6 +128,12 @@ export interface ChildResult {
   logLevelAfterStart: string | null;
   /** whether the endpoint variables read the same once start() has returned as before it */
   endpointVariablesRestored: boolean;
+  /** the names of the spans the facade's test span processor received; null without one */
+  facadeSpans: string[] | null;
+  /** the preset's status just before the facade was initialized (`start-then-facade` only) */
+  statusBeforeFacade: PresetStatus | null;
+  /** the status once the facade was initialized; null without a facade */
+  statusAfterFacade: PresetStatus | null;
 }
 
 export interface ChildRun<R = ChildResult> {
