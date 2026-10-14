@@ -288,25 +288,25 @@ describe("startTestTelemetry", () => {
     expect(attributes["service.instance.id"]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4/);
   });
 
+  const LINKED = {
+    traceId: "0af7651916cd43dd8448eb211c80319c",
+    spanId: "b7ad6b7169203331",
+    traceFlags: 1,
+  };
+
+  /** one span with something on every surface of a span a policy is handed */
+  function emitOnEverySurface(tracer: Tracer = trace.getTracer("kit")): void {
+    const span = tracer.startSpan("checkout", {
+      attributes: { customer: "erin", attempt: 2 },
+      links: [{ context: LINKED, attributes: { reason: "retry of" } }],
+    });
+    span.addEvent("cache miss", { key: "cart" });
+    span.recordException(new Error("card declined"));
+    span.setStatus({ code: SpanStatusCode.ERROR, message: "payment failed" });
+    span.end();
+  }
+
   describe("the policy on a span", () => {
-    const LINKED = {
-      traceId: "0af7651916cd43dd8448eb211c80319c",
-      spanId: "b7ad6b7169203331",
-      traceFlags: 1,
-    };
-
-    /** one span with something on every surface of a span a policy is handed */
-    function emitOnEverySurface(tracer: Tracer = trace.getTracer("kit")): void {
-      const span = tracer.startSpan("checkout", {
-        attributes: { customer: "erin", attempt: 2 },
-        links: [{ context: LINKED, attributes: { reason: "retry of" } }],
-      });
-      span.addEvent("cache miss", { key: "cart" });
-      span.recordException(new Error("card declined"));
-      span.setStatus({ code: SpanStatusCode.ERROR, message: "payment failed" });
-      span.end();
-    }
-
     // one row per surface, so that a surface the policy is no longer applied to fails its own row
     const SURFACES: [string, (span: ReadableSpan) => unknown, unknown, unknown][] = [
       ["its name, as span.name", (span) => span.name, "[probe:span.name] checkout", "checkout"],
@@ -414,10 +414,13 @@ describe("startTestTelemetry", () => {
     function providerWith(...spanProcessors: SpanProcessor[]): TracerProvider {
       return new TracerProvider({ spanProcessors });
     }
-    const wrapped = (exporter: SpanExporter): SpanExporter =>
+    const wrapped = (
+      exporter: SpanExporter,
+      policy: RedactionPolicy = createProbePolicy(),
+    ): SpanExporter =>
       wrapSpanExporter(exporter, {
         diagnostics: createDiagnostics(),
-        redactor: createRedactor(createProbePolicy()),
+        redactor: createRedactor(policy),
       });
 
     it("leaves the span itself as it was: an exporter beside the wrapped one receives the original", async () => {
@@ -443,6 +446,59 @@ describe("startTestTelemetry", () => {
         expect(marked!.events.map((event) => event.time)).toEqual(original!.events.map((event) => event.time));
         expect(marked!.links.map((link) => link.context)).toEqual([LINKED]);
         expect(marked!.startTime).toBe(original!.startTime);
+      } finally {
+        await provider.shutdown();
+      }
+    });
+
+    it("hands the policy copies: one that changes what it is given changes nothing of the span", async () => {
+      const behindThePolicy = new InMemorySpanExporter();
+      const beside = new InMemorySpanExporter();
+      const provider = providerWith(
+        new SimpleSpanProcessor({
+          exporter: wrapped(behindThePolicy, {
+            ...createProbePolicy(),
+            attributes: (_surface, attributes) => {
+              for (const key of Object.keys(attributes)) attributes[key] = "changed by the policy";
+              attributes.added = "by the policy";
+              return attributes;
+            },
+            spanEvent: (event) => {
+              event.name = "changed by the policy";
+              event.attributes.key = "changed by the policy";
+              event.attributes.added = "by the policy";
+              return event;
+            },
+          }),
+        }),
+        new SimpleSpanProcessor({ exporter: beside }),
+      );
+      try {
+        emitOnEverySurface(provider.getTracer("kit"));
+        await provider.forceFlush();
+
+        // the policy's changes are what it returned, so they are exported
+        const [changed] = behindThePolicy.getFinishedSpans();
+        expect(changed!.attributes).toEqual({
+          customer: "changed by the policy",
+          attempt: "changed by the policy",
+          added: "by the policy",
+        });
+        expect(changed!.events[0]).toMatchObject({
+          name: "changed by the policy",
+          attributes: { key: "changed by the policy", added: "by the policy" },
+        });
+        expect(changed!.links[0]!.attributes).toEqual({
+          reason: "changed by the policy",
+          added: "by the policy",
+        });
+
+        // and the span itself has none of them
+        const [original] = beside.getFinishedSpans();
+        expect(original!.attributes).toEqual({ customer: "erin", attempt: 2 });
+        expect(original!.events[0]).toMatchObject({ name: "cache miss", attributes: { key: "cart" } });
+        expect(original!.events[0]!.attributes).toEqual({ key: "cart" });
+        expect(original!.links[0]!.attributes).toEqual({ reason: "retry of" });
       } finally {
         await provider.shutdown();
       }
@@ -965,8 +1021,29 @@ describe("startTestTelemetry", () => {
     const attributesFor = (surface: string, result: () => unknown): Partial<RedactionPolicy> => ({
       attributes: (given, attributes) => (given === surface ? (result() as never) : attributes),
     });
-    const status = (result: () => unknown): Partial<RedactionPolicy> => ({ spanStatus: result as never });
-    const event = (result: () => unknown): Partial<RedactionPolicy> => ({ spanEvent: result as never });
+    const statusFor = (result: () => unknown): Partial<RedactionPolicy> => ({ spanStatus: result as never });
+    const eventFor = (result: () => unknown): Partial<RedactionPolicy> => ({ spanEvent: result as never });
+
+    /**
+     * Emit a span under `passing` with `how` in place of part of it; the flush that would have
+     * delivered the span must reject with `message`, with no rejection left unhandled. Resolves
+     * to what diagnostics reported.
+     */
+    async function reportedForASpan(how: Partial<RedactionPolicy>, message: RegExp): Promise<DiagnosticsEvent[]> {
+      const events: DiagnosticsEvent[] = [];
+      telemetry = startTestTelemetry({
+        diagnostics: () => (reported) => events.push(reported),
+        redaction: { ...passing, ...how },
+      });
+      const pending = telemetry;
+      const unhandled = await unhandledDuring(async () => {
+        emitOnEverySurface();
+        // it did not go out as it was
+        await expect(pending.spans()).rejects.toThrow(message);
+      });
+      expect(unhandled).toEqual([]);
+      return events;
+    }
 
     const NO_NAME = /did not return a string for span.name/;
     const NO_SPAN_SET = /did not return an attribute set for span/;
@@ -982,48 +1059,39 @@ describe("startTestTelemetry", () => {
       ["a span's attributes are a promise that rejects", attributesFor("span", rejecting), NO_SPAN_SET],
       ["a link's attributes are a string", attributesFor("link", () => "abc"), NO_LINK_SET],
       ["a link's attributes are an object with a then()", attributesFor("link", () => adapterOf(rejecting())), NO_LINK_SET],
-      ["the status text is a number", status(() => 7), NO_STATUS],
-      ["the status text is null", status(() => null), NO_STATUS],
-      ["the status text is a promise", status(() => Promise.resolve("text")), NO_STATUS],
-      ["the status text is a promise that rejects", status(rejecting), NO_STATUS],
-      ["an event is nothing", event(() => undefined), NO_EVENT],
-      ["an event is a string", event(() => "cache miss"), NO_EVENT],
-      ["an event is a promise that rejects", event(rejecting), NO_EVENT],
+      ["the status text is a number", statusFor(() => 7), NO_STATUS],
+      ["the status text is null", statusFor(() => null), NO_STATUS],
+      ["the status text is a promise", statusFor(() => Promise.resolve("text")), NO_STATUS],
+      ["the status text is a promise that rejects", statusFor(rejecting), NO_STATUS],
+      ["an event is nothing", eventFor(() => undefined), NO_EVENT],
+      ["an event is a string", eventFor(() => "cache miss"), NO_EVENT],
+      // null is an object to typeof: it is refused as a wrong kind, not by failing to be read
+      ["an event is null", eventFor(() => null), NO_EVENT],
+      ["an event is a promise that rejects", eventFor(rejecting), NO_EVENT],
       [
         "an event is an object with a then()",
-        event(() => Object.assign(adapterOf(rejecting()), { name: "n", attributes: {} })),
+        eventFor(() => Object.assign(adapterOf(rejecting()), { name: "n", attributes: {} })),
         NO_EVENT,
       ],
-      ["an event's name is a number", event(() => ({ name: 7, attributes: {} })), NO_EVENT],
-      ["an event's name is a promise that rejects", event(() => ({ name: rejecting(), attributes: {} })), NO_EVENT],
-      ["an event has no attributes", event(() => ({ name: "n" })), NO_EVENT],
-      ["an event's attributes are an array", event(() => ({ name: "n", attributes: [] })), NO_EVENT],
-      ["an event's attributes are a promise that rejects", event(() => ({ name: "n", attributes: rejecting() })), NO_EVENT],
-      ["the policy throws for an event", event(failing), /the policy is broken/],
+      ["an event's name is a number", eventFor(() => ({ name: 7, attributes: {} })), NO_EVENT],
+      ["an event's name is a promise that rejects", eventFor(() => ({ name: rejecting(), attributes: {} })), NO_EVENT],
+      ["an event has no attributes", eventFor(() => ({ name: "n" })), NO_EVENT],
+      ["an event's attributes are an array", eventFor(() => ({ name: "n", attributes: [] })), NO_EVENT],
+      [
+        "an event's attributes are an object with a then()",
+        eventFor(() => ({ name: "n", attributes: adapterOf(rejecting()) })),
+        NO_EVENT,
+      ],
+      ["an event's attributes are a promise that rejects", eventFor(() => ({ name: "n", attributes: rejecting() })), NO_EVENT],
     ])("on a span (%s): the export fails closed and is reported once", async (_how, how, message) => {
-      const events: DiagnosticsEvent[] = [];
-      telemetry = startTestTelemetry({
-        diagnostics: () => (reported) => events.push(reported),
-        redaction: { ...passing, ...how },
-      });
-      const pending = telemetry;
-      const unhandled = await unhandledDuring(async () => {
-        const span = trace.getTracer("kit").startSpan("checkout", {
-          attributes: { customer: "erin" },
-          links: [
-            {
-              context: { traceId: "0af7651916cd43dd8448eb211c80319c", spanId: "b7ad6b7169203331", traceFlags: 1 },
-              attributes: { reason: "retry of" },
-            },
-          ],
-        });
-        span.addEvent("cache miss", { key: "cart" });
-        span.setStatus({ code: SpanStatusCode.ERROR, message: "payment failed" });
-        span.end();
-        // the flush that would have delivered the span rejects: it did not go out as it was
-        await expect(pending.spans()).rejects.toThrow(message);
-      });
-      expect(unhandled).toEqual([]);
+      const events = await reportedForASpan(how, message);
+      expect(events.map((reported) => [reported.message, reported.fields?.signal])).toEqual([
+        ["traces export failed", "traces"],
+      ]);
+    });
+
+    it("on a span (the policy throws): the export fails closed, reported once and without the error's text", async () => {
+      const events = await reportedForASpan(eventFor(failing), /the policy is broken SENTINEL/);
       expect(events.map((reported) => [reported.message, reported.fields?.signal])).toEqual([
         ["traces export failed", "traces"],
       ]);

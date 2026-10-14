@@ -34,8 +34,9 @@ export interface ProbeCall {
 
 /**
  * @param calls when given, every call of `text`, `attributes`, `spanStatus`
- *   and `spanEvent` is recorded here. The marks show what the policy did to what was exported; only this
- *   shows what it was handed, including anything the preset replaced afterwards.
+ *   and `spanEvent` is recorded here. The marks show what the policy did to
+ *   what was exported; only this shows what it was handed, including anything
+ *   the preset replaced afterwards.
  */
 export function createProbePolicy(calls?: ProbeCall[]): RedactionPolicy {
   return {
