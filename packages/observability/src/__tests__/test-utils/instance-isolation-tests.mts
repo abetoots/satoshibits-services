@@ -32,7 +32,7 @@ import type { TestContext } from "./setup-helpers.mjs";
  */
 export interface IsolationTestConfig {
   /** Environment being tested (for test naming) */
-  environment: "node" | "browser";
+  environment: "node";
 
   /** Function to create a new test client */
   createClient: (config: Partial<BaseClientConfig>) => Promise<TestContext>;
@@ -61,19 +61,7 @@ export interface IsolationTestConfig {
  *   });
  * });
  * ```
- *
- * @example
- * ```typescript
- * // In browser-context.test.mts
- * describe("Instance Isolation", () => {
- *   runInstanceIsolationTests({
- *     environment: "browser",
- *     createClient: setupBrowserTestClient,
- *     teardownClient: teardownTestClient,
- *     metricPrefix: "browser",
- *   });
- * });
- * ```
+
  */
 export function runInstanceIsolationTests(config: IsolationTestConfig) {
   const prefix = config.metricPrefix ?? config.environment;

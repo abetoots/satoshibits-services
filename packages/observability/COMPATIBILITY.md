@@ -122,11 +122,20 @@ What `SmartClient.initialize` does with its Node config, as against 1.x. A "chan
 
 ## Removed exports of the other entries
 
-Exports of `/testing` that 2.x removes. The test checks that each is gone from its entry.
+Entries and exports that 2.x removes: the `/browser` entry as a whole (plan, decision 5), with the
+browser-only names it exported, and names of `/testing`. The test checks that each is gone: a removed
+entry from the `exports` map and the sources, each of its names from every remaining entry, and a
+`/testing` name from `/testing`. The shared names `/browser` re-exported stay where they are.
 
 <!-- removed-exports:start -->
 | Entry | Export | Kind | Status | Why |
 | --- | --- | --- | --- | --- |
+| `/browser` | — | entry | removed | the browser entry is deleted: on the wire its default sampler marked every span unsampled, its span kinds were off by one and its sums and histograms had no temporality. For browser telemetry use Grafana Faro, or `@opentelemetry/browser-sdk`, directly; 1.3.x stays on npm |
+| `/browser` | `BrowserInitConfig` | type | removed | as for the `/browser` entry |
+| `/browser` | `BrowserClientUserConfig` | type | removed | as for the `/browser` entry |
+| `/browser` | `BrowserClientConfig` | type | removed | as for the `/browser` entry; the root entry's config is the Node one |
+| `/browser` | `RECOMMENDED_BROWSER_INSTRUMENTATION` | value | removed | as for the `/browser` entry |
+| `/browser` | `FULL_BROWSER_INSTRUMENTATION` | value | removed | as for the `/browser` entry |
 | `/testing` | `MockObservabilityClient` | value | removed | a hand-written imitation of the client, tested only against itself; use `startTestTelemetry` from `/testing`, which runs the real pipeline |
 | `/testing` | `createMockClient` | value | removed | as for `MockObservabilityClient` |
 | `/testing` | `withMockClient` | value | removed | as for `MockObservabilityClient` |

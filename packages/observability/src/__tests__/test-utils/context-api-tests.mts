@@ -1,8 +1,7 @@
 /**
  * Shared Context API Conformance Tests
  *
- * These tests verify the public Context API contract which must be identical
- * across browser and node environments. They ensure consistent behavior of:
+ * These tests verify the public Context API contract. They ensure consistent behavior of:
  * - Business context management
  * - Trace context access
  * - Combined context API
@@ -29,24 +28,6 @@ import { describe, expect, it } from "vitest";
 import type { UnifiedObservabilityClient } from "../../unified-smart-client.mjs";
 
 /**
- * Check if async context propagation is available.
- * - Node.js: Always available via AsyncLocalStorage
- * - Browser: Requires Zone.js to be loaded BEFORE SDK initialization
- *
- * Note: In browser tests, Zone.js must be loaded before the SDK is imported.
- * Due to Vitest browser mode's module loading order, this can be tricky.
- * Tests that require async context propagation should skip if not available.
- */
-const hasAsyncContextPropagation = (): boolean => {
-  // in Node.js, AsyncLocalStorage is always available
-  if (typeof window === "undefined") {
-    return true;
-  }
-  // in browser, check if Zone.js is loaded
-  return typeof Zone !== "undefined" && Zone?.current !== undefined;
-};
-
-/**
  * Run shared Context API conformance tests
  *
  * @param getClient - Function that returns the client instance for testing
@@ -54,14 +35,6 @@ const hasAsyncContextPropagation = (): boolean => {
  * @example
  * ```typescript
  * // In node-context.test.mts
- * describe("Context API Separation", () => {
- *   runSharedContextAPITests(() => client);
- * });
- * ```
- *
- * @example
- * ```typescript
- * // In browser-context.test.mts
  * describe("Context API Separation", () => {
  *   runSharedContextAPITests(() => client);
  * });
@@ -139,9 +112,8 @@ export function runSharedContextAPITests(
       });
     });
 
-    // note: this test requires async context propagation (Zone.js in browser, AsyncLocalStorage in Node)
-    // skip in browser if Zone.js wasn't loaded before SDK initialization
-    it.skipIf(!hasAsyncContextPropagation())(
+    // note: this test requires async context propagation (AsyncLocalStorage)
+    it(
       "should create nested contexts using context.business.withAdditional()",
       async () => {
         const client = getClient();
@@ -305,9 +277,8 @@ export function runSharedContextAPITests(
   });
 
   describe("Context Inheritance via run() (Shared Conformance)", () => {
-    // note: this test requires async context propagation (Zone.js in browser, AsyncLocalStorage in Node)
-    // skip in browser if Zone.js wasn't loaded before SDK initialization
-    it.skipIf(!hasAsyncContextPropagation())(
+    // note: this test requires async context propagation (AsyncLocalStorage)
+    it(
       "should allow nesting contexts to add values without affecting outer scope",
       async () => {
         const client = getClient();

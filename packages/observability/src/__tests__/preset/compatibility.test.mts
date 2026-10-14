@@ -5,7 +5,7 @@
  */
 
 import { metrics, SpanKind as ApiSpanKind, SpanStatusCode as ApiSpanStatusCode, trace } from "@opentelemetry/api";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { createProgram, ModuleKind, ModuleResolutionKind, ScriptTarget, SymbolFlags } from "typescript";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -523,11 +523,45 @@ describe("the facade's table", () => {
 
 describe("the removed exports' table", () => {
   const ENTRIES: Record<string, string> = { "/testing": "src/testing.mts" };
+  // entries deleted whole; their names must not reappear on any entry that remains
+  const REMOVED_ENTRIES = ["/browser"];
+  const manifest = JSON.parse(readFileSync(path.join(PACKAGE, "package.json"), "utf8")) as {
+    exports: Record<string, unknown>;
+  };
+  /** the source of every entry the exports map still has */
+  const liveSources = Object.keys(manifest.exports).map((key) =>
+    path.join(PACKAGE, key === "." ? "src/index.mts" : `src/${key.slice(2)}.mts`),
+  );
+  const rows = tableRows("removed-exports").map(
+    (cells) => [unquote(cells[0]!), unquote(cells[1]!), cells[2]!, cells[3]!] as const,
+  );
 
-  it.each(tableRows("removed-exports").map((cells) => [unquote(cells[0]!), unquote(cells[1]!), cells[3]!] as const))(
+  it("lists each removed entry with a row of its own", () => {
+    for (const entry of REMOVED_ENTRIES) {
+      expect(rows.filter(([e, , kind]) => e === entry && kind === "entry"), entry).toHaveLength(1);
+    }
+  });
+
+  it.each(rows.filter(([, , kind]) => kind === "entry").map(([entry, , , status]) => [entry, status] as const))(
+    "the %s entry is gone from the exports map and the sources",
+    (entry, status) => {
+      expect(status).toBe("removed");
+      expect(REMOVED_ENTRIES).toContain(entry);
+      expect(Object.keys(manifest.exports)).not.toContain(`.${entry}`);
+      expect(existsSync(path.join(PACKAGE, `src${entry}.mts`)), `src${entry}.mts`).toBe(false);
+    },
+  );
+
+  it.each(rows.filter(([, , kind]) => kind !== "entry").map(([entry, name, , status]) => [entry, name, status] as const))(
     "%s no longer exports %s",
     (entry, name, status) => {
       expect(status).toBe("removed");
+      if (REMOVED_ENTRIES.includes(entry)) {
+        for (const source of liveSources) {
+          expect([...exportsOf(source).keys()], `${name} on ${path.relative(PACKAGE, source)}`).not.toContain(name);
+        }
+        return;
+      }
       expect(ENTRIES[entry], `no source file known for ${entry}`).toBeDefined();
       expect([...exportsOf(path.join(PACKAGE, ENTRIES[entry]!)).keys()]).not.toContain(name);
     },

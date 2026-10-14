@@ -2,7 +2,7 @@
  * Test Setup Helpers
  *
  * Eliminates test boilerplate by providing standardized setup/teardown utilities
- * for both browser and node test environments.
+ * for node test environments.
  *
  * Why this file exists:
  * - Nearly identical beforeEach/afterEach hooks are duplicated across test files
@@ -27,7 +27,6 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 
 import type {
-  BrowserClientConfig,
   NodeClientConfig,
   UnifiedObservabilityClient,
 } from "../../unified-smart-client.mjs";
@@ -106,59 +105,6 @@ export async function setupNodeTestClient(
     metricExporter,
     metricReader,
     timers: [], // for tracking setTimeout/setInterval in tests
-  };
-}
-
-/**
- * Setup a browser test client with in-memory exporters
- *
- * This helper creates a SmartClient instance for testing browser-specific
- * functionality. It disables network exporters and uses console exporter
- * for debugging.
- *
- * @param config - Optional configuration to override defaults
- * @returns Test context with client and timer tracking
- *
- * @example
- * ```typescript
- * describe("My Browser Tests", () => {
- *   let testContext: TestContext;
- *
- *   beforeEach(async () => {
- *     testContext = await setupBrowserTestClient({
- *       serviceName: "my-browser-app"
- *     });
- *   });
- *
- *   afterEach(async () => {
- *     await teardownTestClient(testContext);
- *   });
- *
- *   it("should track page views", () => {
- *     // Test browser-specific functionality
- *   });
- * });
- * ```
- */
-export async function setupBrowserTestClient(
-  config: Partial<BrowserClientConfig> = {},
-): Promise<TestContext> {
-  // create in-memory span exporter
-  const spanExporter = new InMemorySpanExporter();
-
-  // initialize client for browser environment
-  const client = await SmartClient.initialize({
-    serviceName: config.serviceName ?? "test-service",
-    environment: "browser",
-    endpoint: undefined, // disable network exports
-    useConsoleExporter: false, // disable console noise in tests
-    ...config,
-  });
-
-  return {
-    client,
-    spanExporter,
-    timers: [],
   };
 }
 
@@ -314,7 +260,7 @@ export function getExportedSpans(context: TestContext) {
 export function getExportedMetrics(context: TestContext) {
   if (!context.metricExporter) {
     throw new Error(
-      "No metric exporter available in context (browser tests don't have metrics)",
+      "No metric exporter available in context",
     );
   }
   return context.metricExporter.getMetrics();

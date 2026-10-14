@@ -7,7 +7,6 @@
  * Uses OpenTelemetry's Context API to maintain context across async boundaries,
  * ensuring context flows through callbacks, promises, and async/await.
  * - In Node.js: Uses AsyncLocalStorage via AsyncContextManager
- * - In Browser: Uses Zone.js via ZoneContextManager
  */
 
 import { createContextKey, context as otelContext } from "@opentelemetry/api";
@@ -582,7 +581,7 @@ const SMART_CONTEXT_KEY = createContextKey("smart_business_context");
 /**
  * Wrap any async operation with business context
  * Context will be available to all async operations within this callback
- * Uses OpenTelemetry's context propagation (Zone.js in browser, AsyncLocalStorage in Node)
+ * Uses OpenTelemetry's context propagation (AsyncLocalStorage in Node)
  */
 export function runWithBusinessContext<T>(ctx: SmartContext, fn: () => T): T {
   const activeContext = otelContext.active();
