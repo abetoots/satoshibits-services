@@ -45,6 +45,7 @@ const SCHEMAS: Record<string, Schema> = {
   ScopeSpans: {
     1: f("scope", m("Scope")),
     2: f("spans", m("Span"), true),
+    3: f("schemaUrl", "string"),
   },
   Span: {
     1: f("traceId", "bytes"),
@@ -65,6 +66,7 @@ const SCHEMAS: Record<string, Schema> = {
   Link: {
     1: f("traceId", "bytes"),
     2: f("spanId", "bytes"),
+    3: f("traceState", "string"),
     4: f("attributes", m("KeyValue"), true),
   },
   Status: { 2: f("message", "string"), 3: f("code", "varint") },
@@ -77,6 +79,7 @@ const SCHEMAS: Record<string, Schema> = {
   ScopeMetrics: {
     1: f("scope", m("Scope")),
     2: f("metrics", m("Metric"), true),
+    3: f("schemaUrl", "string"),
   },
   Metric: {
     1: f("name", "string"),
@@ -107,6 +110,7 @@ const SCHEMAS: Record<string, Schema> = {
   ScopeLogs: {
     1: f("scope", m("Scope")),
     2: f("logRecords", m("LogRecord"), true),
+    3: f("schemaUrl", "string"),
   },
   LogRecord: {
     2: f("severityNumber", "varint"),
@@ -253,6 +257,8 @@ function decodeMessage(buf: Buffer, schemaName: string): Json {
 export interface SinkScope {
   name: string;
   version?: string;
+  /** written beside the scope, on the block that holds its records */
+  schemaUrl?: string;
   attributes: Record<string, unknown>;
 }
 
@@ -265,11 +271,12 @@ export interface SinkSpan extends Origin {
   name: string;
   traceId: string;
   spanId: string;
+  traceState?: string;
   parentSpanId?: string;
   kind?: number;
   attributes: Record<string, unknown>;
   events: { name: string; attributes: Record<string, unknown> }[];
-  links: { traceId: string; attributes: Record<string, unknown> }[];
+  links: { traceId: string; traceState?: string; attributes: Record<string, unknown> }[];
   status: { code?: number; message?: string };
 }
 
@@ -345,6 +352,7 @@ function origin(resourceBlock: Json, scopeBlock: Json): Origin {
     scope: {
       name: text(scope.name),
       version: scope.version as string | undefined,
+      schemaUrl: optionalId(scopeBlock.schemaUrl),
       attributes: plainAttributes(scope.attributes),
     },
   };
@@ -372,6 +380,7 @@ function simplify(request: unknown): DecodedExport {
           name: text(span.name),
           traceId: text(span.traceId),
           spanId: text(span.spanId),
+          traceState: optionalId(span.traceState),
           parentSpanId: optionalId(span.parentSpanId),
           kind: span.kind as number | undefined,
           attributes: plainAttributes(span.attributes),
@@ -381,6 +390,7 @@ function simplify(request: unknown): DecodedExport {
           })),
           links: list(span.links).map((link) => ({
             traceId: text(link.traceId),
+            traceState: optionalId(link.traceState),
             attributes: plainAttributes(link.attributes),
           })),
           status: {

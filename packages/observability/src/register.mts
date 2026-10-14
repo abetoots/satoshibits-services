@@ -4,11 +4,13 @@
  * A preload for `node --import`: starts the preset from the environment
  * alone (`OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`, …).
  *
- * It exports under the standard policy of `@satoshibits/redaction`, and says
- * so in one line on stderr whenever a signal is exported (unless
- * `OTEL_LOG_LEVEL` asks for errors only, or for nothing). To export under a
- * policy of your own, or with none, use a preload of your own that calls
- * `start({ redaction })`.
+ * It configures every exporter with the standard policy of
+ * `@satoshibits/redaction`, and says so in one line on stderr when it has
+ * configured at least one (unless `OTEL_LOG_LEVEL` asks for errors only, or
+ * for nothing). The line is written at start, before anything is exported,
+ * and whether or not the application goes on to emit anything. To export
+ * under a policy of your own, or with none, use a preload of your own that
+ * calls `start({ redaction })`.
  *
  * A configuration error is reported on stderr and the process carries on
  * without telemetry: a mistyped variable must not stop a service from booting.
@@ -36,7 +38,7 @@ try {
       diagnostics.activate();
       diagnostics.report({
         level: "info",
-        message: "telemetry is exported under the standard redaction policy",
+        message: "telemetry exporters are configured with the standard redaction policy",
         fields: { policy: "@satoshibits/redaction standardPolicy" },
       });
     }

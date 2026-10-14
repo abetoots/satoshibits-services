@@ -44,6 +44,16 @@ export interface ChildScenario {
   scopeName?: string;
   /** scope attributes for the logger (the only scope the API lets carry attributes) */
   scopeAttributes?: Record<string, string>;
+  /** a version for the tracer, meter and logger scopes */
+  scopeVersion?: string;
+  /** a schema URL for the tracer, meter and logger scopes */
+  scopeSchemaUrl?: string;
+  /** start every span under a sampled remote parent with this trace state, as an inbound `tracestate` header gives */
+  parentTraceState?: string;
+  /** one event added to every span */
+  spanEvent?: { name: string; attributes: Record<string, string> };
+  /** one link on every span, to a context with this trace state */
+  spanLink?: { traceState: string; attributes: Record<string, string> };
   /** number of root spans to create (default 1) */
   spans?: number;
   spanName?: string;
@@ -57,6 +67,8 @@ export interface ChildScenario {
   metric?: boolean;
   /** emit one log record through the logs API (default true) */
   log?: boolean;
+  /** what that record carries in place of the default body */
+  logRecord?: { body: string; attributes: Record<string, string>; eventName: string };
   /** flush, then create this many more spans */
   afterDrainSpans?: number;
   /** stay alive this long before finishing */
