@@ -84,7 +84,9 @@ function finishedSpans(): ReadableSpan[] {
 }
 
 describe("the standard redaction policy on a full batch", () => {
-  it(`redacts ${BATCH} HTTP server spans through the exporter wrapper within ${THRESHOLD_MILLIS} ms (best of ${RUNS})`, () => {
+  it(`redacts ${BATCH} HTTP server spans through the exporter wrapper within ${THRESHOLD_MILLIS} ms (best of ${RUNS})`, async ({
+    annotate,
+  }) => {
     const spans = finishedSpans();
     expect(spans).toHaveLength(BATCH);
 
@@ -118,6 +120,8 @@ describe("the standard redaction policy on a full batch", () => {
     expect(exported[0]!.events[0]!.attributes).toEqual({
       "exception.type": "Error",
     });
+    // on every run, passing or not: `--reporter=verbose` prints it under the test's name
+    await annotate(`best of ${RUNS}: ${best.toFixed(1)} ms for ${BATCH} spans`);
     expect(
       best,
       `the standard policy took ${best.toFixed(1)} ms for ${BATCH} spans (best of ${RUNS})`,

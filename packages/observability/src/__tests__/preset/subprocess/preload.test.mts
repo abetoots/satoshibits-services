@@ -199,6 +199,7 @@ const LOG_SCOPES = {
 const recordOf = (records: SinkLogRecord[], logger: keyof typeof LOG_SCOPES) =>
   records.find((r) => r.scope.name === LOG_SCOPES[logger]);
 
+// the removed addresses are not among the raw-body markers: their value, 127.0.0.1, is also server.address and the host in url.full; the decoded attribute checks and the redaction: false control cover them
 const SENSITIVE = { OBS_FIXTURE_SENSITIVE: "1" };
 
 /** a run of the app with OBS_FIXTURE_SENSITIVE=1, logs on, and what it sent, found by request */
