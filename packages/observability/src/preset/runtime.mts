@@ -13,6 +13,7 @@ import {
   diag,
   metrics,
   propagation,
+  ProxyTracerProvider,
   trace,
 } from "@opentelemetry/api";
 import { logs } from "@opentelemetry/api-logs";
@@ -174,6 +175,74 @@ const DEFAULT_TIMEOUT_MILLIS = 10_000;
 const MAX_TIMER_MILLIS = 2 ** 31 - 1;
 
 let handle: Handle | undefined;
+
+/**
+ * Instrumentations a test adds to those start() builds, to see what happens
+ * to them when a start fails. Not part of the public entry: only this
+ * package's tests reach it.
+ */
+let testInstrumentations: Instrumentation[] | undefined;
+
+/**
+ * Set when a failed start() could not give back everything it registered.
+ * What is left (an instrumentation still patching a module, say) could
+ * double up with a second start's, so none is allowed.
+ */
+let undoFailed = false;
+
+/** what the API holds, by identity; the context manager and propagator have no public reader */
+function registered() {
+  const tracerProvider = trace.getTracerProvider();
+  return {
+    // the API hands out one proxy whether or not a provider is registered: what it delegates to is
+    tracerProvider:
+      tracerProvider instanceof ProxyTracerProvider ? tracerProvider.getDelegate() : tracerProvider,
+    meterProvider: metrics.getMeterProvider(),
+    loggerProvider: logs.getLoggerProvider(),
+    contextManager: (context as unknown as { _getContextManager: () => unknown })._getContextManager(),
+    propagator: (propagation as unknown as { _getGlobalPropagator: () => unknown })._getGlobalPropagator(),
+  };
+}
+
+/**
+ * Give back what a failed start registered, and only that: a registration
+ * that is not what it was before the start is the preset's (the API refuses
+ * to replace one that someone else made first, so theirs is unchanged and
+ * left alone). Every instrumentation is disabled: they patch modules as
+ * they are made, before anything is registered. Returns whether all of it
+ * could be undone.
+ */
+function undoStart(
+  before: ReturnType<typeof registered>,
+  instrumentations: Instrumentation[],
+): boolean {
+  let complete = true;
+  const attempt = (undo: () => void) => {
+    try {
+      undo();
+    } catch {
+      complete = false;
+    }
+  };
+  for (const instrumentation of instrumentations) attempt(() => instrumentation.disable());
+  const now = registered();
+  const disable: Record<keyof typeof now, () => void> = {
+    tracerProvider: () => trace.disable(),
+    meterProvider: () => metrics.disable(),
+    loggerProvider: () => logs.disable(),
+    contextManager: () => context.disable(),
+    propagator: () => propagation.disable(),
+  };
+  for (const key of Object.keys(disable) as (keyof typeof now)[]) {
+    if (now[key] !== before[key]) attempt(disable[key]);
+  }
+  return complete;
+}
+
+/** test support: add these instrumentations to every start() until called again with undefined */
+export function instrumentationsForTesting(added: Instrumentation[] | undefined): void {
+  testInstrumentations = added;
+}
 
 const allOff = (reason: SignalOffReason): Record<Signal, SignalStatus> => ({
   traces: { enabled: false, reason },
@@ -540,16 +609,25 @@ const snapshot = (status: PresetStatus): PresetStatus => structuredClone(status)
  * `node --import`, before any application module is imported.
  *
  * Throws `PresetConfigError` for an invalid configuration and throws when
- * called a second time. A configuration error leaves nothing registered:
- * most are found before anything is, and the rest (instrumentation settings,
- * found when the instrumentations are built) are undone before it is thrown.
- * With `OTEL_SDK_DISABLED=true` it registers nothing and returns.
+ * called a second time, after `shutdown()` included. A start that fails
+ * leaves nothing of its own registered: most configuration errors are found
+ * before anything is, and any later failure gives back the providers,
+ * context manager, propagator and instrumentations it set up, leaving alone
+ * any registered by someone else first. When that cannot be fully done, it
+ * says so through diagnostics and every later call throws. With
+ * `OTEL_SDK_DISABLED=true` it registers nothing and returns.
  */
 export function start(options: StartOptions = {}): PresetStatus {
   // first of all, whatever else this start comes to (a second call included): a promise
   // passed as a resource attribute is given a handler here, before anything can throw
   const deferredResourceAttributes = deferredAttributes(options.resourceAttributes);
 
+  if (undoFailed) {
+    throw new Error(
+      "@satoshibits/observability: an earlier start() failed and could not be fully undone; " +
+        "telemetry cannot be started again in this process",
+    );
+  }
   if (handle !== undefined) {
     throw new Error(
       "@satoshibits/observability: start() was already called in this process",
@@ -589,6 +667,10 @@ export function start(options: StartOptions = {}): PresetStatus {
     },
   });
 
+  // what was registered before this start, so a failure gives back only what it added
+  const before = registered();
+  let instrumentations: Instrumentation[] = [];
+
   // from here on things are registered. The diagnostics logger goes first: the
   // upstream constructors below report unusable settings through it, and it
   // holds what it is given until the sink may be created.
@@ -607,18 +689,16 @@ export function start(options: StartOptions = {}): PresetStatus {
   try {
     const resource = buildResource(config, redactor);
     const sampler = buildSampler(config.sampler);
-    const instrumentations = buildInstrumentations(
-      options.instrumentations,
-      config,
-      testExporters,
-    );
+    instrumentations = [
+      ...buildInstrumentations(options.instrumentations, config, testExporters),
+      ...(testInstrumentations ?? []),
+    ];
     pipelines = buildPipelines(
       config,
       testExporters,
       { diagnostics, redactor, failures },
       options.redaction !== undefined,
     );
-    if (options.loaderHook !== false) installLoaderHook();
     const built = pipelines;
     sdk = withoutLogLevelVariable(
       () =>
@@ -634,8 +714,18 @@ export function start(options: StartOptions = {}): PresetStatus {
         }),
     );
     sdk.start();
+    // last, once nothing can fail: a loader hook cannot be unregistered
+    if (options.loaderHook !== false) installLoaderHook();
   } catch (error) {
     // give back what was registered above, and let what was held be seen
+    if (!undoStart(before, instrumentations)) {
+      undoFailed = true;
+      diagnostics.report({
+        level: "error",
+        message:
+          "a failed start could not be fully undone; start() will refuse to run again in this process",
+      });
+    }
     diagnostics.activate();
     diag.disable();
     setGlobalErrorHandler(loggingErrorHandler());
@@ -875,6 +965,7 @@ export function getStatus(): PresetStatus {
 export async function resetForTesting(): Promise<void> {
   const current = handle;
   handle = undefined;
+  undoFailed = false;
   trace.disable();
   metrics.disable();
   logs.disable();

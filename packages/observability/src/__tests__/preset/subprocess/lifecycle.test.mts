@@ -166,3 +166,18 @@ describe("a sink that never answers", () => {
     expect(run.code).toBe(0);
   });
 });
+
+describe("a second start after shutdown", () => {
+  it("is refused: a process starts telemetry once, and what the first round emitted arrived", async () => {
+    const run = await runChild(
+      { spans: 1, metric: false, log: false, restartAfterFinish: true },
+      allSignals({ OTEL_METRICS_EXPORTER: "none", OTEL_LOGS_EXPORTER: "none" }),
+    );
+
+    expect(run.result.finishError).toBeNull();
+    expect(run.result.restartError).toMatch(/start\(\) was already called in this process/);
+    // nothing of a second round was exported
+    expect(sink.spans().map((s) => s.name)).toEqual(["child-span-0"]);
+    expect(run.result.status.state).toBe("shut-down");
+  });
+});
