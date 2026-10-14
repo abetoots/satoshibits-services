@@ -172,7 +172,8 @@ describe("a failed export behind a metric reader", () => {
 
   it("is reported once across failures whose far-end texts differ, behind an injected reader", async () => {
     const events: DiagnosticsEvent[] = [];
-    const texts = ["refused by alpha", "refused by beta"];
+    // different from the first character on, so no prefix of the reader's message is shared
+    const texts = ["alpha refused", "beta refused"];
     const exporter: PushMetricExporter = {
       export: (_metrics, resultCallback) => {
         resultCallback({ code: ExportResultCode.FAILED, error: new Error(texts.shift() ?? "refused") });
@@ -191,6 +192,8 @@ describe("a failed export behind a metric reader", () => {
     counter.add(1);
     await forceFlush().catch(() => undefined);
 
+    // both failures reached the exporter, and so the handler
+    expect(texts).toEqual([]);
     // the far end's text is not part of the kind: the second failure falls in the first's interval
     expect(errorsOf(events)).toHaveLength(1);
   });

@@ -66,17 +66,25 @@ describe("the facade starting the runtime", () => {
     expect(sent).not.toContain("jane.doe");
   });
 
-  it("sends nothing anywhere with the old no-export flag, whatever the variables say", async () => {
+  it("sends nothing over the network with the old no-export flag, and test hooks still receive", async () => {
     const run = await runChild(
-      { start: "facade", facade: { endpoint: sink.url } },
+      { start: "facade", facade: { endpoint: sink.url, testSpanProcessor: true } },
       {
         OBS_TEST_NO_EXPORT: "1",
         OTEL_EXPORTER_OTLP_ENDPOINT: sink.url,
         OTEL_LOGS_EXPORTER: "otlp",
       },
     );
+    expect(run.result.facadeSpans).toEqual(["child-span-0"]);
+    expect(run.result.sockets).toEqual([]);
+    expect(sink.connections).toEqual([]);
 
-    expect(run.result.statusAfterFacade).toMatchObject({
+    // and with no hook, every signal is off
+    const bare = await runChild(
+      { start: "facade", facade: { endpoint: sink.url } },
+      { OBS_TEST_NO_EXPORT: "1", OTEL_EXPORTER_OTLP_ENDPOINT: sink.url, OTEL_LOGS_EXPORTER: "otlp" },
+    );
+    expect(bare.result.statusAfterFacade).toMatchObject({
       state: "running",
       signals: {
         traces: { enabled: false, reason: "test-hooks" },
@@ -84,8 +92,7 @@ describe("the facade starting the runtime", () => {
         logs: { enabled: false, reason: "test-hooks" },
       },
     });
-    expect(run.result.spans[0]?.valid).toBe(true);
-    expect(run.result.sockets).toEqual([]);
+    expect(bare.result.sockets).toEqual([]);
     expect(sink.connections).toEqual([]);
   });
 
@@ -193,6 +200,21 @@ describe("the facade's config, as against 1.x", () => {
     const keys = Object.keys(sink.spans()[0]!.resource);
     expect(keys.filter((key) => /^(host|process)\./.test(key))).toEqual([]);
     expect(keys.filter((key) => key.startsWith("os."))).toEqual(["os.type"]);
+
+    // given by the variable: the dropped patterns go wherever they come from; other keys pass through
+    sink.requests.length = 0;
+    await runChild(
+      { start: "facade", facade: { endpoint: sink.url } },
+      {
+        OTEL_RESOURCE_ATTRIBUTES:
+          "process.pid=123,process.command_line=secret-args,host.name=private-host,os.name=private-os",
+      },
+    );
+    const resource = sink.spans()[0]!.resource;
+    expect(resource["process.pid"]).toBe("123");
+    expect(resource["os.name"]).toBe("private-os");
+    expect(resource["process.command_line"]).toBeUndefined();
+    expect(resource["host.name"]).toBeUndefined();
   });
 
   it("takes deployment.environment.name from OTEL_RESOURCE_ATTRIBUTES, not NODE_ENV", async () => {
