@@ -304,11 +304,9 @@ describe("rejected configuration", () => {
 
     expect(run.code).toBe(0);
     expect(run.result.status.state).toBe("not-started");
-    // one line per problem, each once. Register names no policy yet, which is a problem of its
-    // own here; that second line goes when batch G4a gives register the standard policy
+    // one line per problem, each once, and nothing about a policy: register names one
     expect(run.stderrLines.map((line) => [line.level, line.msg, line.reason])).toEqual([
       ["error", "telemetry was not started", expect.stringContaining("OTEL_EXPORTER_OTLP_PROTOCOL=grpc is not supported")],
-      ["error", "telemetry was not started", NO_POLICY],
     ]);
     expect(sink.connections).toEqual([]);
   });
@@ -322,17 +320,12 @@ describe("rejected configuration", () => {
     expect(started.result.startError).not.toContain("SENTINEL");
 
     const registered = await runChild({ start: "register" }, env);
-    // the protocol problem and, until batch G4a, the missing policy
-    expect(registered.stderrLines).toHaveLength(2);
+    expect(registered.stderrLines.map((line) => line.msg)).toEqual(["telemetry was not started"]);
     expect(registered.stderr).not.toContain("SENTINEL");
     expect(registered.stderr).not.toContain("collector.example");
   });
 
-  // the register arm returns with batch G4a: until register names the standard policy it
-  // refuses to export (see "no policy" below), so the SDK's exporters are never built for it
-  it.todo("register keeps an endpoint's password out of stderr when the SDK would have quoted the variable");
-
-  it.each(["start"] as const)(
+  it.each(["start", "register"] as const)(
     "%s keeps an endpoint's password out of stderr when the SDK would have quoted the variable",
     async (start) => {
       // each is accepted by the preset (it trims, and a URL parses from these spellings), but the
@@ -386,27 +379,130 @@ describe("rejected configuration", () => {
     expect(run.result.sockets).toEqual([]);
   });
 
-  it("the register entry with nothing to export starts, and reports no error", async () => {
-    const run = await runChild({ start: "register" }, NAME);
+});
+
+describe("the register entry", () => {
+  const STANDARD_POLICY_LINE = "telemetry is exported under the standard redaction policy";
+  const policyLines = (run: { stderrLines: Record<string, unknown>[] }) =>
+    run.stderrLines.filter((line) => line.msg === STANDARD_POLICY_LINE);
+
+  /** one span that carries, on every surface the test reads, something the standard policy changes */
+  const SENSITIVE_SPAN = {
+    spans: 1,
+    spanName: "lookup for jane.doe@example.com",
+    spanNameAsGiven: true,
+    spanAttributes: {
+      "enduser.contact": "jane.doe@example.com",
+      password: "SENTINEL-hunter2",
+      "client.address": "203.0.113.7",
+      "order.kind": "subscription",
+    },
+    spanStatusMessage: "lookup failed for SENTINEL-status",
+  } as const;
+  const STATUS_CODE_ERROR = 2;
+
+  const expectRedactedAtTheSink = () => {
+    const spans = sink.spans();
+    expect(spans.map((span) => span.name)).toEqual(["lookup for [EMAIL]"]);
+    const span = spans[0]!;
+    expect(span.attributes).toEqual({
+      "enduser.contact": "[EMAIL]",
+      password: "[REDACTED]",
+      "order.kind": "subscription",
+    });
+    expect(span.status).toEqual({ code: STATUS_CODE_ERROR });
+    expect(span.resource["service.name"]).toBe("signals-test");
+    const sent = sink.requests.map((request) => request.bodyText).join("\n");
+    expect(sent).not.toContain("SENTINEL");
+    expect(sent).not.toContain("jane.doe");
+    expect(sent).not.toContain("203.0.113.7");
+  };
+
+  it("starts from the environment alone, under the standard policy, and says so in one line", async () => {
+    const run = await runChild({ start: "register", ...SENSITIVE_SPAN }, endpoint());
 
     expect(run.code).toBe(0);
-    expect(run.result.status.state).toBe("shut-down");
+    expect(run.result.status).toMatchObject({
+      state: "shut-down",
+      serviceName: "signals-test",
+      signals: { traces: { enabled: true }, metrics: { enabled: true } },
+    });
+    expectRedactedAtTheSink();
+    expect(policyLines(run)).toEqual([
+      {
+        time: expect.any(String) as string,
+        level: "info",
+        source: "opentelemetry",
+        msg: STANDARD_POLICY_LINE,
+        policy: "@satoshibits/redaction standardPolicy",
+      },
+    ]);
+    expect(run.stderr).not.toContain("no redaction policy");
     expect(run.stderrLines.filter((line) => line.level === "error")).toEqual([]);
-    expect(run.result.sockets).toEqual([]);
+    expect(socketsOutside(run, sink)).toEqual([]);
   });
 
-  it("the register entry names no policy yet: with an endpoint it reports that, sends nothing, and the process carries on", async () => {
-    const run = await runChild({ start: "register" }, endpoint());
+  it("writes that line when OTEL_LOG_LEVEL asks for informational lines", async () => {
+    const run = await runChild(
+      { start: "register", ...SENSITIVE_SPAN },
+      { ...endpoint(), OTEL_LOG_LEVEL: "info" },
+    );
+
+    expectRedactedAtTheSink();
+    expect(policyLines(run)).toHaveLength(1);
+  });
+
+  it.each(["error", "none", " ERROR "])(
+    "OTEL_LOG_LEVEL=%j silences that line, and telemetry is still exported under the standard policy",
+    async (level) => {
+      const run = await runChild(
+        { start: "register", ...SENSITIVE_SPAN },
+        { ...endpoint(), OTEL_LOG_LEVEL: level },
+      );
+
+      expect(run.result.status.signals.traces).toMatchObject({ enabled: true });
+      expectRedactedAtTheSink();
+      expect(policyLines(run)).toEqual([]);
+      expect(run.stderr).not.toContain("standard redaction policy");
+    },
+  );
+
+  it.each([
+    ["no endpoint is configured", NAME, "shut-down"],
+    ["OTEL_SDK_DISABLED=true", { OTEL_SDK_DISABLED: "true" }, "disabled"],
+    [
+      "every exporter is none",
+      { OTEL_TRACES_EXPORTER: "none", OTEL_METRICS_EXPORTER: "none", OTEL_LOGS_EXPORTER: "none" },
+      "shut-down",
+    ],
+  ] as const)("says nothing about a policy, and sends nothing, when %s", async (_case, env, state) => {
+    const run = await runChild(
+      { start: "register", ...SENSITIVE_SPAN },
+      // the endpoint is there for the two cases that turn export off some other way
+      env === NAME ? NAME : { ...endpoint(), ...env },
+    );
 
     expect(run.code).toBe(0);
-    expect(run.result.status.state).toBe("not-started");
-    expect(run.stderrLines.map((line) => [line.level, line.msg, line.reason])).toEqual([
-      ["error", "telemetry was not started", NO_POLICY],
-    ]);
+    expect(run.result.status.state).toBe(state);
+    expect(run.stderrLines.filter((line) => line.level === "error")).toEqual([]);
+    expect(policyLines(run)).toEqual([]);
+    expect(run.stderr).not.toContain("standard redaction policy");
     expect(run.result.sockets).toEqual([]);
     expect(sink.connections).toEqual([]);
   });
 
-  // batch G4a: register passes the redaction package's standard policy and says so in one line
-  it.todo("the register entry starts from the environment alone, under the standard policy");
+  it("start() with redaction: false exports the same span as given", async () => {
+    const run = await runChild({ redaction: false, ...SENSITIVE_SPAN }, endpoint());
+
+    expect(run.result.startError).toBeNull();
+    const spans = sink.spans();
+    expect(spans.map((span) => span.name)).toEqual([SENSITIVE_SPAN.spanName]);
+    expect(spans[0]!.attributes).toEqual(SENSITIVE_SPAN.spanAttributes);
+    expect(spans[0]!.status).toEqual({
+      code: STATUS_CODE_ERROR,
+      message: SENSITIVE_SPAN.spanStatusMessage,
+    });
+    // the line is register's: a preload that names its own policy is not told about the standard one
+    expect(policyLines(run)).toEqual([]);
+  });
 });

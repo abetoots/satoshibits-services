@@ -4,24 +4,48 @@
  * A preload for `node --import`: starts the preset from the environment
  * alone (`OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`, …).
  *
- * It names no redaction policy yet, and the preset exports nothing without
- * one: with an endpoint configured this entry reports "no redaction policy"
- * and sends nothing. It will pass the redaction package's standard policy
- * once that package exists; until then, export from a preload of your own
- * that calls `start({ redaction })`.
+ * It exports under the standard policy of `@satoshibits/redaction`, and says
+ * so in one line on stderr whenever a signal is exported (unless
+ * `OTEL_LOG_LEVEL` asks for errors only, or for nothing). To export under a
+ * policy of your own, or with none, use a preload of your own that calls
+ * `start({ redaction })`.
  *
  * A configuration error is reported on stderr and the process carries on
  * without telemetry: a mistyped variable must not stop a service from booting.
  */
 
+import { standardPolicy } from "@satoshibits/redaction";
 import { types } from "node:util";
 
 import { PresetConfigError } from "./preset/config.mjs";
 import { createDiagnostics } from "./preset/diagnostics.mjs";
 import { start } from "./preset/runtime.mjs";
 
+/**
+ * Whether the environment asked for errors only, or for nothing. Read the way
+ * the diagnostics module reads the variable (trimmed, any case); it exports
+ * no parser of its own, so the two spellings are mirrored here.
+ */
+const quietRequested = (): boolean =>
+  ["NONE", "ERROR"].includes(process.env.OTEL_LOG_LEVEL?.trim().toUpperCase() ?? "");
+
 try {
-  start();
+  const status = start({ redaction: standardPolicy });
+  if (Object.values(status.signals).some((signal) => signal.enabled) && !quietRequested()) {
+    try {
+      // an instance of its own, at the level of this line: the preset's default drops
+      // informational lines, and the choice of policy was made here, not by the operator
+      const diagnostics = createDiagnostics({ logLevel: "info" });
+      diagnostics.activate();
+      diagnostics.report({
+        level: "info",
+        message: "telemetry is exported under the standard redaction policy",
+        fields: { policy: "@satoshibits/redaction standardPolicy" },
+      });
+    } catch {
+      // telemetry is running; a line that cannot be written must not look like a failed start
+    }
+  }
 } catch (error) {
   try {
     // through diagnostics, so the reason is sanitized like any other text: an
