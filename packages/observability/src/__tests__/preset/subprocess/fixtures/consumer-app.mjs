@@ -151,6 +151,8 @@ try {
 }
 
 const result = {
+  // the test checks the binary it ran is the version it meant
+  node: process.versions.node,
   status,
   finishError,
   port,

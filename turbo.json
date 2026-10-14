@@ -19,7 +19,7 @@
     },
     "test": {
       "dependsOn": ["^test", "build"],
-      "passThroughEnv": ["OBS_TEST_NODE_22", "OBS_TEST_NODE_25", "OBS_TEST_DIST_FRESH"]
+      "passThroughEnv": ["OBS_TEST_NODE_22", "OBS_TEST_NODE_26", "OBS_TEST_DIST_FRESH"]
     }
   }
 }

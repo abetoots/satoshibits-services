@@ -39,7 +39,7 @@ jobs:
         with:
           run_install: false
 
-      # the observability preload tests run the preset on Node 22 and Node 25 by these
+      # the observability preload tests run the preset on Node 22 and Node 26 by these
       # binaries. Each setup puts its node first on PATH, so the runner's own node
       # directory is recorded here and put back in front once both are installed
       - run: echo "OBS_RUNNER_NODE_DIR=$(dirname "$(command -v node)")" >> "$GITHUB_ENV"
@@ -50,11 +50,11 @@ jobs:
           node-version: 22
       - run: echo "OBS_TEST_NODE_22=$(command -v node)" >> "$GITHUB_ENV"
 
-      - name: ⎔ Setup node 25 for the observability preload tests
+      - name: ⎔ Setup node 26 for the observability preload tests
         uses: actions/setup-node@v4
         with:
-          node-version: 25
-      - run: echo "OBS_TEST_NODE_25=$(command -v node)" >> "$GITHUB_ENV"
+          node-version: 26
+      - run: echo "OBS_TEST_NODE_26=$(command -v node)" >> "$GITHUB_ENV"
 
       # the default node stays the runner's own for the setup step below and everything after
       - run: echo "$OBS_RUNNER_NODE_DIR" >> "$GITHUB_PATH"
