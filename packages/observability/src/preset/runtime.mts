@@ -691,7 +691,10 @@ function installErrorHandler(
       // one limit per kind of error: its name and the shape of its message (numbers aside), since
       // most SDK errors are plain `Error`s and a repeating one must not hide a different one.
       // Past the first few kinds, the rest share one limit.
-      const kind = `${name}:${message.replace(/\d+/g, "#").slice(0, 80)}`;
+      // a reader's failure quotes the far end's text, which must not make a kind of its own
+      const kind = readerExportFailed
+        ? "reader-export-failed"
+        : `${name}:${message.replace(/\d+/g, "#").slice(0, 80)}`;
       const key = limiters.has(kind) || limiters.size < 32 ? kind : "";
       let limit = limiters.get(key);
       if (limit === undefined) {

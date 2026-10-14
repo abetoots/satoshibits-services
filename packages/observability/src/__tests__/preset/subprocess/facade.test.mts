@@ -26,10 +26,17 @@ const SENSITIVE_SPAN = {
 
 describe("the facade starting the runtime", () => {
   it("exports to the endpoint and with the headers given in code", async () => {
-    const run = await runChild({
-      start: "facade",
-      facade: { endpoint: sink.url, headers: { "x-facade-key": "facade-value" } },
-    });
+    const fromEnvironment = await sinks.extra();
+    const run = await runChild(
+      {
+        start: "facade",
+        facade: { endpoint: sink.url, headers: { "x-facade-key": "facade-value" } },
+      },
+      {
+        OTEL_EXPORTER_OTLP_ENDPOINT: fromEnvironment.url,
+        OTEL_EXPORTER_OTLP_HEADERS: "x-facade-key=from-environment",
+      },
+    );
 
     expect(run.result.statusAfterFacade).toMatchObject({
       state: "running",
@@ -43,6 +50,8 @@ describe("the facade starting the runtime", () => {
     for (const request of sink.requests) {
       expect(request.headers["x-facade-key"]).toBe("facade-value");
     }
+    // the endpoint in code overrides the variable
+    expect(fromEnvironment.connections).toEqual([]);
   });
 
   it("exports under the standard redaction policy", async () => {
@@ -168,7 +177,7 @@ describe("the facade's config, as against 1.x", () => {
     const resource = sink.spans()[0]!.resource;
     expect(resource["service.name"]).toBe("from-code");
     expect(resource["service.version"]).toBe("2.3.4");
-    // 1.x set deployment.environment from NODE_ENV (default "production")
+    // 1.x set deployment.environment from NODE_ENV (default "development")
     expect(resource["deployment.environment"]).toBeUndefined();
     expect(resource["deployment.environment.name"]).toBeUndefined();
 
@@ -227,11 +236,12 @@ describe("the facade's config, as against 1.x", () => {
   });
 
   it("exports metrics every 60 s by default, where 1.x did every 10 s", async () => {
-    // no flush and no shutdown: only the reader's own timer can send metrics within the 11 s
+    // no flush and no shutdown: only the reader's own timer can send metrics within the 13 s,
+    // 3 s past 1.x's 10 s interval and far short of 60 s
     const run = await runChild({
       start: "facade",
       facade: { endpoint: sink.url },
-      lingerMillis: 11_000,
+      lingerMillis: 13_000,
       finish: "none",
     });
 

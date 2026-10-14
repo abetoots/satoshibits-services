@@ -37,7 +37,6 @@ afterEach(async () => {
   root.clearSanitizationCache();
 });
 
-/** the rows of the table between `<!-- name:start -->` and `<!-- name:end -->`, as cells */
 /** the lines of the table between `<!-- name:start -->` and `<!-- name:end -->`, as cells, header first */
 function tableLines(name: string): string[][] {
   const from = DOC.indexOf(`<!-- ${name}:start -->`);
@@ -226,6 +225,7 @@ const CHECKS: Record<string, () => void | Promise<void>> = {
   },
   clearSanitizationCache: () => {
     root.sanitizeString("cached value");
+    expect(root.getCacheStats().size).toBeGreaterThan(0);
     root.clearSanitizationCache();
     expect(root.getCacheStats().size).toBe(0);
   },
@@ -276,6 +276,9 @@ const CHECKS: Record<string, () => void | Promise<void>> = {
     expect(root.getAllInstances()).toContain(client);
   },
   getCacheStats: () => {
+    const before = root.getCacheStats().size;
+    root.sanitizeString("a string not seen before");
+    expect(root.getCacheStats().size).toBe(before + 1);
     expect(root.getCacheStats()).toEqual({
       size: expect.any(Number) as number,
       max: expect.any(Number) as number,
@@ -284,7 +287,6 @@ const CHECKS: Record<string, () => void | Promise<void>> = {
   },
   getEnrichedLabels: async () => {
     await withContextManager();
-    root.addTag("unused", "x");
     const labels = root.runWithBusinessContext({ tenantId: "t-9" }, () => root.getEnrichedLabels({ extra: "1" }));
     expect(labels).toMatchObject({ tenant_id: "t-9", extra: "1" });
   },
