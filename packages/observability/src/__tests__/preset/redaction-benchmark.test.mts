@@ -104,14 +104,25 @@ describe("the standard redaction policy on a full batch", () => {
     });
 
     let best = Number.POSITIVE_INFINITY;
+    // a run that failed fast inside the wrapper would read as a low time: each run must
+    // answer success with the whole batch, and none may read an earlier run's batch
+    const runs: { code: ExportResultCode | undefined; exported: number }[] = [];
     for (let run = 0; run < RUNS; run++) {
+      exported = [];
+      let code: ExportResultCode | undefined;
       const started = performance.now();
-      wrapper.export(spans, () => undefined);
+      wrapper.export(spans, (result) => (code = result.code));
       best = Math.min(best, performance.now() - started);
+      runs.push({ code, exported: exported.length });
     }
+    expect(runs).toEqual(
+      Array.from({ length: RUNS }, () => ({
+        code: ExportResultCode.SUCCESS,
+        exported: BATCH,
+      })),
+    );
 
     // the time is of the policy actually applied, to every span of the batch
-    expect(exported).toHaveLength(BATCH);
     const last = exported[BATCH - 1]!;
     expect(last.attributes["url.full"]).toBe(
       `https://shop.example.com/api/accounts/${BATCH - 1}/orders`,

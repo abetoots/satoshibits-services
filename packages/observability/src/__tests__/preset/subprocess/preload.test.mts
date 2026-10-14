@@ -199,7 +199,9 @@ const LOG_SCOPES = {
 const recordOf = (records: SinkLogRecord[], logger: keyof typeof LOG_SCOPES) =>
   records.find((r) => r.scope.name === LOG_SCOPES[logger]);
 
-// the removed addresses are not among the raw-body markers: their value, 127.0.0.1, is also server.address and the host in url.full; the decoded attribute checks and the redaction: false control cover them
+// the removed addresses are not among the raw-body markers: their value, 127.0.0.1, is
+// also server.address and the host in url.full; the decoded attribute checks and the
+// redaction: false control cover them
 const SENSITIVE = { OBS_FIXTURE_SENSITIVE: "1" };
 
 /** a run of the app with OBS_FIXTURE_SENSITIVE=1, logs on, and what it sent, found by request */
@@ -425,11 +427,14 @@ describe.each(Object.entries(NODES))(
       expect
         .soft(client.attributes["url.full"], "client span url.full")
         .toBe(`http://127.0.0.1:${at.run.result.port}/users/42`);
+      // the pinned HTTP instrumentation emits client.address on the server span only
+      expect
+        .soft(server.attributes, "server")
+        .not.toHaveProperty("client.address");
       for (const [name, span] of [
         ["server", server],
         ["client", client],
       ] as const) {
-        expect.soft(span.attributes, name).not.toHaveProperty("client.address");
         expect
           .soft(span.attributes, name)
           .not.toHaveProperty("network.peer.address");
@@ -569,6 +574,20 @@ describe.each(Object.entries(NODES))(
       expect
         .soft(at.expressEmail.status, "/fail/email status")
         .toEqual({ code: 2, message: emailMessage });
+      const cleanMessage = "payment gateway timed out";
+      expect.soft(at.expressClean.events, "/fail/clean events").toEqual([
+        {
+          name: "exception",
+          attributes: {
+            "exception.type": "Error",
+            "exception.message": cleanMessage,
+            "exception.stacktrace": at.cleanStack,
+          },
+        },
+      ]);
+      expect
+        .soft(at.expressClean.status, "/fail/clean status")
+        .toEqual({ code: 2, message: cleanMessage });
       expect
         .soft(at.eventRecord.eventName, "event name")
         .toBe(
