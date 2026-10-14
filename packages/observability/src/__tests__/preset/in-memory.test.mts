@@ -2407,6 +2407,28 @@ describe("forceFlush and shutdown", () => {
     }
   });
 
+  it("shutdown with a timeout that is not a number gives up at the default", async () => {
+    const { exporter } = heldMetricExporter();
+    startWith({ metricExporter: exporter });
+    metrics.getMeter("m").createCounter("c").add(1);
+    // the same fake clock as the table above
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      let error: unknown;
+      const stopping = shutdown(null as unknown as number).catch((caught: unknown) => (error = caught));
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(error).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      await stopping;
+      expect((error as Error).message).toBe(
+        "@satoshibits/observability: shutdown did not finish within 10000 ms",
+      );
+      expect(getStatus().state).toBe("shut-down");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("forceFlush never resolves after its deadline, even when the work finished while the timer was overdue", async () => {
     const pending: ((result: ExportResult) => void)[] = [];
     startWith({
@@ -2531,6 +2553,7 @@ describe("forceFlush and shutdown", () => {
       const flushing = forceFlush().catch(() => undefined);
       const started = Date.now();
       await expect(shutdown(100)).rejects.toThrow(/shutdown did not finish within 100 ms/);
+      expect(Date.now() - started).toBeGreaterThanOrEqual(90);
       expect(Date.now() - started).toBeLessThan(400);
 
       await flushing;
