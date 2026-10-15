@@ -2513,6 +2513,8 @@ describe("forceFlush and shutdown", () => {
 
   describe("with the batch log processor, whose flush returns at once to a second caller", () => {
     let sink: OtlpSink | undefined;
+    // the global logger provider this test's runtime registered: the one the held line went to
+    let registered: unknown;
     afterEach(async () => {
       // stopped before the sink closes, so nothing is left sending to it
       await resetForTesting();
@@ -2530,6 +2532,7 @@ describe("forceFlush and shutdown", () => {
       vi.stubEnv("OTEL_METRICS_EXPORTER", "none");
       vi.stubEnv("OTEL_BLRP_SCHEDULE_DELAY", "60000");
       start({ serviceName: "lifecycle", instrumentations: false, loaderHook: false, redaction: false });
+      registered = logs.getLoggerProvider();
       logs.getLogger("l").emit({ body: "held line" });
       return sink;
     }
@@ -2569,6 +2572,7 @@ describe("forceFlush and shutdown", () => {
       // in the flush's batch: only the shutdown can send it, and the sink holds its answer for 600 ms
       await vi.waitFor(() => expect(slow.requests).toHaveLength(1), { interval: 5 });
       expect(slow.logRecords().map((record) => record.body)).toEqual(["held line"]);
+      expect(logs.getLoggerProvider(), "the late line would go to another logger provider").toBe(registered);
       logs.getLogger("l").emit({ body: "late line" });
       const started = Date.now();
       await expect(shutdown(700)).rejects.toThrow(/shutdown did not finish within 700 ms/);
@@ -2634,6 +2638,7 @@ describe("forceFlush and shutdown", () => {
       // buffered: only the shutdown can send it, and the processor's own shutdown, run during the
       // flush, would return without sending anything
       await vi.waitFor(() => expect(slow.requests).toHaveLength(1), { interval: 5 });
+      expect(logs.getLoggerProvider(), "the late line would go to another logger provider").toBe(registered);
       logs.getLogger("l").emit({ body: "late line" });
       const stopping = shutdown().then(() => settled.push("shutdown"));
       expect(await settledSoon(stopping)).toBe(false);
