@@ -7,6 +7,8 @@ export default defineConfig({
     restoreMocks: true, // auto-restore vi.spyOn after each test
     unstubGlobals: true, // auto-unstub vi.stubGlobal after each test
     setupFiles: ["./src/__tests__/test-setup/setup.mts"],
+    // the 1.x facade logs on every start and shutdown; show console output for failing tests only
+    silent: "passed-only",
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "html"],

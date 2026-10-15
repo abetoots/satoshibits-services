@@ -9,7 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 // reads exports through the TypeScript compiler API in JavaScript, which TypeScript 7 (the native port) may not provide
 import { createProgram, ModuleKind, ModuleResolutionKind, ScriptTarget, SymbolFlags } from "typescript";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type {
   ApplicationContext,
@@ -83,28 +83,50 @@ function rootExports(): Map<string, "value" | "type"> {
 
 const exportsCache = new Map<string, Map<string, "value" | "type">>();
 
-/** what an entry module exports, by name and kind, read from the code */
-function exportsOf(entry: string): Map<string, "value" | "type"> {
-  const cached = exportsCache.get(entry);
-  if (cached) return cached;
-  const program = createProgram([entry], {
+/** what each entry module exports, by name and kind, read from the code by one program */
+function readExports(entries: readonly string[]): void {
+  const program = createProgram([...entries], {
     module: ModuleKind.NodeNext,
     moduleResolution: ModuleResolutionKind.NodeNext,
     target: ScriptTarget.ES2022,
     noEmit: true,
   });
   const checker = program.getTypeChecker();
-  const source = program.getSourceFile(entry);
-  const module = source && checker.getSymbolAtLocation(source);
-  if (!module) throw new Error(`the entry ${entry} could not be read as a module`);
-  const found = new Map<string, "value" | "type">();
-  for (const symbol of checker.getExportsOfModule(module)) {
-    const target = symbol.flags & SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
-    found.set(symbol.name, target.flags & SymbolFlags.Value ? "value" : "type");
+  for (const entry of entries) {
+    const source = program.getSourceFile(entry);
+    const module = source && checker.getSymbolAtLocation(source);
+    if (!module) throw new Error(`the entry ${entry} could not be read as a module`);
+    const found = new Map<string, "value" | "type">();
+    for (const symbol of checker.getExportsOfModule(module)) {
+      const target = symbol.flags & SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
+      found.set(symbol.name, target.flags & SymbolFlags.Value ? "value" : "type");
+    }
+    exportsCache.set(entry, found);
   }
-  exportsCache.set(entry, found);
-  return found;
 }
+
+/** what an entry module exports, by name and kind, read from the code */
+function exportsOf(entry: string): Map<string, "value" | "type"> {
+  if (!exportsCache.has(entry)) readExports([entry]);
+  return exportsCache.get(entry)!;
+}
+
+/** every entry the exports map has, plus the root: the modules the checks below read */
+const ENTRY_SOURCES = (() => {
+  const manifest = JSON.parse(readFileSync(path.join(PACKAGE, "package.json"), "utf8")) as {
+    exports: Record<string, unknown>;
+  };
+  const sources = Object.keys(manifest.exports).map((key) =>
+    path.join(PACKAGE, key === "." ? "src/index.mts" : `src/${key.slice(2)}.mts`),
+  );
+  return [...new Set([ROOT_ENTRY, ...sources])];
+})();
+
+// compiling the entries takes seconds, more on a loaded release runner than a test's 5 s budget,
+// so it is done once, here, with a budget of its own
+beforeAll(() => {
+  readExports(ENTRY_SOURCES);
+}, 120_000);
 
 const ROWS = tableRows("root-exports").map(([name, kind, status]) => ({
   name: unquote(name!),
