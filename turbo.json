@@ -8,7 +8,8 @@
       "outputs": ["dist/**"]
     },
     "lint": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build"],
+      "passThroughEnv": ["JITI_FS_CACHE"]
     },
     "dev": {
       "cache": false,

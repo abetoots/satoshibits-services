@@ -86,4 +86,8 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_AUTH_TOKEN }}
           # turbo builds every package before its tests here, so the preload tests use that dist/
           OBS_TEST_DIST_FRESH: "1"
+          # eslint 9.22 (jiti 2.4.2) and eslint 9.38 (jiti 2.6.1) both compile the shared
+          # tooling/eslint-config/index.mts into one cache file in /tmp/jiti; whichever lint
+          # runs first decides it, and the other version cannot load the result. no file cache
+          JITI_FS_CACHE: "false"
 # TODO Add step for publishing to JSR
