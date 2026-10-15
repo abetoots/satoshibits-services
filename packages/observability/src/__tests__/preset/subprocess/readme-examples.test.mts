@@ -1,13 +1,12 @@
 /**
  * The README's snippets, run as a consumer runs them: from a package of its
- * own, outside this repository. Its node_modules holds this package as
- * `pnpm pack` publishes it (built here first), unpacked, with only the
- * dependencies its packed manifest declares linked beside it; and
- * `@opentelemetry/api` and `@satoshibits/redaction` as the consumer's own
- * dependencies. So `files`, the dependency list and the peer are what run:
- * a file left out of the tarball, an import of an undeclared package, or a
- * second copy of the api fails a test here. The linked dependencies are the
- * workspace's installed packages (the test runs offline).
+ * own, outside this repository, with `@opentelemetry/api` and
+ * `@satoshibits/redaction` as its own dependencies and this package installed
+ * from its packed tarball (see packed.mts's installPacked). So `files` and the
+ * dependency list are what run: a file left out of the tarball, or an import
+ * of a package the packed manifest does not declare, fails a test here. That
+ * the peer range lets the app and the SDK share one copy of the api is
+ * package-contents.test.mts's to check.
  *
  * Each snippet is read from README.md (see ../readme-snippets.mts); `app.js`
  * is fixtures/readme-app.mjs, and the README's example endpoint is replaced
@@ -15,7 +14,6 @@
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { execFile } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
@@ -29,14 +27,16 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 
 import type { SinkSpan } from "../../../testing/otlp-decode.mjs";
 import type { OtlpSink } from "../../../testing/otlp-sink.mjs";
 import type { ChildRun, ReportsSockets } from "./harness.mjs";
 
-import { PACKAGE_ROOT, parseCommand, snippet } from "../readme-snippets.mjs";
+import type { Installed } from "./packed.mjs";
+
+import { parseCommand, snippet } from "../readme-snippets.mjs";
 import { runNode, useSinks } from "./harness.mjs";
+import { buildDist, installPacked, PACKAGE_ROOT, packPackage } from "./packed.mjs";
 
 interface AppResult extends ReportsSockets {
   status: number;
@@ -52,13 +52,10 @@ beforeEach(() => {
 });
 
 let consumer: string;
-const run = promisify(execFile);
+let installed: Installed;
 
 beforeAll(async () => {
-  // as in preload.test.mts: built here unless the release workflow has just built dist/
-  if (process.env.OBS_TEST_DIST_FRESH !== "1") {
-    await run("pnpm", ["run", "build"], { cwd: PACKAGE_ROOT });
-  }
+  await buildDist();
   consumer = mkdtempSync(join(tmpdir(), "obs-readme-consumer-"));
   writeFileSync(
     join(consumer, "package.json"),
@@ -73,37 +70,22 @@ beforeAll(async () => {
       },
     }),
   );
-  const installed = (name: string) => realpathSync(join(PACKAGE_ROOT, "node_modules", name));
-  const link = (modules: string, name: string) => {
-    mkdirSync(join(modules, name, ".."), { recursive: true });
-    symlinkSync(installed(name), join(modules, name), "dir");
-  };
-  link(join(consumer, "node_modules"), "@satoshibits/redaction");
-  link(join(consumer, "node_modules"), "@opentelemetry/api");
-
-  // the package as published: packed, unpacked, and given only the dependencies it declares
-  const packed = mkdtempSync(join(tmpdir(), "obs-readme-pack-"));
-  try {
-    const { stdout } = await run("pnpm", ["pack", "--pack-destination", packed, "--json"], {
-      cwd: PACKAGE_ROOT,
-      maxBuffer: 16 * 1024 * 1024,
-    });
-    const tarball = (JSON.parse(stdout) as { filename: string }).filename;
-    const target = join(consumer, "node_modules/@satoshibits/observability");
-    mkdirSync(target, { recursive: true });
-    await run("tar", ["-xzf", tarball, "-C", target, "--strip-components=1"]);
-  } finally {
-    rmSync(packed, { recursive: true, force: true });
+  // the consumer's own dependencies, the workspace's installed copies (the test runs offline)
+  for (const name of ["@satoshibits/redaction", "@opentelemetry/api"]) {
+    mkdirSync(join(consumer, "node_modules", name, ".."), { recursive: true });
+    symlinkSync(realpathSync(join(PACKAGE_ROOT, "node_modules", name)), join(consumer, "node_modules", name), "dir");
   }
-  const unpacked = join(consumer, "node_modules/@satoshibits/observability");
-  const declared = JSON.parse(readFileSync(join(unpacked, "package.json"), "utf8")) as {
-    dependencies: Record<string, string>;
-  };
-  for (const name of Object.keys(declared.dependencies)) link(join(unpacked, "node_modules"), name);
+  const packed = await packPackage();
+  try {
+    installed = await installPacked(packed.tarball, consumer);
+  } finally {
+    packed.dispose();
+  }
   copyFileSync(join(import.meta.dirname, "fixtures/readme-app.mjs"), join(consumer, "app.js"));
 }, 120_000);
 
 afterAll(() => {
+  installed?.dispose();
   if (consumer) rmSync(consumer, { recursive: true, force: true });
 });
 
@@ -144,10 +126,14 @@ const EMITTED_PEER_KEYS = ["client.address", "network.peer.address"];
 
 describe("the consumer package", () => {
   it("has this package as published: no sources, its own dependencies only, the api from the consumer", () => {
-    const unpacked = join(consumer, "node_modules/@satoshibits/observability");
-    expect(existsSync(join(unpacked, "dist/register.mjs"))).toBe(true);
-    expect(existsSync(join(unpacked, "src")), "sources are not published").toBe(false);
-    expect(existsSync(join(unpacked, "node_modules/@opentelemetry/api")), "the api is a peer").toBe(false);
+    expect(existsSync(join(installed.dir, "dist/register.mjs"))).toBe(true);
+    expect(existsSync(join(installed.dir, "src")), "sources are not published").toBe(false);
+    const beside = (name: string) => realpathSync(join(installed.store, "node_modules", name));
+    expect(beside("@opentelemetry/api"), "the api is the consumer's copy").toBe(
+      realpathSync(join(consumer, "node_modules/@opentelemetry/api")),
+    );
+    // the consumer's own copy of redaction is out of the package's reach: it sees the one it declares
+    expect(beside("@satoshibits/redaction")).toBe(realpathSync(join(PACKAGE_ROOT, "node_modules/@satoshibits/redaction")));
   });
 });
 
