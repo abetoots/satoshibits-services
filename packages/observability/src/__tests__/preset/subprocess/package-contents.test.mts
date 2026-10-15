@@ -9,15 +9,10 @@
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
-import { execFile } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
-const PACKAGE_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
-const run = promisify(execFile);
+import { buildDist, PACKAGE_ROOT, packPackage } from "./packed.mjs";
 
 // the only shapes a file in the tarball may have: the manifest, the readme,
 // changelog and licence npm always adds, the 1.x compatibility table the readme
@@ -52,28 +47,17 @@ let manifest: {
 };
 
 beforeAll(async () => {
-  // as in preload.test.mts: built here unless the release workflow has just built dist/
-  if (process.env.OBS_TEST_DIST_FRESH !== "1") {
-    await run("pnpm", ["run", "build"], { cwd: PACKAGE_ROOT });
-  }
+  await buildDist();
   // preload.test.mts bundles a consumer app into dist/__consumer__ and removes it afterwards;
   // a stand-in shows that `files` leaves it out when it is there
   const consumer = join(PACKAGE_ROOT, "dist/__consumer__");
   mkdirSync(consumer, { recursive: true });
   writeFileSync(join(consumer, "consumer-app.mjs"), "");
-  const destination = mkdtempSync(join(tmpdir(), "obs-pack-"));
   try {
-    const { stdout } = await run("pnpm", ["pack", "--pack-destination", destination, "--json"], {
-      cwd: PACKAGE_ROOT,
-      maxBuffer: 16 * 1024 * 1024,
-    });
-    const parsed = JSON.parse(stdout) as { files?: unknown };
-    expect(Array.isArray(parsed.files), `pnpm pack --json printed no files array: ${stdout.slice(0, 200)}`).toBe(
-      true,
-    );
-    files = (parsed.files as { path: string }[]).map((file) => file.path);
+    const packed = await packPackage();
+    files = packed.files;
+    packed.dispose();
   } finally {
-    rmSync(destination, { recursive: true, force: true });
     rmSync(consumer, { recursive: true, force: true });
   }
   manifest = JSON.parse(readFileSync(join(PACKAGE_ROOT, "package.json"), "utf8")) as typeof manifest;

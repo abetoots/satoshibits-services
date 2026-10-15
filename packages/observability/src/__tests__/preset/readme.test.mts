@@ -48,12 +48,20 @@ function variablesInSource(): Set<string> {
   for (const entry of readdirSync(src, { recursive: true, withFileTypes: true })) {
     const file = join(entry.parentPath, entry.name);
     if (!entry.isFile() || relative(src, file).startsWith("__tests__")) continue;
-    const code = readFileSync(file, "utf8");
-    for (const m of code.matchAll(/process\.env\.(OTEL_[A-Z0-9_]+)/g)) names.add(m[1]!);
-    for (const m of code.matchAll(/["'](OTEL_[A-Z0-9_]+)["']/g)) names.add(m[1]!);
-    for (const m of code.matchAll(/`(OTEL_[A-Z0-9_]*)\$\{SIGNAL_VAR\[signal\]\}([A-Z0-9_]*)`/g)) {
-      for (const part of SIGNAL_PARTS) names.add(`${m[1]}${part}${m[2]}`);
-    }
+    for (const name of variablesRead(readFileSync(file, "utf8"))) names.add(name);
+  }
+  return names;
+}
+
+/** the `OTEL_*` names one source file reads */
+function variablesRead(source: string): Set<string> {
+  const names = new Set<string>();
+  // block comments, then line comments (a `//` after a colon is a URL's)
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  for (const m of code.matchAll(/process\.env\.(OTEL_[A-Z0-9_]+)/g)) names.add(m[1]!);
+  for (const m of code.matchAll(/["'](OTEL_[A-Z0-9_]+)["']/g)) names.add(m[1]!);
+  for (const m of code.matchAll(/`(OTEL_[A-Z0-9_]*)\$\{SIGNAL_VAR\[signal\]\}([A-Z0-9_]*)`/g)) {
+    for (const part of SIGNAL_PARTS) names.add(`${m[1]}${part}${m[2]}`);
   }
   return names;
 }
@@ -110,6 +118,23 @@ describe("the README names nothing the package does not have", () => {
     expect(read).toContain("OTEL_TRACES_EXPORTER");
     expect(read).toContain("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL");
     expect(read).toContain("OTEL_SERVICE_NAME");
+  });
+
+  it("does not count a name in a comment or a sentence as read", () => {
+    const read = variablesRead(
+      [
+        "// process.env.OTEL_NONEXISTENT",
+        '// "OTEL_NONEXISTENT"',
+        '/* read(env, "OTEL_NONEXISTENT") */',
+        'warn("set OTEL_NONEXISTENT to turn it on");',
+        'const url = "https://example.com"; // "OTEL_NONEXISTENT"',
+      ].join("\n"),
+    );
+    expect([...read]).toEqual([]);
+    expect([...variablesRead('read(env, "OTEL_REAL"); process.env.OTEL_ALSO_REAL;')].sort()).toEqual([
+      "OTEL_ALSO_REAL",
+      "OTEL_REAL",
+    ]);
   });
 
   it("names only OTEL_* variables the package reads", () => {
