@@ -2562,10 +2562,13 @@ describe("forceFlush and shutdown", () => {
     });
 
     it("a shutdown that waited for a running flush has only the rest of its deadline for its own work", async () => {
-      await startSlowLogs(600);
+      const slow = await startSlowLogs(600);
 
       const flushing = forceFlush().catch(() => undefined);
-      // only the shutdown can send this, and the sink holds its answer for 600 ms
+      // the flush's export is held at the sink before the late line is emitted, so the line is not
+      // in the flush's batch: only the shutdown can send it, and the sink holds its answer for 600 ms
+      await vi.waitFor(() => expect(slow.requests).toHaveLength(1), { interval: 5 });
+      expect(slow.logRecords().map((record) => record.body)).toEqual(["held line"]);
       logs.getLogger("l").emit({ body: "late line" });
       const started = Date.now();
       await expect(shutdown(700)).rejects.toThrow(/shutdown did not finish within 700 ms/);
@@ -2574,6 +2577,9 @@ describe("forceFlush and shutdown", () => {
       expect(took).toBeGreaterThanOrEqual(650);
       expect(took).toBeLessThan(1000);
       await flushing;
+      // the late line reached this runtime's processor: the shutdown had it to send
+      await vi.waitFor(() => expect(slow.requests).toHaveLength(2), { interval: 5 });
+      expect(slow.logRecords().map((record) => record.body)).toEqual(["held line", "late line"]);
     });
 
     it("an export that fails while a shutdown waits for a running flush is the shutdown's failure too", async () => {
@@ -2624,8 +2630,10 @@ describe("forceFlush and shutdown", () => {
       const settled: string[] = [];
 
       const flushing = forceFlush().then(() => settled.push("flush"));
-      // emitted after the flush took what was buffered: only the shutdown can send it, and the
-      // processor's own shutdown, run during the flush, would return without sending anything
+      // emitted once the flush's export is held at the sink, so after the flush took what was
+      // buffered: only the shutdown can send it, and the processor's own shutdown, run during the
+      // flush, would return without sending anything
+      await vi.waitFor(() => expect(slow.requests).toHaveLength(1), { interval: 5 });
       logs.getLogger("l").emit({ body: "late line" });
       const stopping = shutdown().then(() => settled.push("shutdown"));
       expect(await settledSoon(stopping)).toBe(false);

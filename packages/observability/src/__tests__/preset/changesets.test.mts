@@ -130,7 +130,24 @@ describe("the release notes in this repository", () => {
   });
 });
 
-describe("the release notes after `changeset version`", () => {
+// before release only: the simulation copies the changesets, which the release has turned into the
+// CHANGELOG sections the tests above then read
+const UNRELEASED = [OBSERVABILITY, REDACTION].every((release) =>
+  existsSync(join(REPO_ROOT, ".changeset", release.changeset)),
+);
+
+describe("release notes found nowhere", () => {
+  it("fail, rather than pass, with neither the changeset nor the CHANGELOG section", () => {
+    const empty = mkdtempSync(join(tmpdir(), "obs-no-release-notes-"));
+    try {
+      expect(() => releaseNotes(empty, OBSERVABILITY)).toThrow(/neither \.changeset\/observability-2-preset\.md/);
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
+  });
+});
+
+describe.runIf(UNRELEASED)("the release notes after `changeset version`", () => {
   let copy: string;
 
   beforeAll(async () => {
@@ -174,15 +191,6 @@ describe("the release notes after `changeset version`", () => {
       expect(observabilityProblems(releaseNotes(copy, OBSERVABILITY).body)).toContain("7 migration notes, not 8");
     } finally {
       writeFileSync(path, original);
-    }
-  });
-
-  it("fail, rather than pass, with neither the changeset nor the CHANGELOG section", () => {
-    const empty = mkdtempSync(join(tmpdir(), "obs-no-release-notes-"));
-    try {
-      expect(() => releaseNotes(empty, OBSERVABILITY)).toThrow(/neither \.changeset\/observability-2-preset\.md/);
-    } finally {
-      rmSync(empty, { recursive: true, force: true });
     }
   });
 });
