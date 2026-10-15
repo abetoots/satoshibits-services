@@ -27,6 +27,7 @@ import {
   TracerProvider,
 } from "@opentelemetry/sdk-trace";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
 
@@ -2565,25 +2566,63 @@ describe("forceFlush and shutdown", () => {
     });
 
     it("a shutdown that waited for a running flush has only the rest of its deadline for its own work", async () => {
-      const slow = await startSlowLogs(600);
+      // a log endpoint of the test's own: it holds the first export open until the test releases it,
+      // so the flush ends at a time counted from the shutdown's call, not from when the test resumes;
+      // later exports are answered after 600 ms
+      const bodies: string[][] = [];
+      let release: (() => void) | undefined;
+      const server = createServer((request, response) => {
+        const chunks: Buffer[] = [];
+        request.on("data", (chunk: Buffer) => chunks.push(chunk));
+        request.on("end", () => {
+          const decoded = decodeOtlpRequest(request.url ?? "", request.headers["content-type"], Buffer.concat(chunks));
+          bodies.push(decoded.logRecords.map((record) => String(record.body)));
+          const answer = () => {
+            response.writeHead(200, { "content-type": request.headers["content-type"] ?? "application/x-protobuf" });
+            response.end();
+          };
+          if (bodies.length === 1) release = answer;
+          else setTimeout(answer, 600).unref();
+        });
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      try {
+        const { port } = server.address() as { port: number };
+        vi.stubEnv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", `http://127.0.0.1:${port}/v1/logs`);
+        vi.stubEnv("OTEL_LOGS_EXPORTER", "otlp");
+        vi.stubEnv("OTEL_TRACES_EXPORTER", "none");
+        vi.stubEnv("OTEL_METRICS_EXPORTER", "none");
+        vi.stubEnv("OTEL_BLRP_SCHEDULE_DELAY", "60000");
+        start({ serviceName: "lifecycle", instrumentations: false, loaderHook: false, redaction: false });
+        const provider = logs.getLoggerProvider();
+        logs.getLogger("l").emit({ body: "held line" });
 
-      const flushing = forceFlush().catch(() => undefined);
-      // the flush's export is held at the sink before the late line is emitted, so the line is not
-      // in the flush's batch: only the shutdown can send it, and the sink holds its answer for 600 ms
-      await vi.waitFor(() => expect(slow.requests).toHaveLength(1), { interval: 5 });
-      expect(slow.logRecords().map((record) => record.body)).toEqual(["held line"]);
-      expect(logs.getLoggerProvider(), "the late line would go to another logger provider").toBe(registered);
-      logs.getLogger("l").emit({ body: "late line" });
-      const started = Date.now();
-      await expect(shutdown(700)).rejects.toThrow(/shutdown did not finish within 700 ms/);
-      const took = Date.now() - started;
-      // about 700 ms in all: not 600 for the flush and then 700 more
-      expect(took).toBeGreaterThanOrEqual(650);
-      expect(took).toBeLessThan(1000);
-      await flushing;
-      // the late line reached this runtime's processor: the shutdown had it to send
-      await vi.waitFor(() => expect(slow.requests).toHaveLength(2), { interval: 5 });
-      expect(slow.logRecords().map((record) => record.body)).toEqual(["held line", "late line"]);
+        const flushing = forceFlush().catch(() => undefined);
+        // the flush's export is held before the late line is emitted, so the line is not in the
+        // flush's batch: only the shutdown can send it
+        await vi.waitFor(() => expect(release).toBeDefined(), { interval: 5 });
+        expect(bodies).toEqual([["held line"]]);
+        expect(logs.getLoggerProvider(), "the late line would go to another logger provider").toBe(provider);
+        logs.getLogger("l").emit({ body: "late line" });
+
+        const started = Date.now();
+        const stopping = shutdown(700);
+        // the flush ends 300 ms into the shutdown's 700; its own export then needs 600 more
+        setTimeout(() => release!(), 300).unref();
+        await expect(stopping).rejects.toThrow(/shutdown did not finish within 700 ms/);
+        const took = Date.now() - started;
+        // about 700 ms in all: not 300 for the flush and then 700 more
+        expect(took).toBeGreaterThanOrEqual(650);
+        expect(took).toBeLessThan(1000);
+        await flushing;
+        // the late line reached this runtime's processor: the shutdown had it to send
+        await vi.waitFor(() => expect(bodies).toEqual([["held line"], ["late line"]]), { interval: 5 });
+      } finally {
+        // stopped before the server closes, so nothing is left sending to it
+        await resetForTesting();
+        server.closeAllConnections();
+        await new Promise((resolve) => server.close(resolve));
+      }
     });
 
     it("an export that fails while a shutdown waits for a running flush is the shutdown's failure too", async () => {

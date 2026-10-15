@@ -168,6 +168,7 @@ describe.runIf(UNRELEASED)("the release notes after `changeset version`", () => 
     for (const file of ["config.json", OBSERVABILITY.changeset, REDACTION.changeset]) {
       copyFileSync(join(REPO_ROOT, ".changeset", file), join(copy, ".changeset", file));
     }
+    // the copy is outside git, so its entries lack the commit-hash prefix a real release adds; the parser ignores it
     await promisify(execFile)(join(REPO_ROOT, "node_modules/.bin/changeset"), ["version"], { cwd: copy });
     return () => rmSync(copy, { recursive: true, force: true });
   }, 60_000);
