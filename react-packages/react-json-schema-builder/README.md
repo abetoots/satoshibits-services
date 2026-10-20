@@ -27,6 +27,21 @@ yarn add @satoshibits/react-json-schema-builder
 pnpm add @satoshibits/react-json-schema-builder
 ```
 
+## Styles
+
+The stylesheet ships shadcn's default theme tokens (`--primary`, `--sidebar`, ...) on `:root` and `.dark`, plus Tailwind's default theme values. If your app defines its own theme, import the sheet from your own CSS, **before** your theme, so your tokens win:
+
+```css
+@import "@satoshibits/react-json-schema-builder/index.css";
+@import "tailwindcss";
+
+:root {
+  --primary: /* your brand colour */;
+}
+```
+
+Importing it from JavaScript instead (as in the example below) is fine for apps that use the defaults. With a theme of your own, though, the bundler decides where the sheet lands relative to yours, and in a production build it can come last and override your tokens.
+
 ## Basic Usage
 
 Here's a simple example of how to use the SchemaBuilder component:

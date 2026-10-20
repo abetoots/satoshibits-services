@@ -14,10 +14,7 @@
         "default": "./dist/index.cjs.js"
       }
     },
-    "./index.css": {
-      "import": "./dist/style.css",
-      "require": "./dist/style.css"
-    }
+    "./index.css": "./dist/style.css"
   },
   "type": "module",
   "private": false,
