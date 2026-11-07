@@ -1,0 +1,16 @@
+@import "tailwindcss" source(none);
+@source inline("flex p-2 px-8 font-mono");
+
+@layer base {
+  :root {
+    --primary: rgb(1, 2, 3);
+    --ring: rgb(4, 5, 6);
+    --border: rgb(13, 14, 15);
+  }
+  .dark {
+    --primary: rgb(10, 11, 12);
+  }
+  body {
+    font-family: "Fixture Sans", sans-serif;
+  }
+}
