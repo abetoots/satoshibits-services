@@ -90,7 +90,7 @@ describe("ArrayConstraintPlugin", () => {
       render(<MinItemsRenderer {...renderProps} />);
 
       const input = screen.getByLabelText("minItems");
-      expect(input).toHaveClass("border-destructive");
+      expect(input).toHaveClass("rjsb:border-destructive");
     });
 
     it("calls onConstraintChange when value changes", async () => {

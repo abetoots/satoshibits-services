@@ -177,7 +177,7 @@ export function EditPropertyDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         id="edit-property-dialog"
-        className="overflow-y-auto max-h-screen"
+        className="rjsb:overflow-y-auto rjsb:max-h-screen"
       >
         <DialogHeader>
           <DialogTitle>Edit</DialogTitle>
@@ -192,10 +192,10 @@ export function EditPropertyDialog({
               e.preventDefault();
               void form.handleSubmit(handleSubmit)(e);
             }}
-            className="space-y-4"
+            className="rjsb:space-y-4"
             data-testid="edit-property-form"
           >
-            <div className="space-y-2">
+            <div className="rjsb:space-y-2">
               <FormField
                 control={form.control}
                 name="property.default"
@@ -220,7 +220,7 @@ export function EditPropertyDialog({
             </div>
 
             {availableDefinitions.length ? (
-              <div className="space-y-2">
+              <div className="rjsb:space-y-2">
                 <Label>Constraints</Label>
                 <ConstraintsAdd
                   addedConstraints={currentConstraints ?? []}

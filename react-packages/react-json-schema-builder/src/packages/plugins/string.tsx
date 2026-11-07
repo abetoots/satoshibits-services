@@ -40,10 +40,10 @@ const StringNumberConstraintRenderer = ({
       showError={!!error}
     >
       <div>
-        <Label className="mb-2" htmlFor={constraintDef.name}>
+        <Label className="rjsb:mb-2" htmlFor={constraintDef.name}>
           {constraintDef.name}
         </Label>
-        <div className="flex items-center gap-2">
+        <div className="rjsb:flex rjsb:items-center rjsb:gap-2">
           <Input
             id={constraintDef.name}
             type="number"
@@ -51,7 +51,7 @@ const StringNumberConstraintRenderer = ({
             onChange={(e) => onConstraintChange(Number(e.target.value))}
             disabled={disabled}
             min={0}
-            className={cn({ "border-destructive": error })}
+            className={cn({ "rjsb:border-destructive": error })}
           />
           <Button
             type="button"
@@ -59,11 +59,11 @@ const StringNumberConstraintRenderer = ({
             size="icon"
             onClick={() => onRemoveConstraint()}
           >
-            <X className="size-4" />
+            <X className="rjsb:size-4" />
           </Button>
         </div>
         {constraintDef.description && (
-          <div className="mt-2 text-sm text-gray-500">
+          <div className="rjsb:mt-2 rjsb:text-sm rjsb:text-gray-500">
             {constraintDef.description}
           </div>
         )}
@@ -95,10 +95,10 @@ const PatternConstraintRenderer = ({
       showError={!!error}
     >
       <div>
-        <Label className="mb-2" htmlFor={constraintDef.name}>
+        <Label className="rjsb:mb-2" htmlFor={constraintDef.name}>
           {constraintDef.name}
         </Label>
-        <div className="flex items-center gap-2">
+        <div className="rjsb:flex rjsb:items-center rjsb:gap-2">
           <Input
             id={constraintDef.name}
             type="text"
@@ -106,7 +106,7 @@ const PatternConstraintRenderer = ({
             onChange={(e) => onConstraintChange(e.target.value)}
             disabled={disabled}
             placeholder="Regular expression pattern"
-            className={cn({ "border-destructive": error })}
+            className={cn({ "rjsb:border-destructive": error })}
           />
           <Button
             type="button"
@@ -114,11 +114,11 @@ const PatternConstraintRenderer = ({
             size="icon"
             onClick={() => onRemoveConstraint()}
           >
-            <X className="size-4" />
+            <X className="rjsb:size-4" />
           </Button>
         </div>
         {constraintDef.description && (
-          <div className="mt-2 text-sm text-gray-500">
+          <div className="rjsb:mt-2 rjsb:text-sm rjsb:text-gray-500">
             {constraintDef.description}
           </div>
         )}
@@ -166,10 +166,10 @@ const FormatConstraintRenderer = ({
       showError={!!error}
     >
       <div>
-        <Label className="mb-2" htmlFor={constraintDef.name}>
+        <Label className="rjsb:mb-2" htmlFor={constraintDef.name}>
           {constraintDef.name}
         </Label>
-        <div className="flex items-center gap-2">
+        <div className="rjsb:flex rjsb:items-center rjsb:gap-2">
           <Select
             value={value}
             onValueChange={(newValue) => onConstraintChange(newValue)}
@@ -177,7 +177,7 @@ const FormatConstraintRenderer = ({
           >
             <SelectTrigger
               id={constraintDef.name}
-              className={cn("flex-1", { "border-destructive": error })}
+              className={cn("rjsb:flex-1", { "rjsb:border-destructive": error })}
             >
               <SelectValue placeholder="Select format" />
             </SelectTrigger>
@@ -195,11 +195,11 @@ const FormatConstraintRenderer = ({
             size="icon"
             onClick={() => onRemoveConstraint()}
           >
-            <X className="size-4" />
+            <X className="rjsb:size-4" />
           </Button>
         </div>
         {constraintDef.description && (
-          <div className="mt-2 text-sm text-gray-500">
+          <div className="rjsb:mt-2 rjsb:text-sm rjsb:text-gray-500">
             {constraintDef.description}
           </div>
         )}

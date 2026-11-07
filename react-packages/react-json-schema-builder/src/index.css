@@ -1,6 +1,6 @@
 @layer theme, base, components, utilities;
-@import "tailwindcss/theme.css" layer(theme) theme(reference inline);
-@import "tailwindcss/utilities.css" layer(utilities);
+@import "tailwindcss/theme.css" layer(theme) prefix(rjsb) theme(reference inline);
+@import "tailwindcss/utilities.css" layer(components);
 /* the css harness markup must not generate utilities in the shipped sheet */
 @source not "../tests";
 
@@ -134,7 +134,7 @@
   }
   /* (0,1,0) so a later app preflight's `border: 0 solid` can't reset the color */
   .rjsb-root, .rjsb-root *, .rjsb-root ::before, .rjsb-root ::after {
-    @apply border-border outline-ring/50;
+    @apply rjsb:border-border rjsb:outline-ring/50;
   }
   :where(.rjsb-root) :where(h1, h2, h3, h4, h5, h6) { font-size: inherit; font-weight: inherit; }
   :where(.rjsb-root) :where(a) { color: inherit; text-decoration: inherit; }

@@ -13,7 +13,7 @@ function Label({
     <LabelPrimitive.Root
       data-slot="label"
       className={cn(
-        "flex items-center gap-2 text-sm leading-none font-medium select-none group-data-[disabled=true]:pointer-events-none group-data-[disabled=true]:opacity-50 peer-disabled:cursor-not-allowed peer-disabled:opacity-50",
+        "rjsb:flex rjsb:items-center rjsb:gap-2 rjsb:text-sm rjsb:leading-none rjsb:font-medium rjsb:select-none rjsb:group-data-[disabled=true]:pointer-events-none rjsb:group-data-[disabled=true]:opacity-50 rjsb:peer-disabled:cursor-not-allowed rjsb:peer-disabled:opacity-50",
         className
       )}
       {...props}

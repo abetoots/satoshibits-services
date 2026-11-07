@@ -203,7 +203,7 @@ export function AddPropertyDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-testid="add-property-dialog"
-        className="overflow-y-auto max-h-screen"
+        className="rjsb:overflow-y-auto rjsb:max-h-screen"
       >
         <DialogHeader>
           <DialogTitle>Add</DialogTitle>
@@ -218,11 +218,11 @@ export function AddPropertyDialog({
               e.preventDefault();
               void form.handleSubmit(handleSubmit)(e);
             }}
-            className="space-y-4"
+            className="rjsb:space-y-4"
             data-testid="add-property-form"
             id="add-property-form"
           >
-            <div className="space-y-2">
+            <div className="rjsb:space-y-2">
               <FormField
                 control={form.control}
                 name="key"
@@ -246,7 +246,7 @@ export function AddPropertyDialog({
                 }}
               />
             </div>
-            <div className="space-y-2">
+            <div className="rjsb:space-y-2">
               <FormField
                 control={form.control}
                 name="property.title"
@@ -267,7 +267,7 @@ export function AddPropertyDialog({
                 }}
               />
             </div>
-            <div className="space-y-2">
+            <div className="rjsb:space-y-2">
               <FormField
                 control={form.control}
                 name="property.type"
@@ -296,7 +296,7 @@ export function AddPropertyDialog({
                           }}
                         >
                           <SelectTrigger
-                            className="w-full"
+                            className="rjsb:w-full"
                             aria-label="Select type"
                           >
                             <SelectValue />
@@ -349,7 +349,7 @@ export function AddPropertyDialog({
 
             {/* Array Items Type selector */}
             {currentType === "array" && (
-              <div className="space-y-2">
+              <div className="rjsb:space-y-2">
                 <FormField
                   control={form.control}
                   name="property.items.type"
@@ -373,7 +373,7 @@ export function AddPropertyDialog({
                             }}
                           >
                             <SelectTrigger
-                              className="w-full"
+                              className="rjsb:w-full"
                               aria-label="Select items of type"
                             >
                               <SelectValue placeholder="Select item type" />
@@ -425,7 +425,7 @@ export function AddPropertyDialog({
               </div>
             )}
 
-            <div className="flex items-center space-x-2">
+            <div className="rjsb:flex rjsb:items-center rjsb:space-x-2">
               <FormField
                 control={form.control}
                 name="required"
@@ -445,7 +445,7 @@ export function AddPropertyDialog({
                 }}
               />
             </div>
-            <div className="space-y-2">
+            <div className="rjsb:space-y-2">
               <FormField
                 control={form.control}
                 name="property.description"
@@ -462,7 +462,7 @@ export function AddPropertyDialog({
                 }}
               />
             </div>
-            <div className="space-y-2">
+            <div className="rjsb:space-y-2">
               <FormField
                 control={form.control}
                 name="property.default"
@@ -516,7 +516,7 @@ export function AddPropertyDialog({
             ) : null}
 
             {availableDefinitions.length ? (
-              <div className="space-y-2">
+              <div className="rjsb:space-y-2">
                 <Label>Constraints</Label>
                 <ConstraintsAdd
                   addedConstraints={currentConstraints ?? []}

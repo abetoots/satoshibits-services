@@ -33,17 +33,17 @@ const NumberConstraintRenderer = ({
       showError={!!error}
     >
       <div>
-        <Label className="mb-2" htmlFor={constraintDef.name}>
+        <Label className="rjsb:mb-2" htmlFor={constraintDef.name}>
           {constraintDef.name}
         </Label>
-        <div className="flex items-center gap-2">
+        <div className="rjsb:flex rjsb:items-center rjsb:gap-2">
           <Input
             id={constraintDef.name}
             type="number"
             value={value}
             onChange={(e) => onConstraintChange(Number(e.target.value))}
             disabled={disabled}
-            className={cn({ "border-destructive": error })}
+            className={cn({ "rjsb:border-destructive": error })}
           />
           <Button
             type="button"
@@ -51,11 +51,11 @@ const NumberConstraintRenderer = ({
             size="icon"
             onClick={() => onRemoveConstraint()}
           >
-            <X className="size-4" />
+            <X className="rjsb:size-4" />
           </Button>
         </div>
         {constraintDef.description && (
-          <div className="mt-2 text-sm text-gray-500">
+          <div className="rjsb:mt-2 rjsb:text-sm rjsb:text-gray-500">
             {constraintDef.description}
           </div>
         )}

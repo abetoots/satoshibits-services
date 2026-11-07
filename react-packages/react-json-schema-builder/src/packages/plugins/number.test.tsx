@@ -89,7 +89,7 @@ describe("NumberConstraintPlugin", () => {
       render(<MinimumRenderer {...renderProps} />);
 
       const input = screen.getByLabelText("minimum");
-      expect(input).toHaveClass("border-destructive");
+      expect(input).toHaveClass("rjsb:border-destructive");
     });
 
     it("calls onConstraintChange when value changes", async () => {
@@ -189,7 +189,7 @@ describe("NumberConstraintPlugin", () => {
       render(<MaximumRenderer {...renderProps} />);
 
       const input = screen.getByLabelText("maximum");
-      expect(input).toHaveClass("border-destructive");
+      expect(input).toHaveClass("rjsb:border-destructive");
     });
 
     it("calls onConstraintChange when value changes", async () => {
@@ -289,7 +289,7 @@ describe("NumberConstraintPlugin", () => {
       render(<ExclusiveMinimumRenderer {...renderProps} />);
 
       const input = screen.getByLabelText("exclusiveMinimum");
-      expect(input).toHaveClass("border-destructive");
+      expect(input).toHaveClass("rjsb:border-destructive");
     });
 
     it("calls onConstraintChange when value changes", async () => {
@@ -389,7 +389,7 @@ describe("NumberConstraintPlugin", () => {
       render(<ExclusiveMaximumRenderer {...renderProps} />);
 
       const input = screen.getByLabelText("exclusiveMaximum");
-      expect(input).toHaveClass("border-destructive");
+      expect(input).toHaveClass("rjsb:border-destructive");
     });
 
     it("calls onConstraintChange when value changes", async () => {
@@ -489,7 +489,7 @@ describe("NumberConstraintPlugin", () => {
       render(<MultipleOfRenderer {...renderProps} />);
 
       const input = screen.getByLabelText("multipleOf");
-      expect(input).toHaveClass("border-destructive");
+      expect(input).toHaveClass("rjsb:border-destructive");
     });
 
     it("calls onConstraintChange when value changes", async () => {
