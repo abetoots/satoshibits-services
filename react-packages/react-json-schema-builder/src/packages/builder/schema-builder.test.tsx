@@ -2038,4 +2038,39 @@ describe("SchemaBuilder", () => {
       expect(addressCall![0].disabled).toBe(false);
     });
   });
+
+  describe("Root class", () => {
+    const setup = () =>
+      render(
+        <TestWrapper>
+          <SchemaBuilder />
+        </TestWrapper>,
+      );
+
+    it("puts the root class on the builder root", () => {
+      const { container } = setup();
+      expect(container.firstElementChild).toHaveClass("rjsb-root");
+    });
+
+    it("puts the root class on the portaled add-property dialog", async () => {
+      const user = userEvent.setup();
+      setup();
+      await user.click(screen.getByText("Add Property"));
+      expect(screen.getByRole("dialog")).toHaveClass("rjsb-root");
+    });
+
+    it("puts the root class on the portaled type select", async () => {
+      const user = userEvent.setup();
+      setup();
+      await user.click(screen.getByText("Add Property"));
+      await user.click(
+        within(screen.getByRole("dialog")).getByRole("combobox", {
+          name: /select type/i,
+        }),
+      );
+      expect(
+        screen.getByRole("listbox").closest('[data-slot="select-content"]'),
+      ).toHaveClass("rjsb-root");
+    });
+  });
 });

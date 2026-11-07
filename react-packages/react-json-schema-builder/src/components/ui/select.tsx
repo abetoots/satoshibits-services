@@ -4,7 +4,7 @@ import * as React from "react";
 import * as SelectPrimitive from "@radix-ui/react-select";
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 
-import { cn } from "@/lib/utils";
+import { cn, ROOT_CLASS } from "@/lib/utils";
 
 function Select({
   ...props
@@ -58,6 +58,7 @@ function SelectContent({
       <SelectPrimitive.Content
         data-slot="select-content"
         className={cn(
+          ROOT_CLASS,
           "rjsb:bg-popover rjsb:text-popover-foreground rjsb:data-[state=open]:animate-in rjsb:data-[state=closed]:animate-out rjsb:data-[state=closed]:fade-out-0 rjsb:data-[state=open]:fade-in-0 rjsb:data-[state=closed]:zoom-out-95 rjsb:data-[state=open]:zoom-in-95 rjsb:data-[side=bottom]:slide-in-from-top-2 rjsb:data-[side=left]:slide-in-from-right-2 rjsb:data-[side=right]:slide-in-from-left-2 rjsb:data-[side=top]:slide-in-from-bottom-2 rjsb:relative rjsb:z-50 rjsb:max-h-96 rjsb:min-w-[8rem] rjsb:overflow-hidden rjsb:rounded-md rjsb:border rjsb:shadow-md",
           position === "popper" &&
             "rjsb:data-[side=bottom]:translate-y-1 rjsb:data-[side=left]:-translate-x-1 rjsb:data-[side=right]:translate-x-1 rjsb:data-[side=top]:-translate-y-1",

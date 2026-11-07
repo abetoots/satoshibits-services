@@ -1,7 +1,7 @@
 import * as React from "react"
 import * as AlertDialogPrimitive from "@radix-ui/react-alert-dialog"
 
-import { cn } from "@/lib/utils"
+import { cn, ROOT_CLASS } from "@/lib/utils"
 import { buttonVariants } from "@/components/ui/button"
 
 function AlertDialog({
@@ -52,7 +52,8 @@ function AlertDialogContent({
       <AlertDialogPrimitive.Content
         data-slot="alert-dialog-content"
         className={cn(
-          "rjsb:bg-background rjsb:data-[state=open]:animate-in rjsb:data-[state=closed]:animate-out rjsb:data-[state=closed]:fade-out-0 rjsb:data-[state=open]:fade-in-0 rjsb:data-[state=closed]:zoom-out-95 rjsb:data-[state=open]:zoom-in-95 rjsb:fixed rjsb:top-[50%] rjsb:left-[50%] rjsb:z-50 rjsb:grid rjsb:w-full rjsb:max-w-[calc(100%-2rem)] rjsb:translate-x-[-50%] rjsb:translate-y-[-50%] rjsb:gap-4 rjsb:rounded-lg rjsb:border rjsb:p-6 rjsb:shadow-lg rjsb:duration-200 rjsb:sm:max-w-lg",
+          ROOT_CLASS,
+          "rjsb:bg-background rjsb:data-[state=open]:animate-in rjsb:data-[state=closed]:animate-out rjsb:data-[state=closed]:fade-out-0 rjsb:data-[state=open]:fade-in-0 rjsb:data-[state=closed]:zoom-out-95 rjsb:data-[state=open]:zoom-in-95 rjsb:fixed rjsb:top-[50%] rjsb:left-[50%] rjsb:z-50 rjsb:grid rjsb:w-full rjsb:max-w-[calc(100%-2rem)] rjsb:translate-x-[-50%] rjsb:translate-y-[-50%] rjsb:gap-4 rjsb:rounded-lg rjsb:border rjsb:p-6 rjsb:shadow-lg rjsb:duration-200 rjsb:sm:max-w-lg rjsb:text-foreground",
           className
         )}
         {...props}

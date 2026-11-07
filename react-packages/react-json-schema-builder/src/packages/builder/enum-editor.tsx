@@ -15,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { AlertCircle, Check, Copy, Plus, Trash2 } from "lucide-react";
+import { cn, ROOT_CLASS } from "@/lib/utils";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -498,7 +499,7 @@ export function EnumEditor({
 
   if (!showCard) {
     return (
-      <div className="rjsb:space-y-4">
+      <div className={cn(ROOT_CLASS, "rjsb:space-y-4")}>
         {content}
         {footer}
       </div>
@@ -506,7 +507,7 @@ export function EnumEditor({
   }
 
   return (
-    <Card className="rjsb:w-full">
+    <Card className={cn(ROOT_CLASS, "rjsb:w-full")}>
       <CardHeader>
         <CardTitle>Enum Values Editor</CardTitle>
         <CardDescription>
