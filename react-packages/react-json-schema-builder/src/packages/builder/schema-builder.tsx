@@ -40,7 +40,7 @@ import { validateSchema } from "./utils";
 import Ajv from "ajv";
 import { DebouncedInput } from "@/components/depounced-input";
 import { AddPropertyDialog, type AddPropertyDialogProps } from "./add-dialog";
-import { cn } from "@/lib/utils";
+import { cn, ROOT_CLASS } from "@/lib/utils";
 
 // PropertyComponent type definition for custom property components
 export interface PropertyComponentProps {
@@ -590,7 +590,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
   };
 
   return (
-    <div>
+    <div className={cn(ROOT_CLASS)}>
       {/* Schema validation error */}
       {schemaValidationError && (
         <Alert variant="destructive">

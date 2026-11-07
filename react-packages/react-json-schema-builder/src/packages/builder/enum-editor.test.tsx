@@ -363,4 +363,12 @@ describe("EnumEditor", () => {
       });
     });
   });
+
+  it.each([true, false])(
+    "puts the root class on a standalone enum editor (showCard=%s)",
+    (showCard) => {
+      const { container } = render(<EnumEditor showCard={showCard} />);
+      expect(container.firstElementChild).toHaveClass("rjsb-root");
+    },
+  );
 });
