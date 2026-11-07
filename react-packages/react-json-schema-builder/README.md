@@ -41,9 +41,9 @@ What the sheet contains ([source](src/index.css)):
 - Default theme tokens (`--primary`, `--sidebar`, ...) in `@layer theme`. Any token your app sets wins.
 - Element resets, scoped to the builder's own roots (`.rjsb-root`).
 
-It ships no global rules. There is no preflight and nothing targets `html`, `body` or `button`.
+It ships no global element rules and no preflight. Resets apply only inside `.rjsb-root`.
 
-Classes you pass through the `*ClassName` props always win over the builder's own. `cn()` ([source](src/lib/utils.ts)) merges only `rjsb:` classes, so your own classes are never de-duplicated.
+Classes you pass through the `*ClassName` props win over the builder's own when they are Tailwind utilities or unlayered CSS. Rules you put in `@layer base` or `@layer components` don't reliably win. `cn()` ([source](src/lib/utils.ts)) merges only `rjsb:` classes, so your own classes are never de-duplicated.
 
 The builder inherits `font-family` and `line-height` from your page.
 
