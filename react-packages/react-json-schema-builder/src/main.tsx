@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import "./index.css";
+import "./dev.css";
 import { SchemaProvider } from "@/packages/builder/context";
 import Dev from "./dev";
 import { PluginsProvider } from "@/packages/constraints/context";
