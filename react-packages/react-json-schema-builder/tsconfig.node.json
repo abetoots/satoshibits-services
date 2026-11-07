@@ -8,5 +8,5 @@
     "types": ["vitest", "node", "vite"],
     "resolveJsonModule": true
   },
-  "include": ["eslint.config.mts", "vite.config.mts"]
+  "include": ["eslint.config.mts", "vite.config.mts", "playwright.config.ts", "tests/**/*.ts"]
 }
