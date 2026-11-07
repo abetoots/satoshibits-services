@@ -17,10 +17,10 @@ export function InputErrorWrapper({
   className,
 }: InputErrorWrapperProps) {
   return (
-    <div className={cn("space-y-2", className)}>
+    <div className={cn("rjsb:space-y-2", className)}>
       {showError && errorCode && (
         <div
-          className="text-sm font-medium text-destructive"
+          className="rjsb:text-sm rjsb:font-medium rjsb:text-destructive"
           aria-live="polite"
         >
           {errorCode}
@@ -30,7 +30,7 @@ export function InputErrorWrapper({
       {children}
 
       {showError && errorDescription && (
-        <div className="text-sm text-destructive" aria-live="polite">
+        <div className="rjsb:text-sm rjsb:text-destructive" aria-live="polite">
           {errorDescription}
         </div>
       )}

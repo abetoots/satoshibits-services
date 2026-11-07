@@ -192,19 +192,19 @@ export function EnumEditor({
   const getTypeColor = (type: string): string => {
     switch (type) {
       case "string":
-        return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300";
+        return "rjsb:bg-green-100 rjsb:text-green-800 rjsb:dark:bg-green-900 rjsb:dark:text-green-300";
       case "number":
-        return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300";
+        return "rjsb:bg-blue-100 rjsb:text-blue-800 rjsb:dark:bg-blue-900 rjsb:dark:text-blue-300";
       case "boolean":
-        return "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300";
+        return "rjsb:bg-purple-100 rjsb:text-purple-800 rjsb:dark:bg-purple-900 rjsb:dark:text-purple-300";
       case "null":
-        return "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300";
+        return "rjsb:bg-gray-100 rjsb:text-gray-800 rjsb:dark:bg-gray-800 rjsb:dark:text-gray-300";
       case "object":
-        return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300";
+        return "rjsb:bg-yellow-100 rjsb:text-yellow-800 rjsb:dark:bg-yellow-900 rjsb:dark:text-yellow-300";
       case "array":
-        return "bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-300";
+        return "rjsb:bg-pink-100 rjsb:text-pink-800 rjsb:dark:bg-pink-900 rjsb:dark:text-pink-300";
       default:
-        return "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300";
+        return "rjsb:bg-gray-100 rjsb:text-gray-800 rjsb:dark:bg-gray-800 rjsb:dark:text-gray-300";
     }
   };
 
@@ -226,20 +226,20 @@ export function EnumEditor({
   };
 
   const content = (
-    <div className="grid gap-6">
+    <div className="rjsb:grid rjsb:gap-6">
       {error && (
         <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
+          <AlertCircle className="rjsb:h-4 rjsb:w-4" />
           <AlertDescription>{error.message}</AlertDescription>
         </Alert>
       )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList
-          className={`grid ${
+          className={`rjsb:grid ${
             allowedTabs.length <= 3
-              ? `grid-cols-${allowedTabs.length}`
-              : "grid-cols-3 md:grid-cols-6"
+              ? `rjsb:grid-cols-${allowedTabs.length}`
+              : "rjsb:grid-cols-3 rjsb:md:grid-cols-6"
           }`}
         >
           {allowedTabs.includes("string") && (
@@ -261,11 +261,11 @@ export function EnumEditor({
             <TabsTrigger value="array">Array</TabsTrigger>
           )}
         </TabsList>
-        <div className="mt-4">
+        <div className="rjsb:mt-4">
           <TabsContent value="string">
-            <div className="flex flex-col gap-2">
+            <div className="rjsb:flex rjsb:flex-col rjsb:gap-2">
               <Label htmlFor="string-value">String Value</Label>
-              <div className="flex gap-2">
+              <div className="rjsb:flex rjsb:gap-2">
                 <Input
                   id="string-value"
                   value={stringValue}
@@ -277,15 +277,15 @@ export function EnumEditor({
                   disabled={disabled}
                 />
                 <Button onClick={addStringValue} size="sm" disabled={disabled}>
-                  <Plus className="h-4 w-4 mr-1" /> Add enum
+                  <Plus className="rjsb:h-4 rjsb:w-4 rjsb:mr-1" /> Add enum
                 </Button>
               </div>
             </div>
           </TabsContent>
           <TabsContent value="number">
-            <div className="flex flex-col gap-2">
+            <div className="rjsb:flex rjsb:flex-col rjsb:gap-2">
               <Label htmlFor="number-value">Number Value</Label>
-              <div className="flex gap-2">
+              <div className="rjsb:flex rjsb:gap-2">
                 <Input
                   id="number-value"
                   value={numberValue}
@@ -303,16 +303,16 @@ export function EnumEditor({
                   disabled={disabled}
                   aria-label="Add enum"
                 >
-                  <Plus className="h-4 w-4 mr-1" /> Add enum
+                  <Plus className="rjsb:h-4 rjsb:w-4 rjsb:mr-1" /> Add enum
                 </Button>
               </div>
             </div>
           </TabsContent>
           <TabsContent value="boolean">
-            <div className="flex flex-col gap-4">
+            <div className="rjsb:flex rjsb:flex-col rjsb:gap-4">
               <Label>Boolean Value</Label>
-              <div className="flex gap-4">
-                <div className="flex items-center gap-2">
+              <div className="rjsb:flex rjsb:gap-4">
+                <div className="rjsb:flex rjsb:items-center rjsb:gap-2">
                   <Switch
                     id="true-value"
                     checked={enumValues.includes(true)}
@@ -321,7 +321,7 @@ export function EnumEditor({
                   />
                   <Label htmlFor="true-value">true</Label>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="rjsb:flex rjsb:items-center rjsb:gap-2">
                   <Switch
                     id="false-value"
                     checked={enumValues.includes(false)}
@@ -334,9 +334,9 @@ export function EnumEditor({
             </div>
           </TabsContent>
           <TabsContent value="null">
-            <div className="flex flex-col gap-4">
+            <div className="rjsb:flex rjsb:flex-col rjsb:gap-4">
               <Label>Null Value</Label>
-              <div className="flex items-center gap-2">
+              <div className="rjsb:flex rjsb:items-center rjsb:gap-2">
                 <Switch
                   id="null-value"
                   checked={enumValues.includes(null)}
@@ -348,7 +348,7 @@ export function EnumEditor({
             </div>
           </TabsContent>
           <TabsContent value="object">
-            <div className="flex flex-col gap-2">
+            <div className="rjsb:flex rjsb:flex-col rjsb:gap-2">
               <Label htmlFor="object-value">Object Value (JSON)</Label>
               <Textarea
                 id="object-value"
@@ -362,22 +362,22 @@ export function EnumEditor({
                 disabled={disabled}
               />
               {objectError && (
-                <Alert variant="destructive" className="mt-2">
-                  <AlertCircle className="h-4 w-4" />
+                <Alert variant="destructive" className="rjsb:mt-2">
+                  <AlertCircle className="rjsb:h-4 rjsb:w-4" />
                   <AlertDescription>{objectError}</AlertDescription>
                 </Alert>
               )}
               <Button
                 onClick={addObjectValue}
-                className="mt-2 self-start"
+                className="rjsb:mt-2 rjsb:self-start"
                 disabled={disabled}
               >
-                <Plus className="h-4 w-4 mr-1" /> Add Object
+                <Plus className="rjsb:h-4 rjsb:w-4 rjsb:mr-1" /> Add Object
               </Button>
             </div>
           </TabsContent>
           <TabsContent value="array">
-            <div className="flex flex-col gap-2">
+            <div className="rjsb:flex rjsb:flex-col rjsb:gap-2">
               <Label htmlFor="array-value">Array Value (JSON)</Label>
               <Textarea
                 id="array-value"
@@ -391,45 +391,45 @@ export function EnumEditor({
                 disabled={disabled}
               />
               {arrayError && (
-                <Alert variant="destructive" className="mt-2">
-                  <AlertCircle className="h-4 w-4" />
+                <Alert variant="destructive" className="rjsb:mt-2">
+                  <AlertCircle className="rjsb:h-4 rjsb:w-4" />
                   <AlertDescription>{arrayError}</AlertDescription>
                 </Alert>
               )}
               <Button
                 onClick={addArrayValue}
-                className="mt-2 self-start"
+                className="rjsb:mt-2 rjsb:self-start"
                 disabled={disabled}
               >
-                <Plus className="h-4 w-4 mr-1" /> Add Array
+                <Plus className="rjsb:h-4 rjsb:w-4 rjsb:mr-1" /> Add Array
               </Button>
             </div>
           </TabsContent>
         </div>
       </Tabs>
 
-      <div className="mt-6">
-        <h3 className="text-lg font-medium mb-2">Current Enum Values</h3>
+      <div className="rjsb:mt-6">
+        <h3 className="rjsb:text-lg rjsb:font-medium rjsb:mb-2">Current Enum Values</h3>
         {enumValues.length === 0 ? (
-          <div className="text-muted-foreground text-center py-4 border rounded-md">
+          <div className="rjsb:text-muted-foreground rjsb:text-center rjsb:py-4 rjsb:border rjsb:rounded-md">
             No values added yet
           </div>
         ) : (
-          <ScrollArea className="h-[200px] border rounded-md p-4">
-            <ul className="space-y-2">
+          <ScrollArea className="rjsb:h-[200px] rjsb:border rjsb:rounded-md rjsb:p-4">
+            <ul className="rjsb:space-y-2">
               {enumValues.map((value, index) => (
                 <li
                   key={index}
-                  className="flex items-center justify-between p-2 border rounded-md bg-muted/30"
+                  className="rjsb:flex rjsb:items-center rjsb:justify-between rjsb:p-2 rjsb:border rjsb:rounded-md rjsb:bg-muted/30"
                 >
-                  <div className="flex items-center gap-2 overflow-hidden">
+                  <div className="rjsb:flex rjsb:items-center rjsb:gap-2 rjsb:overflow-hidden">
                     <Badge
                       variant="outline"
-                      className={`${getTypeColor(getValueType(value))} font-mono text-xs`}
+                      className={`${getTypeColor(getValueType(value))} rjsb:font-mono rjsb:text-xs`}
                     >
                       {getValueType(value)}
                     </Badge>
-                    <span className="font-mono text-sm truncate max-w-[300px]">
+                    <span className="rjsb:font-mono rjsb:text-sm rjsb:truncate rjsb:max-w-[300px]">
                       {getValueDisplay(value)}
                     </span>
                   </div>
@@ -437,11 +437,11 @@ export function EnumEditor({
                     variant="ghost"
                     size="icon"
                     onClick={() => removeValue(index)}
-                    className="h-8 w-8"
+                    className="rjsb:h-8 rjsb:w-8"
                     disabled={disabled}
                     aria-label="Remove value"
                   >
-                    <Trash2 className="h-4 w-4 text-muted-foreground" />
+                    <Trash2 className="rjsb:h-4 rjsb:w-4 rjsb:text-muted-foreground" />
                   </Button>
                 </li>
               ))}
@@ -451,10 +451,10 @@ export function EnumEditor({
       </div>
 
       {showGeneratedSchema && (
-        <div className="mt-6">
-          <h3 className="text-lg font-medium mb-2">Generated Schema</h3>
-          <div className="bg-muted p-4 rounded-md">
-            <pre className="text-sm font-mono overflow-x-auto">
+        <div className="rjsb:mt-6">
+          <h3 className="rjsb:text-lg rjsb:font-medium rjsb:mb-2">Generated Schema</h3>
+          <div className="rjsb:bg-muted rjsb:p-4 rjsb:rounded-md">
+            <pre className="rjsb:text-sm rjsb:font-mono rjsb:overflow-x-auto">
               {JSON.stringify(generateSchema(), null, 2)}
             </pre>
           </div>
@@ -464,7 +464,7 @@ export function EnumEditor({
   );
 
   const footer = showFooter ? (
-    <div className="flex justify-between">
+    <div className="rjsb:flex rjsb:justify-between">
       <Button
         variant="outline"
         onClick={() => setEnumValues([])}
@@ -479,16 +479,16 @@ export function EnumEditor({
       ) : (
         <Button
           onClick={copyToClipboard}
-          className="flex items-center gap-1"
+          className="rjsb:flex rjsb:items-center rjsb:gap-1"
           disabled={disabled}
         >
           {copied ? (
             <>
-              <Check className="h-4 w-4" /> Copied
+              <Check className="rjsb:h-4 rjsb:w-4" /> Copied
             </>
           ) : (
             <>
-              <Copy className="h-4 w-4" /> Copy Schema
+              <Copy className="rjsb:h-4 rjsb:w-4" /> Copy Schema
             </>
           )}
         </Button>
@@ -498,7 +498,7 @@ export function EnumEditor({
 
   if (!showCard) {
     return (
-      <div className="space-y-4">
+      <div className="rjsb:space-y-4">
         {content}
         {footer}
       </div>
@@ -506,7 +506,7 @@ export function EnumEditor({
   }
 
   return (
-    <Card className="w-full">
+    <Card className="rjsb:w-full">
       <CardHeader>
         <CardTitle>Enum Values Editor</CardTitle>
         <CardDescription>

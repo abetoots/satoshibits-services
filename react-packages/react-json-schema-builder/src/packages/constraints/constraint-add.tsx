@@ -49,15 +49,15 @@ const ConstraintsAdd = ({
   return (
     //Don't render the component if there are no constraints to add
     unusedConstraintDefinitions.length > 0 && (
-      <div className="flex items-end gap-2">
-        <div className="flex-1">
+      <div className="rjsb:flex rjsb:items-end rjsb:gap-2">
+        <div className="rjsb:flex-1">
           <Select
             value={selectedConstraintDefinition}
             onValueChange={(newVal) => {
               setSelectedConstraintDefinition(newVal as Constraint["name"]);
             }}
           >
-            <SelectTrigger className="w-full" aria-label="Select constraint">
+            <SelectTrigger className="rjsb:w-full" aria-label="Select constraint">
               <SelectValue placeholder="Select a constraint" />
             </SelectTrigger>
             <SelectContent>
@@ -77,7 +77,7 @@ const ConstraintsAdd = ({
           disabled={!selectedConstraintDefinition}
           aria-label="Add constraint"
         >
-          <Plus className="h-4 w-4" />
+          <Plus className="rjsb:h-4 rjsb:w-4" />
         </Button>
       </div>
     )

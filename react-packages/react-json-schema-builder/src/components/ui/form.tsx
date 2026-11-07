@@ -78,7 +78,7 @@ function FormItem({ className, ...props }: React.ComponentProps<"div">) {
     <FormItemContext.Provider value={{ id }}>
       <div
         data-slot="form-item"
-        className={cn("grid gap-2", className)}
+        className={cn("rjsb:grid rjsb:gap-2", className)}
         {...props}
       />
     </FormItemContext.Provider>
@@ -95,7 +95,7 @@ function FormLabel({
     <Label
       data-slot="form-label"
       data-error={!!error}
-      className={cn("data-[error=true]:text-destructive-foreground", className)}
+      className={cn("rjsb:data-[error=true]:text-destructive-foreground", className)}
       htmlFor={formItemId}
       {...props}
     />
@@ -128,7 +128,7 @@ function FormDescription({ className, ...props }: React.ComponentProps<"p">) {
     <p
       data-slot="form-description"
       id={formDescriptionId}
-      className={cn("text-muted-foreground text-sm", className)}
+      className={cn("rjsb:text-muted-foreground rjsb:text-sm", className)}
       {...props}
     />
   );
@@ -147,7 +147,7 @@ function FormMessage({ className, ...props }: React.ComponentProps<"p">) {
     <p
       data-slot="form-message"
       id={formMessageId}
-      className={cn("text-destructive-foreground text-sm", className)}
+      className={cn("rjsb:text-destructive-foreground rjsb:text-sm", className)}
       {...props}
     >
       {body}

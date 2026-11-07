@@ -263,8 +263,8 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
       <div
         key={key}
         className={cn(
-          "flex flex-col md:grid grid-cols-(--my-autofit-grid) gap-4 md:items-center border p-2 rounded-md mb-2 overflow-y-auto",
-          isDisabled ? "opacity-70 " : "",
+          "rjsb:flex rjsb:flex-col rjsb:md:grid rjsb:grid-cols-(--my-autofit-grid) rjsb:gap-4 rjsb:md:items-center rjsb:border rjsb:p-2 rjsb:rounded-md rjsb:mb-2 rjsb:overflow-y-auto",
+          isDisabled ? "rjsb:opacity-70 " : "",
         )}
       >
         <div className="">
@@ -278,7 +278,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
           />
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="rjsb:flex rjsb:items-center rjsb:gap-2">
           <Switch
             checked={isPropertyRequired(key)}
             onCheckedChange={(checked) =>
@@ -305,7 +305,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
             aria-label="Type"
             disabled={isDisabled}
           >
-            <SelectTrigger className="w-full" aria-label="Select type">
+            <SelectTrigger className="rjsb:w-full" aria-label="Select type">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -358,17 +358,17 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
           />
         </div>
 
-        <div className="order-last md:order-none flex gap-2">
+        <div className="rjsb:order-last rjsb:md:order-none rjsb:flex rjsb:gap-2">
           {/* Delete button */}
           <Button
             variant="outline"
             size="sm"
             onClick={() => handleInitiateDelete(key)}
             aria-label="Delete"
-            className="block!"
+            className="rjsb:block!"
             disabled={isDisabled}
           >
-            <Trash2 size={16} className="text-destructive" />
+            <Trash2 size={16} className="rjsb:text-destructive" />
           </Button>
 
           {/* Duplicate button */}
@@ -377,7 +377,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
             size="sm"
             onClick={() => handleDuplicate(key)}
             aria-label="Duplicate"
-            className="block!"
+            className="rjsb:block!"
             disabled={isDisabled}
           >
             <Copy size={16} />
@@ -412,7 +412,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
         : "string";
 
     return (
-      <div className="col-span-full flex items-center gap-4 pl-8 mt-2 bg-gray-50 p-2 rounded-md">
+      <div className="rjsb:col-span-full rjsb:flex rjsb:items-center rjsb:gap-4 rjsb:pl-8 rjsb:mt-2 rjsb:bg-gray-50 rjsb:p-2 rjsb:rounded-md">
         <Label>Items of type:</Label>
         <Select
           value={itemType as string}
@@ -432,7 +432,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
           disabled={isDisabled}
         >
           <SelectTrigger
-            className="w-[200px]"
+            className="rjsb:w-[200px]"
             aria-label="Select items of type"
           >
             <SelectValue />
@@ -501,7 +501,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
           onClick={() => handleNavigateToProperty(key)}
           aria-label="Navigate"
         >
-          <span className="sr-only">Navigate</span>
+          <span className="rjsb:sr-only">Navigate</span>
           <ChevronRight size={16} />
         </Button>
       );
@@ -526,7 +526,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
     }
 
     return (
-      <div className="flex items-center space-x-4">
+      <div className="rjsb:flex rjsb:items-center rjsb:space-x-4">
         <Button
           variant="outline"
           size="sm"
@@ -577,13 +577,13 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
     return (
       <Button
         type="button"
-        className={cn("self-center", props.addPropertyButtonClassName)}
+        className={cn("rjsb:self-center", props.addPropertyButtonClassName)}
         onClick={() => {
           setShowPropertyDialog(true);
         }}
         disabled={props.disabled}
       >
-        <Plus className="h-4 w-4 mr-2" />
+        <Plus className="rjsb:h-4 rjsb:w-4 rjsb:mr-2" />
         Add Property
       </Button>
     );
@@ -604,7 +604,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
 
       {/* Properties list */}
       <div
-        className={cn("mt-6 overflow-x-hidden", props.propertiesListClassName)}
+        className={cn("rjsb:mt-6 rjsb:overflow-x-hidden", props.propertiesListClassName)}
       >
         {Object.entries(currentSchema.properties ?? {}).map(
           ([key, property]) => {

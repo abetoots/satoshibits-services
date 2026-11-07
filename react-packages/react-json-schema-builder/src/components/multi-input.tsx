@@ -29,7 +29,7 @@ const MultiInput = ({
       errorCode={primaryError}
       errorDescription={errorDescription}
       showError={!!primaryError}
-      className="space-y-2"
+      className="rjsb:space-y-2"
     >
       <Label>Add Input</Label>
       <Input
@@ -60,11 +60,11 @@ const MultiInput = ({
       {renderValues ? (
         renderValues()
       ) : (
-        <div className="space-x-2 flex">
+        <div className="rjsb:space-x-2 rjsb:flex">
           {values.map((value, i) => (
             <div
               key={`${i}-${value}`}
-              className="flex items-center text-xs border rounded p-1 w-max mt-2"
+              className="rjsb:flex rjsb:items-center rjsb:text-xs rjsb:border rjsb:rounded rjsb:p-1 rjsb:w-max rjsb:mt-2"
             >
               <span>{value}</span>
               <button onClick={() => onRemoveValue(i)}>

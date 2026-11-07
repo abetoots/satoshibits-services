@@ -24,17 +24,17 @@ const EnumConstraintRenderer = ({
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <h3 className="text-lg font-medium">Enum Values</h3>
+    <div className="rjsb:space-y-4">
+      <div className="rjsb:flex rjsb:justify-between rjsb:items-center">
+        <h3 className="rjsb:text-lg rjsb:font-medium">Enum Values</h3>
         <Button
           variant="ghost"
           size="sm"
           onClick={onRemoveConstraint}
-          className="flex items-center gap-1 text-muted-foreground hover:text-destructive"
+          className="rjsb:flex rjsb:items-center rjsb:gap-1 rjsb:text-muted-foreground rjsb:hover:text-destructive"
           disabled={disabled}
         >
-          <Trash2 className="h-4 w-4" />
+          <Trash2 className="rjsb:h-4 rjsb:w-4" />
           <span>Remove Constraint</span>
         </Button>
       </div>

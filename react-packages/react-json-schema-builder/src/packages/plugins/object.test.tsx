@@ -89,7 +89,7 @@ describe("ObjectConstraintPlugin", () => {
       render(<MinPropertiesRenderer {...renderProps} />);
 
       const input = screen.getByLabelText("minProperties");
-      expect(input).toHaveClass("border-destructive");
+      expect(input).toHaveClass("rjsb:border-destructive");
     });
 
     it("calls onConstraintChange when value changes", async () => {
@@ -189,7 +189,7 @@ describe("ObjectConstraintPlugin", () => {
       render(<MaxPropertiesRenderer {...renderProps} />);
 
       const input = screen.getByLabelText("maxProperties");
-      expect(input).toHaveClass("border-destructive");
+      expect(input).toHaveClass("rjsb:border-destructive");
     });
 
     it("calls onConstraintChange when value changes", async () => {

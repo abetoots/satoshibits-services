@@ -85,7 +85,7 @@ describe("StringConstraintPlugin", () => {
       render(<MinLengthRenderer {...renderProps} />);
 
       const input = screen.getByLabelText("minLength");
-      expect(input).toHaveClass("border-destructive");
+      expect(input).toHaveClass("rjsb:border-destructive");
     });
 
     it("calls onConstraintChange when value changes", async () => {
@@ -181,7 +181,7 @@ describe("StringConstraintPlugin", () => {
       render(<MaxLengthRenderer {...renderProps} />);
 
       const input = screen.getByLabelText("maxLength");
-      expect(input).toHaveClass("border-destructive");
+      expect(input).toHaveClass("rjsb:border-destructive");
     });
 
     it("calls onConstraintChange when value changes", async () => {
@@ -277,7 +277,7 @@ describe("StringConstraintPlugin", () => {
       render(<PatternRenderer {...renderProps} />);
 
       const input = screen.getByLabelText("pattern");
-      expect(input).toHaveClass("border-destructive");
+      expect(input).toHaveClass("rjsb:border-destructive");
     });
 
     it("calls onConstraintChange when value changes", async () => {
@@ -374,7 +374,7 @@ describe("StringConstraintPlugin", () => {
       render(<FormatRenderer {...renderProps} />);
 
       const trigger = screen.getByRole("combobox");
-      expect(trigger).toHaveClass("border-destructive");
+      expect(trigger).toHaveClass("rjsb:border-destructive");
     });
 
     it("calls onConstraintChange when selection changes", async () => {

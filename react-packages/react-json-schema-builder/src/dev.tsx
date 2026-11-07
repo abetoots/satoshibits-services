@@ -27,7 +27,7 @@ const Dev = () => {
   const testSchema = useMemo(() => createTestSchema(), []);
 
   return (
-    <div className="bg-yellow-50/50 p-4">
+    <div className="rjsb:bg-yellow-50/50 rjsb:p-4">
       <SchemaBuilder
         initialSchema={testSchema}
         plugins={[
@@ -47,8 +47,8 @@ const Dev = () => {
         disabledProperties={["name"]}
       />
 
-      <div className="mt-6">
-        <h1 className="text-3xl font-bold">JSON Schema: </h1>
+      <div className="rjsb:mt-6">
+        <h1 className="rjsb:text-3xl rjsb:font-bold">JSON Schema: </h1>
         {/* @ts-expect-error Just a type issue */}
         <JSONInput
           id="json-editor"
@@ -60,8 +60,8 @@ const Dev = () => {
         />
       </div>
 
-      <div className="mt-6">
-        <h1 className="text-3xl font-bold">Sample Data: </h1>
+      <div className="rjsb:mt-6">
+        <h1 className="rjsb:text-3xl rjsb:font-bold">Sample Data: </h1>
         {/* @ts-expect-error Just a type issue */}
         <JSONInput
           id="json-editor"

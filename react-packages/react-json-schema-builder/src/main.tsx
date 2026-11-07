@@ -9,7 +9,7 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <SchemaProvider>
       <PluginsProvider>
-        <h1 className="mb-6">
+        <h1 className="rjsb:mb-6">
           We are developing packaged React components with Vite and TypeScript.
         </h1>
         <Dev />
