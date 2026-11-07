@@ -2,6 +2,14 @@
 @import "tailwindcss/preflight.css" layer(base);
 @import "./index.css";
 
+/* the dev page plays the host app, so it sets its own typography (what preflight gave it) */
+html {
+  line-height: 1.5;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", "Noto Sans", Arial, sans-serif, "Apple Color Emoji",
+    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+
 html,
 body {
   width: 100%;
