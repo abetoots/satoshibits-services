@@ -29,18 +29,29 @@ pnpm add @satoshibits/react-json-schema-builder
 
 ## Styles
 
-The stylesheet ships shadcn's default theme tokens (`--primary`, `--sidebar`, ...) on `:root` and `.dark`, plus Tailwind's default theme values. If your app defines its own theme, import the sheet from your own CSS, **before** your theme, so your tokens win:
+Import the sheet once, from JavaScript or CSS. Import order does not matter.
 
 ```css
 @import "@satoshibits/react-json-schema-builder/index.css";
-@import "tailwindcss";
-
-:root {
-  --primary: /* your brand colour */;
-}
 ```
 
-Importing it from JavaScript instead (as in the example below) is fine for apps that use the defaults. With a theme of your own, though, the bundler decides where the sheet lands relative to yours, and in a production build it can come last and override your tokens.
+What the sheet contains ([source](src/index.css)):
+
+- Utilities, all prefixed `rjsb:`, in `@layer components`.
+- Default theme tokens (`--primary`, `--sidebar`, ...) in `@layer theme`. Any token your app sets wins.
+- Element resets, scoped to the builder's own roots (`.rjsb-root`).
+
+It ships no global rules. There is no preflight and nothing targets `html`, `body` or `button`.
+
+Classes you pass through the `*ClassName` props always win over the builder's own. `cn()` ([source](src/lib/utils.ts)) merges only `rjsb:` classes, so your own classes are never de-duplicated.
+
+The builder inherits `font-family` and `line-height` from your page.
+
+Tailwind v4 apps already declare the layer order. Apps without Tailwind that use native `@layer` should declare it first:
+
+```css
+@layer theme, base, components, utilities;
+```
 
 ## Basic Usage
 
