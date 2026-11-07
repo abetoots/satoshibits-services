@@ -1,4 +1,6 @@
 @import "tailwindcss";
+/* the css harness markup must not generate utilities in the shipped sheet */
+@source not "../tests";
 
 @plugin "tailwindcss-animate";
 
