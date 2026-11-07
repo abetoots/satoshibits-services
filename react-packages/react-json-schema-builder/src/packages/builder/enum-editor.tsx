@@ -238,7 +238,7 @@ export function EnumEditor({
         <TabsList
           className={`rjsb:grid ${
             allowedTabs.length <= 3
-              ? `rjsb:grid-cols-${allowedTabs.length}`
+              ? ["", "rjsb:grid-cols-1", "rjsb:grid-cols-2", "rjsb:grid-cols-3"][allowedTabs.length]
               : "rjsb:grid-cols-3 rjsb:md:grid-cols-6"
           }`}
         >
