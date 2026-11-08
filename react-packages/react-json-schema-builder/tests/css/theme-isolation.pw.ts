@@ -58,7 +58,9 @@ const body = `
   <div id="override" class="rjsb:p-2 px-8">x</div>
   <a id="link" href="#">link</a>
   <button id="primary" class="rjsb:bg-primary rjsb:text-primary-foreground rjsb:h-9 rjsb:px-4 rjsb:py-2">Add</button>
-</div></div>`;
+</div></div>
+<div class="rjsb-root" id="portal-root"><h2 id="portal-heading">heading</h2><ul id="portal-list"><li>item</li></ul><div id="portal-primary" class="rjsb:bg-primary">primary</div><div id="portal-border" class="rjsb:border">border</div><div id="portal-muted" class="rjsb:bg-muted">muted</div></div>
+<div class="rjsb-root" id="standalone-root"><button id="standalone-remove" class="rjsb:inline-flex rjsb:items-center rjsb:justify-center rjsb:hover:bg-accent rjsb:hover:text-accent-foreground rjsb:size-9 rjsb:h-8 rjsb:w-8">remove</button></div>`;
 
 async function load(page: Page, app: App, order: Order, dark = false, darkTarget?: "body" | "wrapper") {
   const styles =
@@ -133,6 +135,25 @@ for (const app of apps) {
       }
     });
 
+    test(`${app}/${order}: portal root inherits app tokens and resets`, async ({ page }) => {
+      await load(page, app, order);
+      expect(await css(page, "#portal-primary", "background-color")).toBe("rgb(1, 2, 3)");
+      expect(await css(page, "#portal-border", "border-top-color")).toBe("rgb(13, 14, 15)");
+      expect(await css(page, "#portal-muted", "background-color")).toBe("oklch(0.97 0 0)");
+      expect(await css(page, "#portal-heading", "font-size")).toBe(await css(page, "#portal-root", "font-size"));
+      expect(await css(page, "#portal-heading", "margin-top")).toBe("0px");
+      expect(await css(page, "#portal-list", "list-style-type")).toBe("none");
+      expect(await css(page, "#portal-list", "padding-left")).toBe("0px");
+      await load(page, app, order, false, "body");
+      expect(await css(page, "#portal-primary", "background-color")).toBe("rgb(10, 11, 12)");
+      expect(await css(page, "#portal-border", "border-top-color")).toBe("rgb(13, 14, 15)");
+      expect(await css(page, "#portal-muted", "background-color")).toBe("oklch(0.269 0 0)");
+      await load(page, app, order, false, "wrapper");
+      expect(await css(page, "#portal-primary", "background-color")).toBe("rgb(1, 2, 3)");
+      expect(await css(page, "#portal-border", "border-top-color")).toBe("rgb(13, 14, 15)");
+      expect(await css(page, "#portal-muted", "background-color")).toBe("oklch(0.97 0 0)");
+    });
+
     test(`${app}/${order}: missing muted token falls back in light and dark`, async ({ page }) => {
       await load(page, app, order);
       expect(await css(page, "#muted", "background-color")).toBe("oklch(0.97 0 0)");
@@ -181,6 +202,11 @@ for (const app of apps) {
         expect(await css(page, "body", "margin-top")).toBe("8px");
         expect(await css(page, "#outside-h", "margin-top")).toBe("21.44px");
         expect(await css(page, "#outside-btn", "cursor")).toBe("default");
+      });
+      test(`plain/${order}: standalone renderer button is reset`, async ({ page }) => {
+        await load(page, app, order);
+        expect(await css(page, "#standalone-remove", "background-color")).toBe("rgba(0, 0, 0, 0)");
+        expect(await css(page, "#standalone-remove", "border-top-width")).toBe("0px");
       });
     }
 
@@ -248,28 +274,103 @@ test("enum tab grids have one, two, or three columns", async ({ page }) => {
 
 
 test("standalone builder uses light and dark default colors", async ({ page }) => {
-  for (const [isDark, primary, border] of [
-    [false, "oklch(0.205 0 0)", "oklch(0.922 0 0)"],
-    [true, "oklch(0.985 0 0)", "oklch(0.269 0 0)"],
+  for (const [target, primary, border, muted] of [
+    ["light", "oklch(0.205 0 0)", "oklch(0.922 0 0)", "oklch(0.97 0 0)"],
+    ["html", "oklch(0.985 0 0)", "oklch(0.269 0 0)", "oklch(0.269 0 0)"],
+    ["body", "oklch(0.985 0 0)", "oklch(0.269 0 0)", "oklch(0.269 0 0)"],
+    ["wrapper", "oklch(0.985 0 0)", "oklch(0.269 0 0)", "oklch(0.269 0 0)"],
   ] as const) {
-    await page.setContent(`<html${isDark ? ' class="dark"' : ""}><head><style>${libraryCss}</style></head><body>${body}</body></html>`);
+    await page.setContent(`<html${target === "html" ? ' class="dark"' : ""}><head><style>${libraryCss}</style></head><body>${body}</body></html>`);
+    if (target === "body" || target === "wrapper") await page.locator(target === "body" ? "body" : "#wrapper").evaluate((el) => el.classList.add("dark"));
     expect(await css(page, "#primary", "background-color")).toBe(primary);
     expect(await css(page, "#padded", "border-top-color")).toBe(border);
+    expect(await css(page, "#muted", "background-color")).toBe(muted);
   }
 });
 
+const splitSelector = (selector: string) => {
+  const compounds: string[] = [];
+  const combinators: string[] = [];
+  let start = 0;
+  let depth = 0;
+  let brackets = 0;
+  for (let i = 0; i < selector.length; i++) {
+    const char = selector.charAt(i);
+    if (char === "\\") { i++; continue; }
+    if (char === "[") brackets++;
+    else if (char === "]") brackets--;
+    else if (!brackets && char === "(") depth++;
+    else if (!brackets && char === ")") depth--;
+    else if (!brackets && !depth && /[\s>+~]/.test(char)) {
+      const compound = selector.slice(start, i).trim();
+      if (!compound) continue;
+      compounds.push(compound);
+      while (/\s/.test(selector[i + 1] ?? "")) i++;
+      if (/\s/.test(char) && /[>+~]/.test(selector[i + 1] ?? "")) i++;
+      combinators.push(/[>+~]/.test(selector.charAt(i)) ? selector.charAt(i) : " ");
+      while (/\s/.test(selector[i + 1] ?? "")) i++;
+      start = i + 1;
+    }
+  }
+  const last = selector.slice(start).trim();
+  if (last) compounds.push(last);
+  return { compounds, combinators };
+};
+
+const scopedCompound = (compound: string): boolean => {
+  for (let i = 0; i < compound.length; i++) {
+    if (compound[i] === "\\") { i++; continue; }
+    if (compound[i] === "[") {
+      while (++i < compound.length && compound[i] !== "]") if (compound[i] === "\\") i++;
+    } else if (compound[i] === "." && /^(?:\.rjsb-root(?![\w-])|\.rjsb\\:)/.test(compound.slice(i))) {
+      return true;
+    } else if (compound[i] === ":") {
+      const match = /^:([\w-]+)\(/.exec(compound.slice(i));
+      if (!match) continue;
+      const start = i + match[0].length;
+      let depth = 1;
+      let brackets = 0;
+      i = start;
+      for (; i < compound.length && depth; i++) {
+        if (compound[i] === "\\") { i++; continue; }
+        if (compound[i] === "[") brackets++;
+        else if (compound[i] === "]") brackets--;
+        else if (!brackets && compound[i] === "(") depth++;
+        else if (!brackets && compound[i] === ")") depth--;
+      }
+      const inner = compound.slice(start, i - 1);
+      i--;
+      if ((match[1] === "is" || match[1] === "where") && postcss.list.comma(inner).every(containedSelector)) return true;
+    }
+  }
+  return false;
+};
+
+function containedSelector(selector: string): boolean {
+  const { compounds, combinators } = splitSelector(selector);
+  const first = compounds[0];
+  const last = compounds[compounds.length - 1];
+  if (!first || !last || combinators.length !== compounds.length - 1 || !scopedCompound(first)) return false;
+  return scopedCompound(last) || combinators.every((value) => value === " " || value === ">");
+}
+
 const allowedSelector = (selector: string) =>
-  /^(?:\.rjsb-root(?![\w-])|(?:[a-zA-Z][\w-]*)?\.rjsb\\:|:where\(\.rjsb|:is\(\.rjsb|:is\(:where\(\.rjsb)/.test(selector) ||
-  selector === ":where(:root)" || selector === ":where(.dark)";
+  selector === ":where(:root)" || selector === ":where(.dark)" || containedSelector(selector);
 
 test("selector audit accepts scoped Tailwind variants and rejects unscoped selectors", () => {
   for (const selector of [
     String.raw`:is(:where(.rjsb\:group)[data-disabled="true"] .rjsb\:group-data-foo)`,
     String.raw`:is(:where(.rjsb\:peer):disabled ~ .rjsb\:peer-disabled-foo)`,
     String.raw`a.rjsb\:hover`,
-  ]) expect(allowedSelector(selector)).toBe(true);
-  for (const selector of ["h1", "body:has(.rjsb-root) h1", "*", String.raw`body .rjsb\:flex`]) {
-    expect(allowedSelector(selector)).toBe(false);
+    ".rjsb-root :where(h1, h2, h3, h4, h5, h6)",
+    ".rjsb-root *",
+    String.raw`:where(.rjsb\:x) body`,
+    ".rjsb-root:has(h1) h1",
+    String.raw`.rjsb\:[\&\>svg]:size-4 > svg`,
+    ".rjsb-root ::selection",
+  ]) expect(allowedSelector(selector), selector).toBe(true);
+  for (const selector of ["h1", "body:has(.rjsb-root) h1", "*", String.raw`body .rjsb\:flex`, ".rjsb-root ~ *", ".rjsb-root + *", ".rjsb-root ~ h1", "h1 .rjsb-root ~ p", ":is(.rjsb-root ~ body)", ":is(.rjsb-root, body)"]) {
+    expect(allowedSelector(selector), selector).toBe(false);
   }
 });
 

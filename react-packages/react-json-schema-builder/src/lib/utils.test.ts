@@ -8,6 +8,7 @@ describe("cn", () => {
   });
 
   it("keeps app utilities and the root class", () => {
+    expect(cn("px-2", "px-8")).toBe("px-2 px-8");
     expect(cn("rjsb:px-4", "px-8")).toBe("rjsb:px-4 px-8");
     expect(cn("rjsb:text-sm", "rjsb:text-primary")).toBe("rjsb:text-sm rjsb:text-primary");
     expect(cn("rjsb:p-2", "p-4")).toBe("rjsb:p-2 p-4");
