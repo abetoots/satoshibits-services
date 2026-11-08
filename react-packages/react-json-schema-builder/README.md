@@ -35,23 +35,25 @@ Import the sheet once, from JavaScript or CSS. Import order does not matter.
 @import "@satoshibits/react-json-schema-builder/index.css";
 ```
 
-What the sheet contains ([source](src/index.css)):
+The sheet provides `rjsb:`-prefixed utilities and private `--rjsb-*` default tokens. The builder reads your app's tokens, such as `--primary` and `--border`, when set; app tokens win wherever `.dark` is placed. Tokens must be complete CSS colours such as `oklch(...)` or `rgb(...)` (shadcn v4 / Tailwind v4 format). Bare HSL channels such as `222.2 47.4% 11.2%` (shadcn v3) are not supported.
 
-- Utilities, all prefixed `rjsb:`, in `@layer components`.
-- Default theme tokens (`--primary`, `--sidebar`, ...) in `@layer theme`. Any token your app sets wins.
-- Element resets, scoped to the builder's own roots (`.rjsb-root`).
+The sheet has no preflight or unscoped element resets; its resets apply inside `.rjsb-root`. Unlayered app resets, such as Tailwind v3 preflight, Bootstrap reboot, or `button { ... }`, override the builder's layered styles.
 
-It ships no global element rules and no preflight. Resets apply only inside `.rjsb-root`.
-
-Classes you pass through the `*ClassName` props win over the builder's own when they are Tailwind utilities or unlayered CSS. Rules you put in `@layer base` or `@layer components` don't reliably win. `cn()` ([source](src/lib/utils.ts)) merges only `rjsb:` classes, so your own classes are never de-duplicated.
-
-The builder inherits `font-family` and `line-height` from your page.
-
-Tailwind v4 apps already declare the layer order. Apps without Tailwind that use native `@layer` should declare it first:
+The inline builder inherits font, line height and text colour from the page and has no root background; dialogs set their own colours. Set page colours, for example:
 
 ```css
-@layer theme, base, components, utilities;
+body { background: var(--background); color: var(--foreground); }
 ```
+
+Classes passed through `*ClassName` props win over the builder's own when they are Tailwind utilities or unlayered CSS. Rules in `@layer base` or `@layer components` do not reliably win. `cn()` merges only `rjsb:` classes, so app classes are not de-duplicated.
+
+Apps using native `@layer` should declare the layer order before other styles:
+
+```css
+@layer properties, theme, base, components, utilities;
+```
+
+The sheet defines global `@keyframes enter` and `exit` from `tailwindcss-animate`. App keyframes with those names collide with them.
 
 ## Basic Usage
 
