@@ -9,6 +9,8 @@ describe("cn", () => {
 
   it("keeps app utilities and the root class", () => {
     expect(cn("rjsb:px-4", "px-8")).toBe("rjsb:px-4 px-8");
+    expect(cn("rjsb:text-sm", "rjsb:text-primary")).toBe("rjsb:text-sm rjsb:text-primary");
+    expect(cn("rjsb:p-2", "p-4")).toBe("rjsb:p-2 p-4");
     expect(cn(ROOT_CLASS, "rjsb:w-full")).toBe("rjsb-root rjsb:w-full");
   });
 });

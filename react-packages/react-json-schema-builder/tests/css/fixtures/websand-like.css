@@ -22,3 +22,10 @@
 .dark {
   --primary: rgb(10, 11, 12);
 }
+
+@layer base {
+  a { color: rgb(0, 0, 255); text-decoration: underline; }
+  ul { list-style: disc; padding-left: 40px; }
+  h2 { font-size: 30px; margin-top: 20px; }
+  p { margin-bottom: 16px; }
+}

@@ -57,7 +57,8 @@ describe("NumberConstraintPlugin", () => {
         onRemoveConstraint: vi.fn(),
       };
 
-      render(<MinimumRenderer {...renderProps} />);
+      const { container } = render(<MinimumRenderer {...renderProps} />);
+      expect(container.firstElementChild).toHaveClass("rjsb-root");
 
       expect(screen.getByText("minimum")).toBeInTheDocument();
       expect(screen.getByLabelText("minimum")).toHaveValue(5);
