@@ -93,6 +93,18 @@ describe("EnumEditor", () => {
   });
 
   describe("Tab Filtering", () => {
+    it("uses one column for number and integer", () => {
+      render(<EnumEditor propertyType={["number", "integer"]} />);
+      expect(screen.getAllByRole("tab")).toHaveLength(1);
+      expect(screen.getByRole("tablist")).toHaveClass("rjsb:grid-cols-1");
+    });
+
+    it("uses four columns for four distinct tabs at medium widths", () => {
+      render(<EnumEditor propertyType={["string", "number", "boolean", "null"]} />);
+      expect(screen.getAllByRole("tab")).toHaveLength(4);
+      expect(screen.getByRole("tablist")).toHaveClass("rjsb:md:grid-cols-4");
+    });
+
     it("shows only string tab when propertyType is string", () => {
       render(<EnumEditor propertyType="string" />);
       // Should only see string tab
