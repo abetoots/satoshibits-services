@@ -263,7 +263,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
       <div
         key={key}
         className={cn(
-          "rjsb:flex rjsb:flex-col rjsb:md:grid rjsb:grid-cols-(--my-autofit-grid) rjsb:gap-4 rjsb:md:items-center rjsb:border rjsb:p-2 rjsb:rounded-md rjsb:mb-2 rjsb:overflow-y-auto",
+          "rjsb:flex rjsb:flex-col rjsb:md:grid rjsb:grid-cols-(--rjsb-autofit-grid) rjsb:gap-4 rjsb:md:items-center rjsb:border rjsb:p-2 rjsb:rounded-md rjsb:mb-2 rjsb:overflow-y-auto",
           isDisabled ? "rjsb:opacity-70 " : "",
         )}
       >
@@ -432,7 +432,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
           disabled={isDisabled}
         >
           <SelectTrigger
-            className="rjsb:w-[200px]"
+            className="rjsb:w-[200px] rjsb:bg-background"
             aria-label="Select items of type"
           >
             <SelectValue />

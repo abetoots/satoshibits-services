@@ -85,9 +85,7 @@ export function EnumEditor({
   const allowedTabs = useMemo(
     () =>
       Array.isArray(propertyType)
-        ? propertyType.reduce((acc, curr) => {
-            return [...acc, ...allowedTabsByType[curr]!];
-          }, [] as string[])
+        ? [...new Set(propertyType.flatMap((type) => allowedTabsByType[type] ?? []))]
         : (allowedTabsByType[propertyType ?? "undefined"] ?? [
             "string",
             "number",
@@ -240,7 +238,7 @@ export function EnumEditor({
           className={`rjsb:grid ${
             allowedTabs.length <= 3
               ? ["", "rjsb:grid-cols-1", "rjsb:grid-cols-2", "rjsb:grid-cols-3"][allowedTabs.length]
-              : "rjsb:grid-cols-3 rjsb:md:grid-cols-6"
+              : ["", "", "", "", "rjsb:grid-cols-3 rjsb:md:grid-cols-4", "rjsb:grid-cols-3 rjsb:md:grid-cols-5", "rjsb:grid-cols-3 rjsb:md:grid-cols-6"][allowedTabs.length]
           }`}
         >
           {allowedTabs.includes("string") && (

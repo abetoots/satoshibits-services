@@ -6,6 +6,7 @@ import {
 import { EnumEditor } from "@/packages/builder/enum-editor";
 import { Button } from "@/components/ui/button";
 import { Trash2 } from "lucide-react";
+import { cn, ROOT_CLASS } from "@/lib/utils";
 
 const EnumConstraintRenderer = ({
   constraintName,
@@ -24,7 +25,7 @@ const EnumConstraintRenderer = ({
   }
 
   return (
-    <div className="rjsb:space-y-4">
+    <div className={cn(ROOT_CLASS, "rjsb:space-y-4")}>
       <div className="rjsb:flex rjsb:justify-between rjsb:items-center">
         <h3 className="rjsb:text-lg rjsb:font-medium">Enum Values</h3>
         <Button

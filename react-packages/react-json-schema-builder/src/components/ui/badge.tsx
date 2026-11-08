@@ -10,13 +10,13 @@ const badgeVariants = cva(
     variants: {
       variant: {
         default:
-          "rjsb:border-transparent rjsb:bg-primary rjsb:text-primary-foreground rjsb:[a&]:hover:bg-primary/90",
+          "rjsb:border-transparent rjsb:bg-primary rjsb:text-primary-foreground rjsb:[&:is(a)]:hover:bg-primary/90",
         secondary:
-          "rjsb:border-transparent rjsb:bg-secondary rjsb:text-secondary-foreground rjsb:[a&]:hover:bg-secondary/90",
+          "rjsb:border-transparent rjsb:bg-secondary rjsb:text-secondary-foreground rjsb:[&:is(a)]:hover:bg-secondary/90",
         destructive:
-          "rjsb:border-transparent rjsb:bg-destructive rjsb:text-white rjsb:[a&]:hover:bg-destructive/90 rjsb:focus-visible:ring-destructive/20 rjsb:dark:focus-visible:ring-destructive/40 rjsb:dark:bg-destructive/60",
+          "rjsb:border-transparent rjsb:bg-destructive rjsb:text-white rjsb:[&:is(a)]:hover:bg-destructive/90 rjsb:focus-visible:ring-destructive/20 rjsb:dark:focus-visible:ring-destructive/40 rjsb:dark:bg-destructive/60",
         outline:
-          "rjsb:text-foreground rjsb:[a&]:hover:bg-accent rjsb:[a&]:hover:text-accent-foreground",
+          "rjsb:text-foreground rjsb:[&:is(a)]:hover:bg-accent rjsb:[&:is(a)]:hover:text-accent-foreground",
       },
     },
     defaultVariants: {

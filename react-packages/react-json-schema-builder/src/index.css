@@ -43,8 +43,8 @@
     --rjsb-sidebar-accent-foreground: oklch(0.205 0 0);
     --rjsb-sidebar-border: oklch(0.922 0 0);
     --rjsb-sidebar-ring: oklch(0.708 0 0);
-    --my-autofit-grid: repeat(auto-fit, minmax(100px, 1fr));
-    --my-autofill-grid: repeat(auto-fill, minmax(100px, 1fr));
+    --rjsb-autofit-grid: repeat(auto-fit, minmax(100px, 1fr));
+    --rjsb-autofill-grid: repeat(auto-fill, minmax(100px, 1fr));
   }
 
   :where(.dark) {
@@ -124,23 +124,18 @@
 
 @layer base {
   /* element resets the builder relies on, scoped so the app's globals stay untouched */
-  :where(.rjsb-root, .rjsb-root *),
-  :where(.rjsb-root, .rjsb-root *)::before,
-  :where(.rjsb-root, .rjsb-root *)::after {
+  .rjsb-root, .rjsb-root *, .rjsb-root ::before, .rjsb-root ::after {
     box-sizing: border-box;
     margin: 0;
     padding: 0;
     border: 0 solid;
-  }
-  /* (0,1,0) so a later app preflight's `border: 0 solid` can't reset the color */
-  .rjsb-root, .rjsb-root *, .rjsb-root ::before, .rjsb-root ::after {
     @apply rjsb:border-border rjsb:outline-ring/50;
   }
-  :where(.rjsb-root) :where(h1, h2, h3, h4, h5, h6) { font-size: inherit; font-weight: inherit; }
-  :where(.rjsb-root) :where(a) { color: inherit; text-decoration: inherit; }
-  :where(.rjsb-root) :where(ol, ul) { list-style: none; }
-  :where(.rjsb-root) :where(img, svg) { display: block; vertical-align: middle; }
-  :where(.rjsb-root) :where(button, input, select, textarea) { font: inherit; color: inherit; background-color: transparent; border-radius: 0; }
-  :where(.rjsb-root) :where(textarea) { resize: vertical; }
-  :where(.rjsb-root) :where(button:not(:disabled)) { cursor: pointer; }
+  .rjsb-root :where(h1, h2, h3, h4, h5, h6) { font-size: inherit; font-weight: inherit; }
+  .rjsb-root :where(a) { color: inherit; text-decoration: inherit; }
+  .rjsb-root :where(ol, ul) { list-style: none; }
+  .rjsb-root :where(img, svg) { display: block; vertical-align: middle; }
+  .rjsb-root :where(button, input, select, textarea) { font: inherit; color: inherit; background-color: transparent; border-radius: 0; }
+  .rjsb-root :where(textarea) { resize: vertical; }
+  .rjsb-root :where(button:not(:disabled)) { cursor: pointer; }
 }
