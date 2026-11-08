@@ -412,7 +412,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
         : "string";
 
     return (
-      <div className="rjsb:col-span-full rjsb:flex rjsb:items-center rjsb:gap-4 rjsb:pl-8 rjsb:mt-2 rjsb:bg-gray-50 rjsb:p-2 rjsb:rounded-md">
+      <div className="rjsb:col-span-full rjsb:flex rjsb:items-center rjsb:gap-4 rjsb:pl-8 rjsb:mt-2 rjsb:bg-muted rjsb:p-2 rjsb:rounded-md">
         <Label>Items of type:</Label>
         <Select
           value={itemType as string}

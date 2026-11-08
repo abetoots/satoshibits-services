@@ -19,6 +19,6 @@ body {
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--background, var(--rjsb-background));
+  color: var(--foreground, var(--rjsb-foreground));
 }
