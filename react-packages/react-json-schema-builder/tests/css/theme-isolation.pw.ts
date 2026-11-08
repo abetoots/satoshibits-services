@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { expect, test, type Page } from "@playwright/test";
+import postcss from "postcss";
 
 const pkgRoot = path.resolve(import.meta.dirname, "../..");
 const fixtures = path.join(pkgRoot, "tests/css/fixtures");
@@ -16,15 +17,16 @@ type Order = (typeof orders)[number];
 
 const appCss = {} as Record<App, string>;
 let libraryCss = "";
+let fixtureDir = "";
 
 test.beforeAll(() => {
-  const out = fs.mkdtempSync(path.join(os.tmpdir(), "rjsb-fixtures-"));
+  fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "rjsb-fixtures-"));
   for (const app of apps) {
     if (app === "plain") {
       appCss[app] = fs.readFileSync(path.join(fixtures, "plain.css"), "utf8");
       continue;
     }
-    const outFile = path.join(out, `${app}.css`);
+    const outFile = path.join(fixtureDir, `${app}.css`);
     execFileSync(
       tailwindBin,
       ["-i", path.join(fixtures, `${app}.css`), "-o", outFile],
@@ -35,19 +37,28 @@ test.beforeAll(() => {
   libraryCss = fs.readFileSync(path.join(pkgRoot, "dist/style.css"), "utf8");
 });
 
+test.afterAll(() => {
+  for (const app of apps.filter((name) => name !== "plain")) {
+    const file = path.join(fixtureDir, `${app}.css`);
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+  }
+  fs.rmdirSync(fixtureDir);
+});
+
 const body = `
 <h1 id="outside-h">outside</h1>
 <button id="outside-btn">outside</button>
 <div id="app-el" class="flex p-2 font-mono">app</div>
-<div class="rjsb-root">
+<div id="wrapper"><div class="rjsb-root" id="builder-root">
+  <h2 id="heading">heading</h2><ul id="list"><li>item</li></ul>
   <div id="padded" class="rjsb:border rjsb:p-2 rjsb:rounded-md">x</div>
   <div id="layout" class="rjsb:flex rjsb:flex-col rjsb:md:grid">x</div>
   <div id="override" class="rjsb:p-2 px-8">x</div>
   <a id="link" href="#">link</a>
   <button id="primary" class="rjsb:bg-primary rjsb:text-primary-foreground rjsb:h-9 rjsb:px-4 rjsb:py-2">Add</button>
-</div>`;
+</div></div>`;
 
-async function load(page: Page, app: App, order: Order, dark = false) {
+async function load(page: Page, app: App, order: Order, dark = false, darkTarget?: "body" | "wrapper") {
   const styles =
     order === "library-last"
       ? [appCss[app], libraryCss]
@@ -57,6 +68,7 @@ async function load(page: Page, app: App, order: Order, dark = false) {
       .map((css) => `<style>${css}</style>`)
       .join("")}</head><body>${body}</body></html>`,
   );
+  if (darkTarget) await page.locator(darkTarget === "body" ? "body" : "#wrapper").evaluate((el) => el.classList.add("dark"));
 }
 
 const css = (page: Page, sel: string, prop: string) =>
@@ -84,6 +96,29 @@ for (const app of apps) {
     test(`${app}/${order}: app dark tokens win`, async ({ page }) => {
       await load(page, app, order, true);
       expect(await rootVar(page, "--primary")).toBe("rgb(10, 11, 12)");
+    });
+
+    for (const target of ["body", "wrapper"] as const) {
+      test(`${app}/${order}: ${target} dark retains app tokens`, async ({ page }) => {
+        await load(page, app, order, false, target);
+        const selector = target === "body" ? "body" : "#wrapper";
+        expect((await css(page, selector, "--ring")).trim()).toBe("rgb(4, 5, 6)");
+        expect((await css(page, selector, "--border")).trim()).toBe("rgb(13, 14, 15)");
+        if (app === "websand-like") expect((await css(page, selector, "--sidebar")).trim()).toBe("rgb(7, 8, 9)");
+      });
+    }
+
+    test(`${app}/${order}: builder uses app dark primary`, async ({ page }) => {
+      await load(page, app, order, true);
+      expect(await css(page, "#primary", "background-color")).toBe("rgb(10, 11, 12)");
+    });
+
+    test(`${app}/${order}: scoped resets apply`, async ({ page }) => {
+      await load(page, app, order);
+      expect(await css(page, "#heading", "font-size")).toBe(await css(page, "#builder-root", "font-size"));
+      expect(await css(page, "#heading", "margin-top")).toBe("0px");
+      expect(await css(page, "#list", "list-style-type")).toBe("none");
+      expect(await css(page, "#list", "padding-left")).toBe("0px");
     });
 
     test(`${app}/${order}: app body font wins`, async ({ page }) => {
@@ -120,6 +155,8 @@ for (const app of apps) {
     } else {
       test(`plain/${order}: no global rules leak`, async ({ page }) => {
         await load(page, app, order);
+        expect(await css(page, "#app-el", "display")).toBe("block");
+        expect(await css(page, "#app-el", "padding-top")).toBe("0px");
         expect(await css(page, "body", "margin-top")).toBe("8px");
         expect(await css(page, "#outside-h", "margin-top")).not.toBe("0px");
         expect(await css(page, "#outside-btn", "cursor")).not.toBe("pointer");
@@ -171,4 +208,45 @@ test("enum tab grids have one, two, or three columns", async ({ page }) => {
     expect(await css(page, `#cols-${count}`, "grid-template-columns"))
       .toBe(Array(count).fill(`${600 / count}px`).join(" "));
   }
+});
+
+
+test("standalone builder uses light and dark default colors", async ({ page }) => {
+  const source = fs.readFileSync(path.join(pkgRoot, "src/index.css"), "utf8");
+  const light = /:where\(:root\)\s*\{([^}]+)\}/.exec(source)![1];
+  const dark = /:where\(\.dark\)\s*\{([^}]+)\}/.exec(source)![1];
+  const colors: string[] = [];
+  for (const [isDark, tokens] of [[false, light], [true, dark]] as const) {
+    if (tokens === undefined) throw new Error("default token block not found");
+    const token = (name: string) => new RegExp(`--(?:rjsb-)?${name}:\\s*([^;]+);`).exec(tokens)![1];
+    await page.setContent(`<html${isDark ? ' class="dark"' : ""}><head><style>${libraryCss}</style></head><body>${body}<div id="expected" style="background-color:${token("primary")};border-color:${token("border")}"></div></body></html>`);
+    const bg = await css(page, "#primary", "background-color");
+    const border = await css(page, "#padded", "border-top-color");
+    expect(bg).toBe(await css(page, "#expected", "background-color"));
+    expect(border).toBe(await css(page, "#expected", "border-top-color"));
+    colors.push(bg, border);
+  }
+  expect(colors[0]).not.toBe(colors[2]);
+  expect(colors[1]).not.toBe(colors[3]);
+});
+
+test("shipped sheet scopes selectors and custom properties", () => {
+  const sheet = postcss.parse(libraryCss);
+  const invalidSelectors: string[] = [];
+  const invalidProperties = new Set<string>();
+  sheet.walkRules((rule) => {
+    let ancestor: postcss.Node["parent"] = rule.parent;
+    while (ancestor) {
+      if (ancestor.type === "atrule" && "name" in ancestor && (ancestor.name === "keyframes" || (ancestor.name === "layer" && "params" in ancestor && ancestor.params === "properties"))) return;
+      ancestor = ancestor.parent;
+    }
+    for (const selector of rule.selectors) {
+      if (!selector.includes("rjsb") && selector !== ":where(:root)" && selector !== ":where(.dark)") invalidSelectors.push(selector);
+    }
+  });
+  sheet.walkDecls((decl) => {
+    if (decl.prop.startsWith("--") && !/^--(?:rjsb|tw|my)-/.test(decl.prop)) invalidProperties.add(decl.prop);
+  });
+  expect(invalidSelectors).toEqual([]);
+  expect(Array.from(invalidProperties)).toEqual([]);
 });
