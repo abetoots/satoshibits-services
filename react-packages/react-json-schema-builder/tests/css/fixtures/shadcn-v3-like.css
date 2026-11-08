@@ -1,3 +1,4 @@
+/* models shadcn v3 layering with full colours; bare hsl channels are unsupported. */
 @import "tailwindcss" source(none);
 @source inline("flex p-2 px-8 font-mono");
 
