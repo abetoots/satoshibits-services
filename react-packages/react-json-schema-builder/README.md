@@ -37,7 +37,7 @@ Import the sheet once, from JavaScript or CSS. Import order does not matter.
 
 The sheet provides `rjsb:`-prefixed utilities and private `--rjsb-*` default tokens. The builder reads your app's tokens, such as `--primary` and `--border`, when set; app tokens win wherever `.dark` is placed. Tokens must be complete CSS colours such as `oklch(...)` or `rgb(...)` (shadcn v4 / Tailwind v4 format). Bare HSL channels such as `222.2 47.4% 11.2%` (shadcn v3) are not supported.
 
-The sheet has no preflight or unscoped element resets; its resets apply inside `.rjsb-root`. Unlayered app resets, such as Tailwind v3 preflight, Bootstrap reboot, or `button { ... }`, override the builder's layered styles.
+The sheet has no preflight or unscoped element resets; its resets apply inside `.rjsb-root` and beat bare-element rules in `@layer base`. Unlayered app element rules and resets, such as Tailwind v3 preflight, Bootstrap reboot, or `button { ... }`, override the builder's layered styles.
 
 The inline builder inherits font, line height and text colour from the page and has no root background; dialogs set their own colours. Set page colours, for example:
 
@@ -52,6 +52,10 @@ Apps using native `@layer` should declare the layer order before other styles:
 ```css
 @layer properties, theme, base, components, utilities;
 ```
+
+Dialogs and selects are portaled into `body`. If `.dark` is only on a wrapper, they use light defaults; put `.dark` on `html` or `body` for dark dialogs and selects.
+
+The unprefixed utilities in the examples below must come from your app's own CSS.
 
 The sheet defines global `@keyframes enter` and `exit` from `tailwindcss-animate`. App keyframes with those names collide with them.
 
