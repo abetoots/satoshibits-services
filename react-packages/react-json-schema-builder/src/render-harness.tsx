@@ -1,6 +1,5 @@
 /// <reference types="vite/client" />
 import { createRoot } from "react-dom/client";
-// eslint-disable-next-line import-x/no-unresolved -- dist/style.css is built by build:styles
 import css from "../dist/style.css?raw";
 import { SchemaProvider } from "@/packages/builder/context";
 import { SchemaBuilder } from "@/packages/builder/schema-builder";
