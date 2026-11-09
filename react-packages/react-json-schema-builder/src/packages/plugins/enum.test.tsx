@@ -69,6 +69,15 @@ describe("EnumConstraintPlugin", () => {
       });
     });
 
+    it("puts the root class on its root", () => {
+      const EnumRenderer = EnumConstraintPlugin.hooks.registerRenderers?.().enum;
+      if (!EnumRenderer) fail("Renderers should not be undefined");
+      const { container } = render(
+        <EnumRenderer constraintName="enum" value={["a"]} onConstraintChange={vi.fn()} onRemoveConstraint={vi.fn()} />,
+      );
+      expect(container.firstElementChild).toHaveClass("rjsb-root");
+    });
+
     it("displays error message when error is provided", () => {
       const renderers = EnumConstraintPlugin.hooks.registerRenderers?.();
       if (!renderers) {

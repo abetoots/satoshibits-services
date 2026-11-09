@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { beforeAll, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -7,6 +8,10 @@ import { SchemaBuilder } from "./schema-builder";
 import { EnumEditor } from "./enum-editor";
 import { PluginsProvider } from "../constraints/context";
 import { EnumConstraintPlugin } from "../plugins/enum";
+import { StringConstraintPlugin } from "../plugins/string";
+import { NumberConstraintPlugin } from "../plugins/number";
+import { ArrayConstraintPlugin } from "../plugins/array";
+import { ObjectConstraintPlugin } from "../plugins/object";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import postcss from "postcss";
@@ -18,6 +23,11 @@ window.HTMLElement.prototype.hasPointerCapture = vi.fn();
 const classes = new Set<string>();
 const sheetPath = resolve(process.cwd(), "dist/style.css");
 const sheetExists = existsSync(sheetPath);
+const inCI = !!process.env.CI && process.env.CI !== "false";
+const plugins = [StringConstraintPlugin, NumberConstraintPlugin, ArrayConstraintPlugin, ObjectConstraintPlugin, EnumConstraintPlugin];
+const renderValues: Record<string, unknown> = { uniqueItems: true, enum: ["a"], pattern: "^a", format: "email" };
+
+if (!sheetExists && !inCI) console.warn("prefix guard: dist/style.css is missing, so the built-sheet check is skipped; run pnpm test:css first");
 
 beforeAll(async () => {
   const schema: JSONSchema7 = { type: "object", properties: {
@@ -26,7 +36,8 @@ beforeAll(async () => {
     object: { type: "object", properties: {} }, array: { type: "array", items: { type: "string" } },
   } };
   const user = userEvent.setup();
-  render(<SchemaProvider><PluginsProvider><SchemaBuilder initialSchema={schema} plugins={[EnumConstraintPlugin]} /><EnumEditor /><EnumEditor showCard={false} /></PluginsProvider></SchemaProvider>);
+  const tree = (extra?: ReactNode) => <SchemaProvider><PluginsProvider><SchemaBuilder initialSchema={schema} plugins={plugins} /><EnumEditor /><EnumEditor showCard={false} />{extra}</PluginsProvider></SchemaProvider>;
+  const { rerender } = render(tree());
   expect(screen.getByRole("combobox", { name: "Select items of type" })).toHaveClass("rjsb:bg-background");
   const collect = () => document.body.querySelectorAll("[class]").forEach((el) => {
     el.classList.forEach((token) => {
@@ -51,13 +62,21 @@ beforeAll(async () => {
   await user.click(within(row).getByRole("button", { name: /delete/i }));
   expect(screen.getByRole("alertdialog")).toBeInTheDocument();
   collect();
+  await user.keyboard("{Escape}");
+  // every registered renderer in its error state, inside the same provider tree
+  const rendered = plugins.flatMap((plugin, p) => Object.entries(plugin.hooks.registerRenderers?.() ?? {}).map(([name, Renderer]) => (
+    <Renderer key={`${p}-${name}`} constraintName={name} value={renderValues[name] ?? 1} onConstraintChange={vi.fn()} onRemoveConstraint={vi.fn()} error={{ message: "bad", code: "invalid" }} />
+  )));
+  rerender(tree(rendered));
+  expect(screen.getAllByText("Enum Values").length).toBeGreaterThan(0);
+  collect();
 });
 
 it("prefixes classes across builder and portal states", () => {
   expect([...classes].filter((token) => token !== "rjsb-root" && !token.startsWith("rjsb:"))).toEqual([]);
 });
 
-it.skipIf(!sheetExists && !process.env.CI)(`built stylesheet covers collected classes${sheetExists ? "" : " (dist/style.css missing; run pnpm test:css first)"}`, () => {
+it.skipIf(!sheetExists && !inCI)(`built stylesheet covers collected classes${sheetExists ? "" : " (dist/style.css missing; run pnpm test:css first)"}`, () => {
   if (!existsSync(sheetPath)) throw new Error("dist/style.css is missing; run pnpm test:css first.");
   const selectors: string[] = [];
   postcss.parse(readFileSync(sheetPath, "utf8")).walkRules((rule) => { selectors.push(...rule.selectors); });
