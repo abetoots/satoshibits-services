@@ -167,14 +167,14 @@ for (const app of apps) {
       expect(await css(page, "#portal-list", "padding-left")).toBe("0px");
     });
 
-    test(`${app}/${order}: portal root inherits app tokens and resets (body dark)`, async ({ page }) => {
+    test(`${app}/${order}: portal root inherits app tokens (body dark)`, async ({ page }) => {
       await load(page, app, order, false, "body");
       expect(await css(page, "#portal-primary", "background-color")).toBe("rgb(10, 11, 12)");
       expect(await css(page, "#portal-border", "border-top-color")).toBe("rgb(13, 14, 15)");
       expect(await css(page, "#portal-muted", "background-color")).toBe("oklch(0.269 0 0)");
     });
 
-    test(`${app}/${order}: portal root inherits app tokens and resets (wrapper dark)`, async ({ page }) => {
+    test(`${app}/${order}: portal root inherits app tokens (wrapper dark)`, async ({ page }) => {
       await load(page, app, order, false, "wrapper");
       expect(await css(page, "#portal-primary", "background-color")).toBe("rgb(1, 2, 3)");
       expect(await css(page, "#portal-border", "border-top-color")).toBe("rgb(13, 14, 15)");
@@ -316,11 +316,11 @@ test("standalone builder uses light and dark default colors", async ({ page }) =
   }
 });
 
-test("rjsb:dark: utilities apply under html.dark and body.dark", async ({ page }) => {
+test("rjsb:dark: utilities apply under html.dark, body.dark and wrapper dark", async ({ page }) => {
   for (const target of ["light", "html", "body", "wrapper"] as const) {
     await page.setContent(`<html${target === "html" ? ' class="dark"' : ""}><head><style>${libraryCss}</style></head><body>${body}</body></html>`);
     if (target === "body" || target === "wrapper") await page.locator(target === "body" ? "body" : "#wrapper").evaluate((el) => el.classList.add("dark"));
-    expect(await css(page, "#dark-badge", "background-color"), target).toBe(target === "light" ? "oklch(0.962 0.044 156.743)" : "oklch(0.393 0.095 152.535)");
+    expect.soft(await css(page, "#dark-badge", "background-color"), target).toBe(target === "light" ? "oklch(0.962 0.044 156.743)" : "oklch(0.393 0.095 152.535)");
   }
 });
 
@@ -431,7 +431,13 @@ test("shipped sheet scopes selectors and custom properties", () => {
   sheet.walkAtRules("keyframes", (rule) => { keyframes.add(rule.params); });
   expect([...keyframes].sort()).toEqual(["rjsb-enter", "rjsb-exit"]);
   // classes used only by the dev page must not ship (#96)
+  const srcFiles = fs.readdirSync(path.join(pkgRoot, "src"), { recursive: true, encoding: "utf8" }).filter((file) => file.endsWith(".tsx"));
+  const devPage = ["dev.tsx", "main.tsx"];
+  const sources = (cls: string) => srcFiles.filter((file) => fs.readFileSync(path.join(pkgRoot, "src", file), "utf8").includes(cls));
   for (const cls of [String.raw`rjsb\:text-3xl`, String.raw`rjsb\:bg-yellow-50\/50`, String.raw`rjsb\:mb-6`, String.raw`rjsb\:font-bold`]) {
+    const plain = cls.replace(/\\/g, "");
+    const users = sources(plain);
+    expect(users.some((file) => devPage.includes(file)) && users.every((file) => devPage.includes(file)), `${plain} must be used only by dev.tsx/main.tsx; update this sample (found in: ${users.join(", ") || "nowhere"})`).toBe(true);
     expect(libraryCss).not.toContain(`.${cls}`);
   }
   const animationNames: string[] = [];
@@ -456,7 +462,7 @@ for (const { label, attrs, time, name, opacity, scale } of [
   { label: "select left", attrs: 'data-state="open" data-side="left" class="rjsb:data-[state=open]:animate-in rjsb:data-[side=left]:slide-in-from-right-2"', time: 0, name: "rjsb-enter", opacity: 1, scale: 1 },
 ]) {
   test(`builder animations keep their frames: ${label}`, async ({ page }) => {
-    await page.setContent(`<style>${libraryCss}</style><div id="t" ${attrs} style="width:100px;height:100px"></div>`);
+    await page.setContent(`<style>${libraryCss}</style><div id="t" ${attrs} style="width:100px;height:100px;animation-play-state:paused"></div>`);
     const frame = await page.locator("#t").evaluate((el, currentTime) => {
       const animation = el.getAnimations()[0];
       if (!animation) throw new Error("missing animation");
@@ -479,7 +485,7 @@ for (const order of orders) {
   test(`app keyframes named enter/exit keep their frames: ${order}`, async ({ page }) => {
     const app = '@keyframes enter { from { opacity: 0.25 } } @keyframes exit { to { opacity: 0.75 } }';
     const styles = order === "library-last" ? [app, libraryCss] : [libraryCss, app];
-    await page.setContent(`${styles.map((style) => `<style>${style}</style>`).join("")}<div id="app-anim" style="animation: enter 1s paused">a</div><div id="app-exit" style="animation: exit 1s paused">c</div><div class="rjsb-root"><div id="lib-anim" data-state="open" class="rjsb:data-[state=open]:animate-in rjsb:data-[state=open]:fade-in-0">b</div><div id="lib-exit" data-state="closed" class="rjsb:data-[state=closed]:animate-out rjsb:data-[state=closed]:fade-out-0">d</div></div>`);
+    await page.setContent(`${styles.map((style) => `<style>${style}</style>`).join("")}<div id="app-anim" style="animation: enter 1s paused">a</div><div id="app-exit" style="animation: exit 1s paused">c</div><div class="rjsb-root"><div id="lib-anim" style="animation-play-state: paused" data-state="open" class="rjsb:data-[state=open]:animate-in rjsb:data-[state=open]:fade-in-0">b</div><div id="lib-exit" style="animation-play-state: paused" data-state="closed" class="rjsb:data-[state=closed]:animate-out rjsb:data-[state=closed]:fade-out-0">d</div></div>`);
     for (const [selector, atEnd, expected] of [["#app-anim", false, 0.25], ["#lib-anim", false, 0], ["#app-exit", true, 0.75], ["#lib-exit", true, 0]] as const) {
       const opacity = await page.locator(selector).evaluate((el, end) => {
         const animation = el.getAnimations()[0];

@@ -99,7 +99,7 @@ describe("EnumEditor", () => {
       expect(screen.getByRole("tablist")).toHaveClass("rjsb:grid-cols-1");
     });
 
-    it("uses four columns for four distinct tabs at medium widths", () => {
+    it("renders one tab per distinct type", () => {
       render(<EnumEditor propertyType={["string", "number", "boolean", "null"]} />);
       expect(screen.getAllByRole("tab")).toHaveLength(4);
     });
