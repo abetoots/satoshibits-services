@@ -1,0 +1,49 @@
+name: react-json-schema-builder checks
+
+on:
+  pull_request:
+    paths:
+      - "react-packages/react-json-schema-builder/**"
+      # the package's eslint and ts configs live here
+      - "tooling/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/rjsb-checks.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: react-packages/react-json-schema-builder
+    env:
+      # two eslint/jiti versions share one /tmp/jiti cache (see release.yml); no file cache
+      JITI_FS_CACHE: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      # version comes from the root packageManager field
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+        working-directory: .
+
+      - run: pnpm exec playwright install --with-deps chromium
+
+      - run: pnpm build
+      - run: pnpm test
+      - run: pnpm lint
+      - run: pnpm test:css
