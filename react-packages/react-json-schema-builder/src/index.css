@@ -3,6 +3,9 @@
 @import "tailwindcss/utilities.css" layer(components);
 /* the css harness markup must not generate utilities in the shipped sheet */
 @source not "../tests";
+@source not "./dev.tsx";
+@source not "./main.tsx";
+@source not "./render-harness.tsx";
 
 /* tailwindcss-animate's enter/exit, namespaced so app keyframes can't collide (#93) */
 @keyframes rjsb-enter {

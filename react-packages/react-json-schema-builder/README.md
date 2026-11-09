@@ -39,6 +39,8 @@ The sheet provides `rjsb:`-prefixed utilities and private `--rjsb-*` default tok
 
 The sheet has no preflight or unscoped element resets; its resets apply inside `.rjsb-root` and beat bare-element rules in `@layer base`. Unlayered app element rules and resets, such as Tailwind v3 preflight, Bootstrap reboot, or `button { ... }`, override the builder's layered styles.
 
+The resets also apply to your own content rendered inside the builder, such as a custom `propertyComponent`: its buttons, inputs, lists and headings start from the builder's resets, not your `@layer base` rules. Style them with utilities or unlayered CSS.
+
 The inline builder inherits font, line height and text colour from the page and has no root background; dialogs set their own colours. Set page colours, for example:
 
 ```css
@@ -54,6 +56,8 @@ Apps using native `@layer` should declare the layer order before other styles:
 ```
 
 Dialogs and selects are portaled into `body`. If `.dark` is only on a wrapper, they use light defaults; put `.dark` on `html` or `body` for dark dialogs and selects.
+
+Dark defaults follow the `.dark` class, not `prefers-color-scheme`. Apps that switch themes only by media query get light defaults.
 
 The unprefixed utilities in the examples below must come from your app's own CSS.
 
