@@ -23,7 +23,7 @@ window.HTMLElement.prototype.hasPointerCapture = vi.fn();
 const classes = new Set<string>();
 const sheetPath = resolve(process.cwd(), "dist/style.css");
 const sheetExists = existsSync(sheetPath);
-const inCI = !!process.env.CI && process.env.CI !== "false";
+const inCI = !!process.env.CI && !["false", "0"].includes(process.env.CI.toLowerCase());
 const plugins = [StringConstraintPlugin, NumberConstraintPlugin, ArrayConstraintPlugin, ObjectConstraintPlugin, EnumConstraintPlugin];
 const renderValues: Record<string, unknown> = { uniqueItems: true, enum: ["a"], pattern: "^a", format: "email" };
 
@@ -63,11 +63,15 @@ beforeAll(async () => {
   collect();
   await user.keyboard("{Escape}");
   // every registered renderer in its error state, inside the same provider tree
+  const entries = plugins.map((plugin) => Object.entries(plugin.hooks.registerRenderers?.() ?? {}));
+  const rendererNames = entries.flat().map(([name]) => name);
   const rendered = plugins.flatMap((plugin, p) => Object.entries(plugin.hooks.registerRenderers?.() ?? {}).map(([name, Renderer]) => (
-    <Renderer key={`${p}-${name}`} constraintName={name} value={renderValues[name] ?? 1} onConstraintChange={vi.fn()} onRemoveConstraint={vi.fn()} error={{ message: "bad", code: "invalid" }} />
+    <Renderer key={`${p}-${name}`} constraintName={name} value={renderValues[name] ?? 1} onConstraintChange={vi.fn()} onRemoveConstraint={vi.fn()} error={{ message: `bad-${name}`, code: "invalid" }} />
   )));
-  rerender(tree(rendered));
-  expect(screen.getAllByText("Enum Values").length).toBeGreaterThan(0);
+  rerender(tree(<div data-testid="renderers">{rendered}</div>));
+  const container = within(screen.getByTestId("renderers"));
+  expect(container.getAllByText("Enum Values").length).toBeGreaterThan(0);
+  for (const name of rendererNames.filter((name) => name !== "enum")) expect(container.getByText(`bad-${name}`)).toBeInTheDocument();
   collect();
 });
 

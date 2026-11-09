@@ -18,9 +18,23 @@ for (const [query, want] of [["", light], ["?dark=html", dark], ["?dark=body", d
   });
 }
 
+// the default theme gives muted/secondary/accent (and background/card/popover) equal values, so set distinct app tokens
+test("array strip, combobox and listbox read their own app tokens", async ({ page }) => {
+  await openHarness(page);
+  await page.addStyleTag({ content: ":root { --muted: rgb(1, 2, 3); --secondary: rgb(4, 5, 6); --accent: rgb(7, 8, 9); --background: rgb(10, 11, 12); --card: rgb(13, 14, 15); --popover: rgb(16, 17, 18); }" });
+  await expect(page.getByText("Items of type:").locator("..")).toHaveCSS("background-color", "rgb(1, 2, 3)");
+  const combobox = page.getByRole("combobox", { name: "Select items of type" });
+  await expect(combobox).toHaveCSS("background-color", "rgb(10, 11, 12)");
+  await combobox.click();
+  await expect(page.getByRole("listbox")).toHaveCSS("background-color", "rgb(16, 17, 18)");
+});
+
 test("four-type enum tabs use four columns from md, three below", async ({ page }) => {
   await openHarness(page);
-  const tracks = () => page.getByRole("tablist").evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
+  const tablist = page.getByRole("tablist");
+  await expect(tablist).toHaveCSS("display", "grid");
+  // resolved tracks are pixel values, so count those
+  const tracks = () => tablist.evaluate((el) => getComputedStyle(el).gridTemplateColumns.match(/[\d.]+px/g)?.length ?? 0);
   expect(await tracks()).toBe(4);
   await page.setViewportSize({ width: 700, height: 768 });
   expect(await tracks()).toBe(3);
@@ -35,21 +49,38 @@ test("portaled listbox goes dark with body.dark", async ({ page }) => {
 test("real dialog and select animate with the rjsb frames", async ({ page }) => {
   await openHarness(page);
   // pause first: a 150ms animation would finish before it can be read
-  await page.addStyleTag({ content: "*, *::before, *::after { animation-play-state: paused !important; }" });
+  const pause = await page.addStyleTag({ content: "*, *::before, *::after { animation-play-state: paused !important; }" });
   const firstFrame = (role: "dialog" | "listbox") =>
     page.getByRole(role).evaluate((el) => {
       const anim = el.getAnimations().find((a) => (a as CSSAnimation).animationName === "rjsb-enter");
       if (!anim) return null;
       anim.currentTime = 0;
       const cs = getComputedStyle(el);
-      return { opacity: cs.opacity, scale: new DOMMatrix(cs.transform).a };
+      return { opacity: cs.opacity, scale: new DOMMatrix(cs.transform).a, duration: cs.animationDuration };
     });
   // radix's popper holds animation: none until positioned, so poll
   const expectFirstFrame = (role: "dialog" | "listbox") =>
-    expect.poll(() => firstFrame(role)).toEqual({ opacity: "0", scale: 0.95 });
+    expect.poll(() => firstFrame(role)).toEqual({ opacity: "0", scale: 0.95, duration: "0.15s" });
 
   await page.getByText("Add Property").click();
   await expectFirstFrame("dialog");
   await page.getByRole("dialog").getByRole("combobox", { name: /select type/i }).click();
   await expectFirstFrame("listbox");
+
+  // close path: select first, then the dialog, still paused
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  const closed = page.locator('[role=dialog][data-state="closed"]');
+  const exit = () => closed.evaluate((el) => el.getAnimations().some((a) => (a as CSSAnimation).animationName === "rjsb-exit"));
+  await expect.poll(exit).toBe(true);
+  const lastFrameOpacity = await closed.evaluate((el) => {
+    const anim = el.getAnimations().find((a) => (a as CSSAnimation).animationName === "rjsb-exit");
+    if (!anim?.effect) throw new Error("missing exit animation");
+    anim.currentTime = Number(anim.effect.getTiming().duration) - 0.001;
+    return Number(getComputedStyle(el).opacity);
+  });
+  expect(lastFrameOpacity).toBeCloseTo(0, 2);
+  // radix keeps the dialog mounted until rjsb-exit ends
+  await pause.evaluate((el: Element) => { el.remove(); });
+  await expect(closed).toHaveCount(0);
 });
