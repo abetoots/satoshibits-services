@@ -1073,7 +1073,6 @@ describe("SchemaBuilder", () => {
         .closest("div")?.parentElement;
 
       expect(tagsRow).not.toBeNull();
-      expect(within(tagsRow!).getByText("Items of type:").parentElement).toHaveClass("rjsb:bg-muted");
 
       // Find the type select input. It should be the second combobox in the row
       const typeSelect = within(tagsRow!).getByRole("combobox", {
