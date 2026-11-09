@@ -14,4 +14,12 @@ describe("cn", () => {
     expect(cn("rjsb:p-2", "p-4")).toBe("rjsb:p-2 p-4");
     expect(cn(ROOT_CLASS, "rjsb:w-full")).toBe("rjsb-root rjsb:w-full");
   });
+
+  it("merges shorthands, longhands and colours", () => {
+    expect(cn("rjsb:p-2", "rjsb:px-4")).toBe("rjsb:p-2 rjsb:px-4");
+    expect(cn("rjsb:px-4", "rjsb:p-2")).toBe("rjsb:p-2");
+    expect(cn("rjsb:bg-primary", "rjsb:bg-muted")).toBe("rjsb:bg-muted");
+    expect(cn("rjsb:text-primary", "rjsb:text-muted-foreground")).toBe("rjsb:text-muted-foreground");
+    expect(cn("rjsb:text-sm", "rjsb:text-muted-foreground")).toBe("rjsb:text-sm rjsb:text-muted-foreground");
+  });
 });
