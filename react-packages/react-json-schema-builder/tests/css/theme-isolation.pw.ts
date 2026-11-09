@@ -200,7 +200,8 @@ for (const app of apps) {
         expect(await css(page, "#app-el", "display")).toBe("block");
         expect(await css(page, "#app-el", "padding-top")).toBe("0px");
         expect(await css(page, "body", "margin-top")).toBe("8px");
-        expect(await css(page, "#outside-h", "margin-top")).toBe("21.44px");
+        // ua h1 margin, 0.67em of 32px; webkit rounds to 1/64px (21.4375px)
+        expect(parseFloat(await css(page, "#outside-h", "margin-top"))).toBeCloseTo(21.44, 1);
         expect(await css(page, "#outside-btn", "cursor")).toBe("default");
       });
       test(`plain/${order}: standalone renderer button is reset`, async ({ page }) => {
