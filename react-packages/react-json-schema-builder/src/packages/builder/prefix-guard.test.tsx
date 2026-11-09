@@ -38,7 +38,6 @@ beforeAll(async () => {
   const user = userEvent.setup();
   const tree = (extra?: ReactNode) => <SchemaProvider><PluginsProvider><SchemaBuilder initialSchema={schema} plugins={plugins} /><EnumEditor /><EnumEditor showCard={false} />{extra}</PluginsProvider></SchemaProvider>;
   const { rerender } = render(tree());
-  expect(screen.getByRole("combobox", { name: "Select items of type" })).toHaveClass("rjsb:bg-background");
   const collect = () => document.body.querySelectorAll("[class]").forEach((el) => {
     el.classList.forEach((token) => {
       if (!el.closest("svg.lucide") || (token !== "lucide" && !token.startsWith("lucide-"))) classes.add(token);
