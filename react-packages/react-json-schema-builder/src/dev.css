@@ -1,6 +1,8 @@
 @layer theme, base, components, utilities;
 @import "tailwindcss/preflight.css" layer(base);
 @import "./index.css";
+@source "./dev.tsx";
+@source "./main.tsx";
 
 /* the dev page plays the host app, so it sets its own typography (what preflight gave it) */
 html {

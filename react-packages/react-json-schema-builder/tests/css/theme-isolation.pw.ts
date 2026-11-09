@@ -430,6 +430,10 @@ test("shipped sheet scopes selectors and custom properties", () => {
   const keyframes = new Set<string>();
   sheet.walkAtRules("keyframes", (rule) => { keyframes.add(rule.params); });
   expect([...keyframes].sort()).toEqual(["rjsb-enter", "rjsb-exit"]);
+  // classes used only by the dev page must not ship (#96)
+  for (const cls of [String.raw`rjsb\:text-3xl`, String.raw`rjsb\:bg-yellow-50\/50`, String.raw`rjsb\:mb-6`, String.raw`rjsb\:font-bold`]) {
+    expect(libraryCss).not.toContain(`.${cls}`);
+  }
   const animationNames: string[] = [];
   sheet.walkDecls(/^(animation-name|animation)$/, (decl) => {
     for (const value of postcss.list.comma(decl.value)) {
