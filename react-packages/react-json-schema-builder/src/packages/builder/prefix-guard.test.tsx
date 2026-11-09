@@ -1,4 +1,4 @@
-import { expect, it, vi } from "vitest";
+import { beforeAll, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { JSONSchema7 } from "json-schema";
@@ -15,7 +15,11 @@ window.PointerEvent = MouseEvent as typeof PointerEvent;
 window.HTMLElement.prototype.scrollIntoView = vi.fn();
 window.HTMLElement.prototype.hasPointerCapture = vi.fn();
 
-it("prefixes classes across builder and portal states", async () => {
+const classes = new Set<string>();
+const sheetPath = resolve(process.cwd(), "dist/style.css");
+const sheetExists = existsSync(sheetPath);
+
+beforeAll(async () => {
   const schema: JSONSchema7 = { type: "object", properties: {
     text: { type: "string", enum: ["one"] }, number: { type: "number" },
     integer: { type: "integer" }, boolean: { type: "boolean" },
@@ -24,10 +28,9 @@ it("prefixes classes across builder and portal states", async () => {
   const user = userEvent.setup();
   render(<SchemaProvider><PluginsProvider><SchemaBuilder initialSchema={schema} plugins={[EnumConstraintPlugin]} /><EnumEditor /><EnumEditor showCard={false} /></PluginsProvider></SchemaProvider>);
   expect(screen.getByRole("combobox", { name: "Select items of type" })).toHaveClass("rjsb:bg-background");
-  const classes = new Set<string>();
   const collect = () => document.body.querySelectorAll("[class]").forEach((el) => {
     el.classList.forEach((token) => {
-      if (!el.closest("svg.lucide") || token.startsWith("rjsb:")) classes.add(token);
+      if (!el.closest("svg.lucide") || (token !== "lucide" && !token.startsWith("lucide-"))) classes.add(token);
     });
   });
   collect();
@@ -48,12 +51,14 @@ it("prefixes classes across builder and portal states", async () => {
   await user.click(within(row).getByRole("button", { name: /delete/i }));
   expect(screen.getByRole("alertdialog")).toBeInTheDocument();
   collect();
+});
+
+it("prefixes classes across builder and portal states", () => {
   expect([...classes].filter((token) => token !== "rjsb-root" && !token.startsWith("rjsb:"))).toEqual([]);
-  const sheetPath = resolve(process.cwd(), "dist/style.css");
-  if (!existsSync(sheetPath)) {
-    console.warn("Skipping built stylesheet class check: dist/style.css is missing; run pnpm test:css first.");
-    return;
-  }
+});
+
+it.skipIf(!sheetExists && !process.env.CI)(`built stylesheet covers collected classes${sheetExists ? "" : " (dist/style.css missing; run pnpm test:css first)"}`, () => {
+  if (!existsSync(sheetPath)) throw new Error("dist/style.css is missing; run pnpm test:css first.");
   const selectors: string[] = [];
   postcss.parse(readFileSync(sheetPath, "utf8")).walkRules((rule) => { selectors.push(...rule.selectors); });
   const missing = [...classes].filter((token) => {

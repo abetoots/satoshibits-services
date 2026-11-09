@@ -397,3 +397,35 @@ test("shipped sheet scopes selectors and custom properties", () => {
   expect(Array.from(invalidProperties)).toEqual([]);
   expect(invalidSelectors).toEqual([]);
 });
+
+test("source theme maps app tokens to matching light and dark fallbacks", () => {
+  const source = postcss.parse(fs.readFileSync(path.join(pkgRoot, "src/index.css"), "utf8"));
+  const light = new Set<string>();
+  const dark = new Set<string>();
+  const lightOnly = new Set(["--rjsb-radius", "--rjsb-autofit-grid", "--rjsb-autofill-grid"]);
+  let colors = 0;
+  source.walkAtRules("theme", (rule) => {
+    if (rule.params !== "inline") return;
+    rule.walkDecls((decl) => {
+      if (decl.prop.startsWith("--color-")) {
+        colors++;
+        const token = decl.prop.slice("--color-".length);
+        expect(decl.value, decl.prop).toBe(`var(--${token}, var(--rjsb-${token}))`);
+      } else if (decl.prop.startsWith("--radius-")) {
+        expect(decl.value.split("var(--radius, var(--rjsb-radius))").join(""), decl.prop).not.toContain("var(");
+      }
+    });
+  });
+  source.walkRules((rule) => {
+    const tokens = rule.selector === ":where(:root)" ? light : rule.selector === ":where(.dark)" ? dark : undefined;
+    if (!tokens) return;
+    rule.walkDecls((decl) => {
+      if (decl.prop.startsWith("--rjsb-")) tokens.add(decl.prop);
+    });
+  });
+  expect(colors).toBeGreaterThan(0);
+  expect(light.size).toBeGreaterThan(0);
+  expect(dark.size).toBeGreaterThan(0);
+  expect(Array.from(dark).filter((token) => lightOnly.has(token))).toEqual([]);
+  expect(Array.from(light).filter((token) => !lightOnly.has(token)).sort()).toEqual(Array.from(dark).sort());
+});
