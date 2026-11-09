@@ -35,6 +35,12 @@ const configs: TSESLint.FlatConfig.ConfigArray = [
     },
   },
   config,
+  {
+    rules: {
+      // dist/ is built output that lint may run before
+      "import-x/no-unresolved": ["error", { ignore: ["^\\.\\./dist/.+\\?raw$"] }],
+    },
+  },
 ];
 
 export default configs;
