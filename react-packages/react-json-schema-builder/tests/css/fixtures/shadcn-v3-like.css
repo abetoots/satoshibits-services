@@ -17,6 +17,10 @@
 }
 
 @layer base {
+  button { background-color: rgb(200, 0, 0); border-radius: 12px; font-size: 22px; }
+  input { background-color: rgb(0, 200, 0); border-radius: 12px; }
+  ol { list-style: decimal; padding-left: 40px; }
+  h1 { font-size: 40px; margin-top: 24px; }
   a { color: rgb(0, 0, 255); text-decoration: underline; }
   ul { list-style: disc; padding-left: 40px; }
   h2 { font-size: 30px; margin-top: 20px; }

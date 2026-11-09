@@ -50,7 +50,9 @@ const body = `
 <h1 id="outside-h">outside</h1>
 <button id="outside-btn">outside</button><h2 id="outside-h2">outside</h2><a id="outside-link" href="#">outside</a>
 <div id="app-el" class="flex p-2 font-mono">app</div>
+<input id="outside-input"><ol id="outside-ol"><li>i</li></ol>
 <div id="wrapper"><div class="rjsb-root" id="builder-root">
+  <button id="reset-btn">b</button><input id="reset-input"><ol id="reset-ol"><li>i</li></ol><h1 id="reset-h1">h</h1><span id="dark-badge" class="rjsb:bg-green-100 rjsb:dark:bg-green-900">d</span>
   <h2 id="heading">heading</h2><h2 id="large-heading" class="rjsb:text-lg">heading</h2><ul id="list"><li>item</li></ul><p id="paragraph">text</p><div id="muted" class="rjsb:bg-muted">muted</div>
   <div class="rjsb:group" data-disabled="true"><label id="group-label" data-slot="label" class="rjsb:group-data-[disabled=true]:pointer-events-none rjsb:group-data-[disabled=true]:opacity-50">label</label></div><button class="rjsb:peer" disabled></button><label id="peer-label" data-slot="label" class="rjsb:peer-disabled:cursor-not-allowed rjsb:peer-disabled:opacity-50">label</label>
   <div id="padded" class="rjsb:border rjsb:p-2 rjsb:rounded-md">x</div>
@@ -135,7 +137,26 @@ for (const app of apps) {
       }
     });
 
-    test(`${app}/${order}: portal root inherits app tokens and resets`, async ({ page }) => {
+    test(`${app}/${order}: scoped resets beat app base rules for button, input, ol and h1`, async ({ page }) => {
+      await load(page, app, order);
+      expect(await css(page, "#reset-btn", "background-color")).toBe("rgba(0, 0, 0, 0)");
+      expect(await css(page, "#reset-btn", "border-top-left-radius")).toBe("0px");
+      expect(await css(page, "#reset-btn", "font-size")).toBe(await css(page, "#builder-root", "font-size"));
+      expect(await css(page, "#reset-input", "background-color")).toBe("rgba(0, 0, 0, 0)");
+      expect(await css(page, "#reset-input", "border-top-left-radius")).toBe("0px");
+      expect(await css(page, "#reset-ol", "list-style-type")).toBe("none");
+      expect(await css(page, "#reset-ol", "padding-left")).toBe("0px");
+      expect(await css(page, "#reset-h1", "font-size")).toBe(await css(page, "#builder-root", "font-size"));
+      expect(await css(page, "#reset-h1", "margin-top")).toBe("0px");
+      if (app !== "plain") {
+        expect(await css(page, "#outside-btn", "background-color")).toBe("rgb(200, 0, 0)");
+        expect(await css(page, "#outside-input", "background-color")).toBe("rgb(0, 200, 0)");
+        expect(await css(page, "#outside-ol", "list-style-type")).toBe("decimal");
+        expect(await css(page, "#outside-h", "font-size")).toBe("40px");
+      }
+    });
+
+    test(`${app}/${order}: portal root inherits app tokens and resets (light)`, async ({ page }) => {
       await load(page, app, order);
       expect(await css(page, "#portal-primary", "background-color")).toBe("rgb(1, 2, 3)");
       expect(await css(page, "#portal-border", "border-top-color")).toBe("rgb(13, 14, 15)");
@@ -144,10 +165,16 @@ for (const app of apps) {
       expect(await css(page, "#portal-heading", "margin-top")).toBe("0px");
       expect(await css(page, "#portal-list", "list-style-type")).toBe("none");
       expect(await css(page, "#portal-list", "padding-left")).toBe("0px");
+    });
+
+    test(`${app}/${order}: portal root inherits app tokens and resets (body dark)`, async ({ page }) => {
       await load(page, app, order, false, "body");
       expect(await css(page, "#portal-primary", "background-color")).toBe("rgb(10, 11, 12)");
       expect(await css(page, "#portal-border", "border-top-color")).toBe("rgb(13, 14, 15)");
       expect(await css(page, "#portal-muted", "background-color")).toBe("oklch(0.269 0 0)");
+    });
+
+    test(`${app}/${order}: portal root inherits app tokens and resets (wrapper dark)`, async ({ page }) => {
       await load(page, app, order, false, "wrapper");
       expect(await css(page, "#portal-primary", "background-color")).toBe("rgb(1, 2, 3)");
       expect(await css(page, "#portal-border", "border-top-color")).toBe("rgb(13, 14, 15)");
@@ -286,6 +313,14 @@ test("standalone builder uses light and dark default colors", async ({ page }) =
     expect(await css(page, "#primary", "background-color")).toBe(primary);
     expect(await css(page, "#padded", "border-top-color")).toBe(border);
     expect(await css(page, "#muted", "background-color")).toBe(muted);
+  }
+});
+
+test("rjsb:dark: utilities apply under html.dark and body.dark", async ({ page }) => {
+  for (const target of ["light", "html", "body", "wrapper"] as const) {
+    await page.setContent(`<html${target === "html" ? ' class="dark"' : ""}><head><style>${libraryCss}</style></head><body>${body}</body></html>`);
+    if (target === "body" || target === "wrapper") await page.locator(target === "body" ? "body" : "#wrapper").evaluate((el) => el.classList.add("dark"));
+    expect(await css(page, "#dark-badge", "background-color"), target).toBe(target === "light" ? "oklch(0.962 0.044 156.743)" : "oklch(0.393 0.095 152.535)");
   }
 });
 
@@ -460,15 +495,16 @@ test("source theme maps app tokens to matching light and dark fallbacks", () => 
   const light = new Set<string>();
   const dark = new Set<string>();
   const lightOnly = new Set(["--rjsb-radius", "--rjsb-autofit-grid", "--rjsb-autofill-grid"]);
-  let colors = 0;
+  const colors = new Set<string>();
   source.walkAtRules("theme", (rule) => {
     if (rule.params !== "inline") return;
     rule.walkDecls((decl) => {
       if (decl.prop.startsWith("--color-")) {
-        colors++;
         const token = decl.prop.slice("--color-".length);
+        colors.add(`--rjsb-${token}`);
         expect(decl.value, decl.prop).toBe(`var(--${token}, var(--rjsb-${token}))`);
       } else if (decl.prop.startsWith("--radius-")) {
+        expect(decl.value, decl.prop).toContain("var(--radius, var(--rjsb-radius))");
         expect(decl.value.split("var(--radius, var(--rjsb-radius))").join(""), decl.prop).not.toContain("var(");
       }
     });
@@ -480,7 +516,9 @@ test("source theme maps app tokens to matching light and dark fallbacks", () => 
       if (decl.prop.startsWith("--rjsb-")) tokens.add(decl.prop);
     });
   });
-  expect(colors).toBeGreaterThan(0);
+  expect(colors.size).toBeGreaterThan(0);
+  expect(Array.from(colors).filter((token) => !light.has(token) && !dark.has(token))).toEqual([]);
+  expect(Array.from(lightOnly).filter((token) => !light.has(token))).toEqual([]);
   expect(light.size).toBeGreaterThan(0);
   expect(dark.size).toBeGreaterThan(0);
   expect(Array.from(dark).filter((token) => lightOnly.has(token))).toEqual([]);
