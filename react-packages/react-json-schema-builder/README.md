@@ -57,8 +57,6 @@ Dialogs and selects are portaled into `body`. If `.dark` is only on a wrapper, t
 
 The unprefixed utilities in the examples below must come from your app's own CSS.
 
-The sheet defines global `@keyframes enter` and `exit` from `tailwindcss-animate`. App keyframes with those names collide with them.
-
 ## Basic Usage
 
 Here's a simple example of how to use the SchemaBuilder component:
