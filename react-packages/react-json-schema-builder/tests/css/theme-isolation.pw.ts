@@ -394,10 +394,66 @@ test("shipped sheet scopes selectors and custom properties", () => {
   });
   const keyframes = new Set<string>();
   sheet.walkAtRules("keyframes", (rule) => { keyframes.add(rule.params); });
-  expect([...keyframes].sort()).toEqual(["enter", "exit"]);
+  expect([...keyframes].sort()).toEqual(["rjsb-enter", "rjsb-exit"]);
+  const animationNames: string[] = [];
+  sheet.walkDecls(/^(animation-name|animation)$/, (decl) => {
+    for (const value of postcss.list.comma(decl.value)) {
+      const name = value.trim().split(/\s+/)[0];
+      if (!name) throw new Error("missing animation name");
+      animationNames.push(name);
+    }
+  });
+  expect(animationNames.length).toBeGreaterThan(0);
+  for (const name of animationNames) expect(keyframes.has(name), name).toBe(true);
   expect(Array.from(invalidProperties)).toEqual([]);
   expect(invalidSelectors).toEqual([]);
 });
+
+// pins a5226d6's frames: slide-in loses to animate-in's reset, duration-200 to its 150ms
+for (const { label, attrs, time, name, opacity, scale } of [
+  { label: "dialog open", attrs: 'data-state="open" class="rjsb:data-[state=open]:animate-in rjsb:data-[state=open]:fade-in-0 rjsb:data-[state=open]:zoom-in-95 rjsb:duration-200"', time: 0, name: "rjsb-enter", opacity: 0, scale: 0.95 },
+  { label: "dialog closed", attrs: 'data-state="closed" class="rjsb:data-[state=closed]:animate-out rjsb:data-[state=closed]:fade-out-0 rjsb:data-[state=closed]:zoom-out-95 rjsb:duration-200"', time: 149.999, name: "rjsb-exit", opacity: 0, scale: 0.95 },
+  { label: "select bottom", attrs: 'data-state="open" data-side="bottom" class="rjsb:data-[state=open]:animate-in rjsb:data-[state=open]:fade-in-0 rjsb:data-[state=open]:zoom-in-95 rjsb:data-[side=bottom]:slide-in-from-top-2"', time: 0, name: "rjsb-enter", opacity: 0, scale: 0.95 },
+  { label: "select left", attrs: 'data-state="open" data-side="left" class="rjsb:data-[state=open]:animate-in rjsb:data-[side=left]:slide-in-from-right-2"', time: 0, name: "rjsb-enter", opacity: 1, scale: 1 },
+]) {
+  test(`builder animations keep their frames: ${label}`, async ({ page }) => {
+    await page.setContent(`<style>${libraryCss}</style><div id="t" ${attrs} style="width:100px;height:100px"></div>`);
+    const frame = await page.locator("#t").evaluate((el, currentTime) => {
+      const animation = el.getAnimations()[0];
+      if (!animation) throw new Error("missing animation");
+      animation.pause();
+      animation.currentTime = currentTime;
+      const cs = getComputedStyle(el);
+      const m = new DOMMatrix(cs.transform);
+      return { name: cs.animationName, duration: cs.animationDuration, opacity: Number(cs.opacity), a: m.a, e: m.e, f: m.f };
+    }, time);
+    expect.soft(frame.duration).toBe("0.15s");
+    expect.soft(frame.opacity).toBeCloseTo(opacity, 3);
+    expect.soft(frame.a).toBeCloseTo(scale, 3);
+    expect.soft(frame.e).toBe(0);
+    expect.soft(frame.f).toBe(0);
+    expect(frame.name).toBe(name);
+  });
+}
+
+for (const order of orders) {
+  test(`app keyframes named enter/exit keep their frames: ${order}`, async ({ page }) => {
+    const app = '@keyframes enter { from { opacity: 0.25 } } @keyframes exit { to { opacity: 0.75 } }';
+    const styles = order === "library-last" ? [app, libraryCss] : [libraryCss, app];
+    await page.setContent(`${styles.map((style) => `<style>${style}</style>`).join("")}<div id="app-anim" style="animation: enter 1s paused">a</div><div id="app-exit" style="animation: exit 1s paused">c</div><div class="rjsb-root"><div id="lib-anim" data-state="open" class="rjsb:data-[state=open]:animate-in rjsb:data-[state=open]:fade-in-0">b</div><div id="lib-exit" data-state="closed" class="rjsb:data-[state=closed]:animate-out rjsb:data-[state=closed]:fade-out-0">d</div></div>`);
+    for (const [selector, atEnd, expected] of [["#app-anim", false, 0.25], ["#lib-anim", false, 0], ["#app-exit", true, 0.75], ["#lib-exit", true, 0]] as const) {
+      const opacity = await page.locator(selector).evaluate((el, end) => {
+        const animation = el.getAnimations()[0];
+        if (!animation?.effect) throw new Error("missing animation or effect");
+        animation.pause();
+        animation.currentTime = end ? Number(animation.effect.getTiming().duration) - 0.001 : 0;
+        return getComputedStyle(el).opacity;
+      }, atEnd);
+      if (atEnd) expect.soft(Number(opacity), selector).toBeCloseTo(expected, 2);
+      else expect.soft(opacity, selector).toBe(String(expected));
+    }
+  });
+}
 
 test("source theme maps app tokens to matching light and dark fallbacks", () => {
   const source = postcss.parse(fs.readFileSync(path.join(pkgRoot, "src/index.css"), "utf8"));

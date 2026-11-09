@@ -4,7 +4,45 @@
 /* the css harness markup must not generate utilities in the shipped sheet */
 @source not "../tests";
 
-@plugin "tailwindcss-animate";
+/* tailwindcss-animate's enter/exit, namespaced so app keyframes can't collide (#93) */
+@keyframes rjsb-enter {
+  from {
+    opacity: var(--tw-enter-opacity, 1);
+    transform: translate3d(var(--tw-enter-translate-x, 0), var(--tw-enter-translate-y, 0), 0) scale3d(var(--tw-enter-scale, 1), var(--tw-enter-scale, 1), var(--tw-enter-scale, 1)) rotate(var(--tw-enter-rotate, 0));
+  }
+}
+@keyframes rjsb-exit {
+  to {
+    opacity: var(--tw-exit-opacity, 1);
+    transform: translate3d(var(--tw-exit-translate-x, 0), var(--tw-exit-translate-y, 0), 0) scale3d(var(--tw-exit-scale, 1), var(--tw-exit-scale, 1), var(--tw-exit-scale, 1)) rotate(var(--tw-exit-rotate, 0));
+  }
+}
+@utility animate-in {
+  animation-name: rjsb-enter;
+  animation-duration: 150ms;
+  --tw-enter-opacity: initial;
+  --tw-enter-scale: initial;
+  --tw-enter-rotate: initial;
+  --tw-enter-translate-x: initial;
+  --tw-enter-translate-y: initial;
+}
+@utility animate-out {
+  animation-name: rjsb-exit;
+  animation-duration: 150ms;
+  --tw-exit-opacity: initial;
+  --tw-exit-scale: initial;
+  --tw-exit-rotate: initial;
+  --tw-exit-translate-x: initial;
+  --tw-exit-translate-y: initial;
+}
+@utility fade-in-* { --tw-enter-opacity: calc(--value(integer) / 100); }
+@utility fade-out-* { --tw-exit-opacity: calc(--value(integer) / 100); }
+@utility zoom-in-* { --tw-enter-scale: calc(--value(integer) / 100); }
+@utility zoom-out-* { --tw-exit-scale: calc(--value(integer) / 100); }
+@utility slide-in-from-top-* { --tw-enter-translate-y: calc(--spacing(--value(integer)) * -1); }
+@utility slide-in-from-bottom-* { --tw-enter-translate-y: --spacing(--value(integer)); }
+@utility slide-in-from-left-* { --tw-enter-translate-x: calc(--spacing(--value(integer)) * -1); }
+@utility slide-in-from-right-* { --tw-enter-translate-x: --spacing(--value(integer)); }
 
 @custom-variant dark (&:is(.dark *));
 
