@@ -180,8 +180,11 @@ export function EditPropertyDialog({
       >
         <DialogHeader>
           {/* an empty title also falls back to the key */}
-          {/* eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing */}
-          <DialogTitle>Edit {propertyToEdit.title || propertyKey}</DialogTitle>
+          {/* a long key or title must wrap, not widen the dialog */}
+          <DialogTitle className="rjsb:[overflow-wrap:anywhere]">
+            {/* eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing */}
+            Edit {propertyToEdit.title || propertyKey}
+          </DialogTitle>
           <DialogDescription>
             Set a default value and constraints.
           </DialogDescription>
