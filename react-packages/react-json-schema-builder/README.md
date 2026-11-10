@@ -162,9 +162,9 @@ export default SchemaEditorApp;
 | `onPropertyChangeSuccess`    | `() => void`                                  | Called when a property is successfully changed.                  |
 | `backButtonClassName`        | `string`                                      | Class name for the navigation bar's back button.                 |
 | `propertiesListClassName`    | `string`                                      | Class name for the properties list container.                    |
-| `addPropertyButtonClassName` | `string`                                      | Class name for the Add Property button.                          |
+| `addPropertyButtonClassName` | `string`                                      | Class name for the Add property button.                          |
 | `navigationComponent`        | `React.ComponentType<NavigationProps>`        | Custom component for the navigation bar.                         |
-| `addPropertyButtonComponent` | `React.ComponentType<AddPropertyButtonProps>` | Custom component for the Add Property button.                    |
+| `addPropertyButtonComponent` | `React.ComponentType<AddPropertyButtonProps>` | Custom component for the Add property button.                    |
 | `disabledProperties`         | `string[]`                                    | Array of property keys that should be disabled (read-only).      |
 | `disabled`                   | `boolean`                                     | Whether all properties should be disabled (read-only).           |
 
@@ -441,9 +441,9 @@ Customize the appearance of key UI elements:
 
 - Change styles of the navigation back button with `backButtonClassName`
 - Customize the properties container with `propertiesListClassName`
-- Style the Add Property button with `addPropertyButtonClassName`
+- Style the Add property button with `addPropertyButtonClassName`
 - Replace the entire navigation UI with a custom component via `navigationComponent`
-- Replace the Add Property button with a custom component via `addPropertyButtonComponent`
+- Replace the Add property button with a custom component via `addPropertyButtonComponent`
 - Customize how properties are rendered with the `propertyComponent` prop
 - Make specific properties read-only with `disabledProperties` array
 - Make the entire schema builder read-only with `disabled` prop

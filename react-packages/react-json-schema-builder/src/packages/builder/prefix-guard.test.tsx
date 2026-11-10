@@ -44,7 +44,7 @@ beforeAll(async () => {
     });
   });
   collect();
-  await user.click(screen.getByText("Add Property"));
+  await user.click(screen.getByRole("button", { name: "Add property" }));
   expect(screen.getByRole("dialog")).toBeInTheDocument();
   collect();
   await user.click(within(screen.getByRole("dialog")).getByRole("combobox", { name: /select type/i }));
