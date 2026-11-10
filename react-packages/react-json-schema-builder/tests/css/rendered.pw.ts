@@ -212,7 +212,7 @@ test("overlays, buttons and inputs take refs without warnings", async ({ page })
   expect(warnings).toEqual([]);
 });
 
-test("icon-only row actions show a tooltip on hover and keyboard focus", async ({ page }) => {
+test("icon-only row actions show a tooltip on hover", async ({ page }) => {
   await openHarness(page);
   await page.getByRole("button", { name: "Delete" }).first().hover();
   await expect(page.getByRole("tooltip", { name: "Delete" })).toHaveCount(1);
@@ -222,7 +222,14 @@ test("icon-only row actions show a tooltip on hover and keyboard focus", async (
   await expect(page.getByRole("tooltip", { name: "Open Address" })).toHaveCount(1);
   await page.mouse.move(0, 0, { steps: 10 });
   await expect(page.getByRole("tooltip", { name: "Open Address" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Duplicate" }).first().focus();
+});
+
+// a fresh page with no pointer history: mixing hover residue with focus flaked in ci
+test("icon-only row actions show a tooltip on keyboard focus", async ({ page }) => {
+  await openHarness(page);
+  await page.getByRole("button", { name: "Delete" }).first().focus();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Duplicate" }).first()).toBeFocused();
   await expect(page.getByRole("tooltip", { name: "Duplicate" })).toHaveCount(1);
   await page.keyboard.press("Tab");
   await expect(page.getByRole("button", { name: "Edit constraints" }).first()).toBeFocused();
