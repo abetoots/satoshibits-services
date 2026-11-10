@@ -8,6 +8,7 @@ Copy changed: the "Add Property" buttons now read "Add property"; the Add dialog
 
 Also fixed:
 
+- Edit Save no longer erases fields the dialog doesn't edit, such as an array's nested item schema.
 - E1: Select menus slide in from the correct direction.
 - E2: Dialog animations use the intended 200ms duration.
 - E3: Dialog and alert overlays fade out when closing.

@@ -103,7 +103,7 @@ export function EditPropertyDialog({
 
     onSubmit([
       propertyKey,
-      { ...propertyToEdit, ...property, ...constraintUpdatesOnly },
+      { ...propertyToEdit, default: property.default as JSONSchema7["default"], ...constraintUpdatesOnly },
     ]);
   };
 
