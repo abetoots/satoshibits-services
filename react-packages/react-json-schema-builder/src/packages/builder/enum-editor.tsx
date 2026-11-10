@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useId } from "react";
 import {
   Card,
   CardContent,
@@ -53,6 +53,8 @@ export function EnumEditor({
   onChange,
   showFooter = true,
 }: EnumEditorProps) {
+  // unique per editor, so two editors on a page don't share label targets (N2)
+  const id = useId();
   const [enumValues, setEnumValues] = useState<EnumValue[]>(
     initialValues ?? [],
   );
@@ -235,9 +237,9 @@ export function EnumEditor({
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList
-          className={`rjsb:grid ${
+          className={allowedTabs.length === 1 ? "rjsb:hidden" : `rjsb:grid ${
             allowedTabs.length <= 3
-              ? ["", "rjsb:grid-cols-1", "rjsb:grid-cols-2", "rjsb:grid-cols-3"][allowedTabs.length]
+              ? ["", "", "rjsb:grid-cols-2", "rjsb:grid-cols-3"][allowedTabs.length]
               : ["", "", "", "", "rjsb:grid-cols-3 rjsb:md:grid-cols-4", "rjsb:grid-cols-3 rjsb:md:grid-cols-5", "rjsb:grid-cols-3 rjsb:md:grid-cols-6"][allowedTabs.length]
           }`}
         >
@@ -263,19 +265,22 @@ export function EnumEditor({
         <div className="rjsb:mt-4">
           <TabsContent value="string">
             <div className="rjsb:flex rjsb:flex-col rjsb:gap-2">
-              <Label htmlFor="string-value">String Value</Label>
-              <div className="rjsb:flex rjsb:gap-2">
+              <Label htmlFor={`${id}-string`}>String Value</Label>
+              <div className="rjsb:flex rjsb:flex-col rjsb:gap-2 rjsb:sm:flex-row">
                 <Input
-                  id="string-value"
+                  id={`${id}-string`}
                   value={stringValue}
                   onChange={(e) => setStringValue(e.target.value)}
                   placeholder="Enter a string value"
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") addStringValue();
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addStringValue();
+                    }
                   }}
                   disabled={disabled}
                 />
-                <Button onClick={addStringValue} size="sm" disabled={disabled}>
+                <Button onClick={addStringValue} size="sm" disabled={disabled} className="rjsb:self-start rjsb:sm:self-auto">
                   <Plus className="rjsb:h-4 rjsb:w-4 rjsb:mr-1" /> Add enum
                 </Button>
               </div>
@@ -283,21 +288,25 @@ export function EnumEditor({
           </TabsContent>
           <TabsContent value="number">
             <div className="rjsb:flex rjsb:flex-col rjsb:gap-2">
-              <Label htmlFor="number-value">Number Value</Label>
-              <div className="rjsb:flex rjsb:gap-2">
+              <Label htmlFor={`${id}-number`}>Number Value</Label>
+              <div className="rjsb:flex rjsb:flex-col rjsb:gap-2 rjsb:sm:flex-row">
                 <Input
-                  id="number-value"
+                  id={`${id}-number`}
                   value={numberValue}
                   onChange={(e) => setNumberValue(e.target.value)}
                   placeholder="Enter a number value"
                   type="number"
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") addNumberValue();
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addNumberValue();
+                    }
                   }}
                   disabled={disabled}
                 />
                 <Button
                   onClick={addNumberValue}
+                  className="rjsb:self-start rjsb:sm:self-auto"
                   size="sm"
                   disabled={disabled}
                   aria-label="Add enum"
@@ -313,21 +322,21 @@ export function EnumEditor({
               <div className="rjsb:flex rjsb:gap-4">
                 <div className="rjsb:flex rjsb:items-center rjsb:gap-2">
                   <Switch
-                    id="true-value"
+                    id={`${id}-true`}
                     checked={enumValues.includes(true)}
                     onCheckedChange={() => addBooleanValue(true)}
                     disabled={disabled}
                   />
-                  <Label htmlFor="true-value">true</Label>
+                  <Label htmlFor={`${id}-true`}>true</Label>
                 </div>
                 <div className="rjsb:flex rjsb:items-center rjsb:gap-2">
                   <Switch
-                    id="false-value"
+                    id={`${id}-false`}
                     checked={enumValues.includes(false)}
                     onCheckedChange={() => addBooleanValue(false)}
                     disabled={disabled}
                   />
-                  <Label htmlFor="false-value">false</Label>
+                  <Label htmlFor={`${id}-false`}>false</Label>
                 </div>
               </div>
             </div>
@@ -337,20 +346,20 @@ export function EnumEditor({
               <Label>Null Value</Label>
               <div className="rjsb:flex rjsb:items-center rjsb:gap-2">
                 <Switch
-                  id="null-value"
+                  id={`${id}-null`}
                   checked={enumValues.includes(null)}
                   onCheckedChange={() => addNullValue()}
                   disabled={disabled}
                 />
-                <Label htmlFor="null-value">Include null value</Label>
+                <Label htmlFor={`${id}-null`}>Include null value</Label>
               </div>
             </div>
           </TabsContent>
           <TabsContent value="object">
             <div className="rjsb:flex rjsb:flex-col rjsb:gap-2">
-              <Label htmlFor="object-value">Object Value (JSON)</Label>
+              <Label htmlFor={`${id}-object`}>Object Value (JSON)</Label>
               <Textarea
-                id="object-value"
+                id={`${id}-object`}
                 value={objectValue}
                 onChange={(e) => {
                   setObjectValue(e.target.value);
@@ -377,9 +386,9 @@ export function EnumEditor({
           </TabsContent>
           <TabsContent value="array">
             <div className="rjsb:flex rjsb:flex-col rjsb:gap-2">
-              <Label htmlFor="array-value">Array Value (JSON)</Label>
+              <Label htmlFor={`${id}-array`}>Array Value (JSON)</Label>
               <Textarea
-                id="array-value"
+                id={`${id}-array`}
                 value={arrayValue}
                 onChange={(e) => {
                   setArrayValue(e.target.value);

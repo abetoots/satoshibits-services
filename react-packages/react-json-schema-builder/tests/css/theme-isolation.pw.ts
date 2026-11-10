@@ -290,11 +290,11 @@ for (const app of apps) {
   }
 }
 
-test("enum tab grids have one, two, or three columns", async ({ page }) => {
-  await page.setContent(`<style>${libraryCss}</style>${[1, 2, 3]
+test("enum tab grids have two or three columns", async ({ page }) => {
+  await page.setContent(`<style>${libraryCss}</style>${[2, 3]
     .map((count) => `<div id="cols-${count}" class="rjsb:grid rjsb:grid-cols-${count}" style="width: 600px"></div>`)
     .join("")}`);
-  for (const count of [1, 2, 3]) {
+  for (const count of [2, 3]) {
     expect(await css(page, `#cols-${count}`, "grid-template-columns"))
       .toBe(Array(count).fill(`${600 / count}px`).join(" "));
   }

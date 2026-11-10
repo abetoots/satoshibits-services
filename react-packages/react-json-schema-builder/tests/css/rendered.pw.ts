@@ -355,6 +355,46 @@ const openEnumInAdd = async (page: Page): Promise<Locator> => {
   return addEnumConstraint(page);
 };
 
+test("enum value placeholders fit at 320px", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  await openHarness(page);
+  for (const type of ["String", "Number"]) {
+    await page.getByRole("tab", { name: type }).click();
+    const input = page.getByLabel(`${type} Value`);
+    const sizes = await input.evaluate((el: HTMLInputElement) => {
+      const style = getComputedStyle(el);
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d")!;
+      context.font = style.font;
+      return {
+        placeholder: context.measureText(el.placeholder).width,
+        available: el.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+      };
+    });
+    expect(sizes.placeholder, type).toBeLessThanOrEqual(sizes.available);
+  }
+});
+
+test("a single-type enum editor hides its tab list", async ({ page }) => {
+  await openHarness(page);
+  const dialog = await openEnumInEdit(page);
+  await expect(dialog.getByRole("tab")).toHaveCount(0);
+  await expect(dialog.getByRole("tabpanel")).toHaveAccessibleName("String");
+});
+
+for (const [type, row, value] of [["String", 0, "abc"], ["Number", 1, "5"]] as const) {
+  test(`Enter in the ${type} enum value input adds the value and keeps the Edit dialog open`, async ({ page }) => {
+    await openHarness(page);
+    const dialog = await openEnumInEdit(page, row);
+    const input = dialog.getByPlaceholder(`Enter a ${type.toLowerCase()} value`);
+    await expect(dialog.getByLabel(`${type} Value`)).toHaveCount(1);
+    await input.fill(value);
+    await input.press("Enter");
+    await expect(dialog.getByRole("listitem").filter({ hasText: value })).toHaveCount(1);
+    await expect(dialog).toBeVisible();
+  });
+}
+
 for (const which of ["Add", "Edit"]) {
   for (const width of [320, 768, 1024, 1280]) {
     test(`a long enum value stays inside the ${which} dialog at ${width}px`, async ({ page }) => {
