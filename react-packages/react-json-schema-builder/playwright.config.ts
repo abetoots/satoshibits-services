@@ -15,7 +15,8 @@ export default defineConfig({
     url: "http://localhost:4179/render-harness.html",
     reuseExistingServer: false,
   },
-  use: { baseURL: "http://localhost:4179" },
+  // ci keeps a trace of each failed test (dom, focus, console, timing) for the uploaded artifact
+  use: { baseURL: "http://localhost:4179", trace: process.env.CI ? "retain-on-failure" : "off" },
   projects: [
     {
       name: "chromium",
