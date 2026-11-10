@@ -110,6 +110,41 @@ test("dialog overlays stay mounted until their exit animation ends", async ({ pa
   await checkClose("alert-dialog-overlay", "alert-dialog-content");
 });
 
+test("Edit Save closes with the exit animation", async ({ page }) => {
+  await openHarness(page);
+  await rowOf(page, "name").getByRole("button", { name: "Edit constraints" }).click();
+  const pause = await page.addStyleTag({ content: "*, *::before, *::after { animation-play-state: paused !important; }" });
+  await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
+  const closed = page.locator('[role=dialog][data-state="closed"]');
+  await expect.poll(() => closed.evaluateAll((elements) => elements.some((el) =>
+    el.getAnimations().some((animation) => (animation as CSSAnimation).animationName === "rjsb-exit"),
+  ))).toBe(true);
+  await pause.evaluate((el: HTMLStyleElement) => { el.disabled = true; });
+  await expect(closed).toHaveCount(0);
+});
+
+test("the Edit form starts from the property being edited", async ({ page }) => {
+  await openHarness(page);
+  const edit = (key: string) => rowOf(page, key).getByRole("button", { name: "Edit constraints" });
+  await edit("name").click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await edit("age").click();
+  await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(rowOf(page, "age").getByRole("combobox", { name: "Select type" })).toHaveText("integer");
+
+  await edit("name").click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await rowOf(page, "name").getByRole("combobox", { name: "Select type" }).click();
+  await page.getByRole("option", { name: "number", exact: true }).click();
+  await edit("name").click();
+  await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(rowOf(page, "name").getByRole("combobox", { name: "Select type" })).toHaveText("number");
+});
+
 test("overlays, buttons and inputs take refs without warnings", async ({ page }) => {
   const warnings: string[] = [];
   page.on("console", (message) => {

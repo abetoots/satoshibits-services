@@ -123,6 +123,8 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deleteKey, setDeleteKey] = useState<string | undefined>();
   const [editingKey, setEditingKey] = useState<string | undefined>();
+  // a fresh edit form per open, so no row's values carry into another (N4)
+  const [editSession, setEditSession] = useState(0);
   const [editingProperty, setEditingProperty] = useState<
     JSONSchema7 | undefined
   >();
@@ -190,6 +192,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
 
     setEditingKey(key);
     setEditingProperty(property);
+    setEditSession((n) => n + 1);
     setShowEditDialog(true);
   };
 
@@ -661,14 +664,14 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
         {/* Edit property dialog */}
         {editingKey && editingProperty && (
           <EditPropertyDialog
+            key={editSession}
             propertyKey={editingKey}
             property={editingProperty}
             open={showEditDialog}
             onOpenChange={setShowEditDialog}
             onSubmit={(params) => {
               handlePropertyChange(...params);
-              setEditingKey(undefined);
-              setEditingProperty(undefined);
+              // stays mounted so the dialog fades out; the next open remounts it
               setShowEditDialog(false);
             }}
           />
