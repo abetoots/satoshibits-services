@@ -84,7 +84,8 @@
     --rjsb-sidebar-accent-foreground: oklch(0.205 0 0);
     --rjsb-sidebar-border: oklch(0.922 0 0);
     --rjsb-sidebar-ring: oklch(0.708 0 0);
-    --rjsb-autofit-grid: repeat(auto-fit, minmax(100px, 1fr));
+    /* fits the four row actions (176px at a 16px root) and scales with rem (#94) */
+    --rjsb-autofit-grid: repeat(auto-fit, minmax(min(100%, calc(10.5rem + 8px)), 1fr));
     --rjsb-autofill-grid: repeat(auto-fill, minmax(100px, 1fr));
   }
 
