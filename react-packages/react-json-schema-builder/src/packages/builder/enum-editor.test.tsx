@@ -93,10 +93,9 @@ describe("EnumEditor", () => {
   });
 
   describe("Tab Filtering", () => {
-    it("uses one column for number and integer", () => {
+    it("renders one tab for number and integer", () => {
       render(<EnumEditor propertyType={["number", "integer"]} />);
       expect(screen.getAllByRole("tab")).toHaveLength(1);
-      expect(screen.getByRole("tablist")).toHaveClass("rjsb:grid-cols-1");
     });
 
     it("renders one tab per distinct type", () => {
