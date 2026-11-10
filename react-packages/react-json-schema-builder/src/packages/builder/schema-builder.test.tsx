@@ -117,7 +117,7 @@ describe("SchemaBuilder", () => {
 
       // Click navigate button
       const navigateButton = within(addressRow!).getByRole("button", {
-        name: /navigate/i,
+        name: /^open /i,
       });
       await user.click(navigateButton);
 
@@ -144,7 +144,7 @@ describe("SchemaBuilder", () => {
       expect(addressRow).not.toBeNull();
 
       const navigateButton = within(addressRow!).getByRole("button", {
-        name: /navigate/i,
+        name: /^open /i,
       });
       await user.click(navigateButton);
 
@@ -176,7 +176,7 @@ describe("SchemaBuilder", () => {
       expect(addressRow).not.toBeNull();
 
       const navigateButton = within(addressRow!).getByRole("button", {
-        name: /navigate/i,
+        name: /^open /i,
       });
       await user.click(navigateButton);
 
@@ -1138,7 +1138,7 @@ describe("SchemaBuilder", () => {
 
       // Navigate to configure the object items
       const configureButton = within(tagsRow!).getByRole("button", {
-        name: /navigate/i,
+        name: /^open /i,
       });
       await user.click(configureButton);
 
