@@ -454,12 +454,12 @@ test("shipped sheet scopes selectors and custom properties", () => {
   expect(invalidSelectors).toEqual([]);
 });
 
-// pins a5226d6's frames: slide-in loses to animate-in's reset, duration-200 to its 150ms
-for (const { label, attrs, time, name, opacity, scale } of [
-  { label: "dialog open", attrs: 'data-state="open" class="rjsb:data-[state=open]:animate-in rjsb:data-[state=open]:fade-in-0 rjsb:data-[state=open]:zoom-in-95 rjsb:duration-200"', time: 0, name: "rjsb-enter", opacity: 0, scale: 0.95 },
-  { label: "dialog closed", attrs: 'data-state="closed" class="rjsb:data-[state=closed]:animate-out rjsb:data-[state=closed]:fade-out-0 rjsb:data-[state=closed]:zoom-out-95 rjsb:duration-200"', time: 149.999, name: "rjsb-exit", opacity: 0, scale: 0.95 },
-  { label: "select bottom", attrs: 'data-state="open" data-side="bottom" class="rjsb:data-[state=open]:animate-in rjsb:data-[state=open]:fade-in-0 rjsb:data-[state=open]:zoom-in-95 rjsb:data-[side=bottom]:slide-in-from-top-2"', time: 0, name: "rjsb-enter", opacity: 0, scale: 0.95 },
-  { label: "select left", attrs: 'data-state="open" data-side="left" class="rjsb:data-[state=open]:animate-in rjsb:data-[side=left]:slide-in-from-right-2"', time: 0, name: "rjsb-enter", opacity: 1, scale: 1 },
+// duration-200 sets the dialog's 200ms (E2); slide-in-from-* offsets the select's first frame (E1)
+for (const { label, attrs, time, name, duration, opacity, scale, x, y } of [
+  { label: "dialog open", attrs: 'data-state="open" class="rjsb:data-[state=open]:animate-in rjsb:data-[state=open]:fade-in-0 rjsb:data-[state=open]:zoom-in-95 rjsb:duration-200"', time: 0, name: "rjsb-enter", duration: "0.2s", opacity: 0, scale: 0.95, x: 0, y: 0 },
+  { label: "dialog closed", attrs: 'data-state="closed" class="rjsb:data-[state=closed]:animate-out rjsb:data-[state=closed]:fade-out-0 rjsb:data-[state=closed]:zoom-out-95 rjsb:duration-200"', time: 199.999, name: "rjsb-exit", duration: "0.2s", opacity: 0, scale: 0.95, x: 0, y: 0 },
+  { label: "select bottom", attrs: 'data-state="open" data-side="bottom" class="rjsb:data-[state=open]:animate-in rjsb:data-[state=open]:fade-in-0 rjsb:data-[state=open]:zoom-in-95 rjsb:data-[side=bottom]:slide-in-from-top-2"', time: 0, name: "rjsb-enter", duration: "0.15s", opacity: 0, scale: 0.95, x: 0, y: -8 },
+  { label: "select left", attrs: 'data-state="open" data-side="left" class="rjsb:data-[state=open]:animate-in rjsb:data-[side=left]:slide-in-from-right-2"', time: 0, name: "rjsb-enter", duration: "0.15s", opacity: 1, scale: 1, x: 8, y: 0 },
 ]) {
   test(`builder animations keep their frames: ${label}`, async ({ page }) => {
     await page.setContent(`<style>${libraryCss}</style><div id="t" ${attrs} style="width:100px;height:100px;animation-play-state:paused"></div>`);
@@ -472,13 +472,70 @@ for (const { label, attrs, time, name, opacity, scale } of [
       const m = new DOMMatrix(cs.transform);
       return { name: cs.animationName, duration: cs.animationDuration, opacity: Number(cs.opacity), a: m.a, e: m.e, f: m.f };
     }, time);
-    expect.soft(frame.duration).toBe("0.15s");
+    expect.soft(frame.duration).toBe(duration);
     expect.soft(frame.opacity).toBeCloseTo(opacity, 3);
     expect.soft(frame.a).toBeCloseTo(scale, 3);
-    expect.soft(frame.e).toBe(0);
-    expect.soft(frame.f).toBe(0);
+    expect.soft(frame.e).toBeCloseTo(x, 3);
+    expect.soft(frame.f).toBeCloseTo(y, 3);
     expect(frame.name).toBe(name);
   });
+}
+
+test("builder animation variables are private, registered and not inherited", () => {
+  const sheet = postcss.parse(libraryCss);
+  const properties: Record<string, string> = {};
+  const hostDeclarations: string[] = [];
+  sheet.walkAtRules("property", (rule) => {
+    if (!/^--(tw|rjsb)-(enter|exit)-/.test(rule.params)) return;
+    const descriptors: Record<string, string> = {};
+    rule.walkDecls((decl) => { descriptors[decl.prop] = decl.value; });
+    properties[rule.params] = `${descriptors.inherits}/${descriptors["initial-value"]}`;
+  });
+  sheet.walkDecls((decl) => {
+    if (/^--tw-(enter|exit)-/.test(decl.prop)) hostDeclarations.push(decl.prop);
+  });
+  expect(properties).toEqual({
+    "--rjsb-enter-opacity": "false/1", "--rjsb-enter-scale": "false/1",
+    "--rjsb-enter-rotate": "false/0", "--rjsb-enter-translate-x": "false/0", "--rjsb-enter-translate-y": "false/0",
+    "--rjsb-exit-opacity": "false/1", "--rjsb-exit-scale": "false/1",
+    "--rjsb-exit-rotate": "false/0", "--rjsb-exit-translate-x": "false/0", "--rjsb-exit-translate-y": "false/0",
+  });
+  expect(hostDeclarations).toEqual([]);
+});
+
+test("a nested animate-in does not inherit its parent's enter values", async ({ page }) => {
+  await page.setContent(`<style>${libraryCss}</style><div class="rjsb-root"><div data-state="open" class="rjsb:data-[state=open]:zoom-in-95 rjsb:data-[state=open]:fade-in-0"><div id="child" data-state="open" class="rjsb:data-[state=open]:animate-in" style="animation-play-state: paused"></div></div></div>`);
+  const frame = await page.locator("#child").evaluate((el) => {
+    const animation = el.getAnimations()[0];
+    if (!animation) throw new Error("missing animation");
+    animation.currentTime = 0;
+    const cs = getComputedStyle(el);
+    return { opacity: cs.opacity, scale: new DOMMatrix(cs.transform).a };
+  });
+  expect(frame).toEqual({ opacity: "1", scale: 1 });
+});
+
+for (const order of orders) {
+  for (const [host, app, opacity] of [
+    ["tailwindcss-animate v3", "@keyframes enter { from { opacity: var(--tw-enter-opacity, 1); } }", "0.25"],
+    ["tw-animate-css", '@property --tw-enter-opacity { syntax: "*"; inherits: false; initial-value: 1; } @property --tw-enter-translate-y { syntax: "*"; inherits: false; initial-value: 0; } @keyframes enter { from { opacity: var(--tw-enter-opacity, 1); transform: translateY(var(--tw-enter-translate-y, 0)); } }', "1"],
+  ] as const) {
+    test(`host ${host} keeps its own enter variables and the builder keeps its frames: ${order}`, async ({ page }) => {
+      const styles = order === "library-last" ? [app, libraryCss] : [libraryCss, app];
+      await page.setContent(`${styles.map((style) => `<style>${style}</style>`).join("")}<div style="--tw-enter-opacity: 0.25"><div id="host-child" style="animation: enter 1s paused"></div></div><div class="rjsb-root"><div id="lib" data-state="open" data-side="bottom" class="rjsb:data-[state=open]:animate-in rjsb:data-[state=open]:fade-in-0 rjsb:data-[side=bottom]:slide-in-from-top-2" style="animation-play-state: paused"></div></div>`);
+      for (const [selector, expectedOpacity, y] of [["#host-child", opacity, 0], ["#lib", "0", -8]] as const) {
+        const frame = await page.locator(selector).evaluate((el) => {
+          const animation = el.getAnimations()[0];
+          if (!animation) throw new Error("missing animation");
+          animation.currentTime = 0;
+          const cs = getComputedStyle(el);
+          return { opacity: cs.opacity, y: new DOMMatrix(cs.transform).f };
+        });
+        expect.soft(frame.opacity, selector).toBe(expectedOpacity);
+        expect.soft(frame.y, selector).toBeCloseTo(y, 3);
+      }
+    });
+  }
 }
 
 for (const order of orders) {

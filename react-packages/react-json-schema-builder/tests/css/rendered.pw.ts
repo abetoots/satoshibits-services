@@ -62,16 +62,17 @@ test("real dialog and select animate with the rjsb frames", async ({ page }) => 
       return { opacity: cs.opacity, scale: new DOMMatrix(cs.transform).a, duration: cs.animationDuration };
     });
   // radix's popper holds animation: none until positioned, so poll
-  const expectFirstFrame = (role: "dialog" | "listbox") =>
-    expect.poll(() => firstFrame(role)).toEqual({ opacity: "0", scale: 0.95, duration: "0.15s" });
+  const expectFirstFrame = (role: "dialog" | "listbox", duration: string) =>
+    expect.poll(() => firstFrame(role)).toEqual({ opacity: "0", scale: 0.95, duration });
 
   await addButton(page).click();
-  await expectFirstFrame("dialog");
+  await expectFirstFrame("dialog", "0.2s");
   await page.getByRole("dialog").getByRole("combobox", { name: /select type/i }).click();
-  await expectFirstFrame("listbox");
+  await expectFirstFrame("listbox", "0.15s");
 
   // close path: select first, then the dialog, still paused
   await page.keyboard.press("Escape");
+  await expect(page.getByRole("listbox")).toHaveCount(0);
   await page.keyboard.press("Escape");
   const closed = page.locator('[role=dialog][data-state="closed"]');
   const exit = () => closed.evaluate((el) => el.getAnimations().some((a) => (a as CSSAnimation).animationName === "rjsb-exit"));
