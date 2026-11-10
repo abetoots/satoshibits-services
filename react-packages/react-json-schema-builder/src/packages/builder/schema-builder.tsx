@@ -696,7 +696,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-              <AlertDialogDescription>
+              <AlertDialogDescription className="rjsb:[overflow-wrap:anywhere]">
                 This action cannot be undone. This will permanently delete the
                 property
                 {deleteKey ? ` "${deleteKey}"` : ""} from the schema.

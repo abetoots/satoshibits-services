@@ -160,6 +160,33 @@ test("the Edit heading wraps a long untitled key at 320px", async ({ page }) => 
   expect(await dialog.evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
 });
 
+test("the Open tooltip stays inside a 320px viewport for a long title", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  await openHarness(page);
+  await rowOf(page, "address").getByPlaceholder("Title").fill("W".repeat(63));
+  await page.waitForTimeout(900);
+  await page.getByRole("button", { name: /^open w+/i }).hover();
+  await expect(page.getByRole("tooltip")).toHaveCount(1);
+  const box = await page.locator('[data-slot="tooltip-content"]').boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(320);
+  // a capped box still spills the text unless it wraps
+  expect(await page.locator('[data-slot="tooltip-content"]').evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
+});
+
+test("the Delete confirmation wraps a long key at 320px", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  await openHarness(page);
+  const key = "W".repeat(63);
+  await page.getByLabel("Property key for age").fill(key);
+  await page.waitForTimeout(900);
+  await rowOf(page, key).getByRole("button", { name: "Delete" }).click();
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toContainText(key);
+  expect(await dialog.evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
+});
+
 test("overlays, buttons and inputs take refs without warnings", async ({ page }) => {
   const warnings: string[] = [];
   page.on("console", (message) => {
