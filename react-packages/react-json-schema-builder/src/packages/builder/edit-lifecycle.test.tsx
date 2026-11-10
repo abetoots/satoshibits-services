@@ -8,9 +8,9 @@ import { SchemaBuilder } from "./schema-builder";
 
 describe("Edit dialog lifecycle", () => {
   it.each([
-    ["missing", { type: "string" }],
-    ["empty", { type: "string", title: "" }],
-  ] as const)("saves the Edit dialog for a property whose title is %s", async (_title, property) => {
+    ["missing", { type: "string" }, false, undefined],
+    ["empty", { type: "string", title: "" }, true, ""],
+  ] as const)("saves the Edit dialog for a property whose title is %s", async (_title, property, hasTitle, expectedTitle) => {
     const user = userEvent.setup();
     const onSchemaChange = vi.fn();
     const schema: JSONSchema7 = { type: "object", properties: { code: property } };
@@ -28,6 +28,7 @@ describe("Edit dialog lifecycle", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     const updated = onSchemaChange.mock.calls.at(-1)?.[0] as JSONSchema7;
     expect(updated.properties?.code).toMatchObject({ ...property, default: "x" });
-    if (_title === "missing") expect(updated.properties?.code).not.toHaveProperty("title");
+    expect(Object.hasOwn(updated.properties?.code as JSONSchema7, "title")).toBe(hasTitle);
+    expect((updated.properties?.code as JSONSchema7).title).toBe(expectedTitle);
   });
 });

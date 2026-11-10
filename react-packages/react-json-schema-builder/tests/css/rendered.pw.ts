@@ -231,6 +231,61 @@ test("a failed Add submit focuses the first invalid field", async ({ page }) => 
   await expect(dialog.getByLabel("Property Key")).toBeFocused();
 });
 
+for (const field of ["Type", "Items of type"]) {
+  test(`missing ${field} focuses and describes its select`, async ({ page }) => {
+    await openHarness(page);
+    await addButton(page).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Property Key").fill("email");
+    await dialog.getByLabel("Property Title").fill("Email");
+    if (field === "Items of type") {
+      await dialog.getByRole("combobox", { name: "Select type" }).click();
+      await page.getByRole("option", { name: "array", exact: true }).click();
+    }
+    await page.waitForTimeout(300);
+    await dialog.getByRole("button", { name: /^add property$/i }).click();
+    const trigger = dialog.getByRole("combobox", { name: field === "Type" ? "Select type" : "Select items of type" });
+    await expect(trigger).toBeFocused();
+    await expect(trigger).toHaveAttribute("aria-invalid", "true");
+    const message = dialog.getByText("Type is required");
+    const id = await message.getAttribute("id");
+    expect(id).toBeTruthy();
+    expect((await trigger.getAttribute("aria-describedby"))?.split(" ")).toContain(id);
+    await expect(dialog.locator("label").getByText(field, { exact: true })).toHaveAttribute("for", (await trigger.getAttribute("id"))!);
+  });
+}
+
+test("a second Add click during exit does not submit again", async ({ page }) => {
+  await openHarness(page);
+  await addButton(page).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Property Key").fill("email");
+  await dialog.getByLabel("Property Title").fill("Email");
+  await dialog.getByRole("combobox", { name: "Select type" }).click();
+  await page.getByRole("option", { name: "string", exact: true }).click();
+  await page.waitForTimeout(300);
+  const box = (await dialog.getByRole("button", { name: /^add property$/i }).boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.waitForTimeout(50);
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(page.locator("body")).toHaveAttribute("data-add-ok", "1");
+  await expect(page.locator("body")).not.toHaveAttribute("data-add-error");
+});
+
+test("unsupported focus-visible selector still opens a tooltip", async ({ page }) => {
+  await openHarness(page);
+  await page.evaluate(() => {
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const matches = Element.prototype.matches;
+    Element.prototype.matches = function (this: Element, selector: string): boolean {
+      if (selector === ":focus-visible") throw new DOMException("unsupported", "SyntaxError");
+      return Boolean(matches.call(this, selector));
+    };
+  });
+  await page.getByRole("button", { name: "Edit constraints" }).first().focus();
+  await expect(page.getByRole("tooltip", { name: "Edit constraints" })).toHaveCount(1);
+});
+
 test("closing a dialog returns focus to the button that opened it", async ({ page }) => {
   await openHarness(page);
   const add = addButton(page);
@@ -247,6 +302,7 @@ test("closing a dialog returns focus to the button that opened it", async ({ pag
   await page.getByRole("dialog").press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(edit).toBeFocused();
+  await expect(page.getByRole("tooltip", { name: "Edit constraints" })).toHaveCount(1);
   await page.keyboard.press("Enter");
   await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
   await expect(edit).toBeFocused();
@@ -290,6 +346,35 @@ test("Add submit returns focus to the opener", async ({ page }) => {
   await dialog.getByRole("button", { name: /^add property$/i }).click();
   await expect(rowOf(page, "email")).toHaveCount(1);
   await expect(addButton(page)).toBeFocused();
+});
+
+test("Add submit resets the form before reopening", async ({ page }) => {
+  await openHarness(page);
+  await addButton(page).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Property Key").fill("email");
+  await dialog.getByLabel("Property Title").fill("Email");
+  await dialog.getByLabel("Description").fill("draft");
+  await dialog.getByRole("combobox", { name: "Select type" }).click();
+  await page.getByRole("option", { name: "string", exact: true }).click();
+  await page.waitForTimeout(300);
+  await dialog.getByRole("button", { name: /^add property$/i }).click();
+  await expect(page.locator('[data-slot="dialog-content"]')).toHaveCount(0);
+  await addButton(page).click();
+  for (const label of ["Property Key", "Property Title", "Description"]) {
+    await expect(dialog.getByLabel(label)).toHaveValue("");
+  }
+});
+
+test("Escape discards unsaved edits when reopening the same row", async ({ page }) => {
+  await openHarness(page);
+  const edit = rowOf(page, "name").getByRole("button", { name: "Edit constraints" });
+  await edit.click();
+  await page.getByRole("dialog").getByLabel("Default Value").fill("draft");
+  await page.keyboard.press("Escape");
+  await expect(page.locator('[data-slot="dialog-content"]')).toHaveCount(0);
+  await edit.click();
+  await expect(page.getByRole("dialog").getByLabel("Default Value")).toHaveValue("");
 });
 
 test("the Add dialog's Required switch sits beside its label", async ({ page }) => {
@@ -383,16 +468,19 @@ test("a confirmed delete leaves focus on body without errors", async ({ page }) 
 
 test("required switches look the same and take a 24px-tall target", async ({ page }) => {
   await openHarness(page);
+  // zoom keeps fractional hit probes distinct in chromium
+  await page.addStyleTag({ content: 'body { zoom: 2 }' });
   const switches = page.getByRole("switch", { name: "Required" });
   await expect(switches).toHaveCount(4);
   for (const i of [0, 1, 2, 3]) {
+    await switches.nth(i).scrollIntoViewIfNeeded();
     const result = await switches.nth(i).evaluate((el) => {
       const r = el.getBoundingClientRect();
       const x = r.left + r.width / 2;
       const hit = (y: number) => document.elementFromPoint(x, y)?.closest("[role=switch]") === el;
-      return { size: [r.width, r.height], hits: [hit(r.top - 1.5), hit(r.bottom + 1.5)] };
+      return { size: [r.width / 2, r.height / 2], hits: [hit(r.top - 1.99 * 2), hit(r.bottom + 1.99 * 2)], misses: [hit(r.top - 2.5 * 2), hit(r.bottom + 2.5 * 2)] };
     });
-    expect(result).toEqual({ size: [36, 20], hits: [true, true] });
+    expect(result).toEqual({ size: [36, 20], hits: [true, true], misses: [false, false] });
   }
 });
 
@@ -401,6 +489,7 @@ const widths = [320, 640, 768, 900, 1024, 1150, 1280];
 const fitCases: [string, number, string | null][] = [
   ...widths.map((w): [string, number, string | null] => [String(w), w, null]),
   ["1280 in a 400px container", 1280, "#root { width: 400px }"],
+  ["320 with a 20px root", 320, "html { font-size: 20px }"],
   ["1280 with a 20px root", 1280, "html { font-size: 20px }"],
 ];
 for (const [label, width, css] of fitCases) {
@@ -437,32 +526,31 @@ const openEnumInEdit = async (page: Page, row = 0): Promise<Locator> => {
   await page.getByRole("button", { name: "Edit constraints" }).nth(row).click();
   return addEnumConstraint(page);
 };
-const openEnumInAdd = async (page: Page): Promise<Locator> => {
+const openEnumInAdd = async (page: Page, type = "string"): Promise<Locator> => {
   await addButton(page).click();
   await page.getByRole("dialog").getByRole("combobox", { name: /select type/i }).click();
-  await page.getByRole("option", { name: "string", exact: true }).click();
+  await page.getByRole("option", { name: type, exact: true }).click();
   return addEnumConstraint(page);
 };
 
-test("enum value placeholders fit at 320px", async ({ page }) => {
-  await page.setViewportSize({ width: 320, height: 900 });
-  await openHarness(page);
-  for (const type of ["String", "Number"]) {
-    await page.getByRole("tab", { name: type }).click();
-    const input = page.getByLabel(`${type} Value`);
+for (const [which, row, type] of [["Add", 0, "String"], ["Add", 0, "Number"], ["Edit", 0, "String"], ["Edit", 1, "Number"]] as const) {
+  test(`${type} enum placeholder fits in the ${which} dialog at 320px`, async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 900 });
+    await openHarness(page);
+    const dialog = await (which === "Add" ? openEnumInAdd(page, type.toLowerCase()) : openEnumInEdit(page, row));
+    const input = dialog.getByLabel(`${type} Value`);
     const sizes = await input.evaluate((el: HTMLInputElement) => {
       const style = getComputedStyle(el);
-      const canvas = document.createElement("canvas");
-      const context = canvas.getContext("2d")!;
+      const context = document.createElement("canvas").getContext("2d")!;
       context.font = style.font;
       return {
         placeholder: context.measureText(el.placeholder).width,
         available: el.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
       };
     });
-    expect(sizes.placeholder, type).toBeLessThanOrEqual(sizes.available);
-  }
-});
+    expect(sizes.placeholder).toBeLessThanOrEqual(sizes.available);
+  });
+}
 
 test("a single-type enum editor hides its tab list", async ({ page }) => {
   await openHarness(page);
@@ -484,6 +572,20 @@ for (const [type, row, value] of [["String", 0, "abc"], ["Number", 1, "5"]] as c
   });
 }
 
+test("Enter in the enum value input adds the value and keeps the Add dialog open", async ({ page }) => {
+  await openHarness(page);
+  const dialog = await openEnumInAdd(page);
+  await dialog.getByLabel("Property Key").fill("email");
+  await dialog.getByLabel("Property Title").fill("Email");
+  await page.waitForTimeout(300);
+  const input = dialog.getByPlaceholder("Enter a string value");
+  await input.fill("abc");
+  await input.press("Enter");
+  await expect(dialog.getByRole("listitem").filter({ hasText: "abc" })).toHaveCount(1);
+  await expect(dialog).toBeVisible();
+  await expect(page.locator("body")).not.toHaveAttribute("data-add-ok");
+});
+
 for (const which of ["Add", "Edit"]) {
   for (const width of [320, 768, 1024, 1280]) {
     test(`a long enum value stays inside the ${which} dialog at ${width}px`, async ({ page }) => {
@@ -492,6 +594,7 @@ for (const which of ["Add", "Edit"]) {
       const dialog = await (which === "Add" ? openEnumInAdd(page) : openEnumInEdit(page, 0));
       await dialog.getByPlaceholder("Enter a string value").fill("a".repeat(63));
       await dialog.getByRole("button", { name: "Add enum" }).click();
+      await expect(dialog.getByText("a".repeat(63), { exact: true })).toHaveAttribute("title", "a".repeat(63));
       const remove = dialog.getByRole("button", { name: "Remove value" });
       await expect(remove).toBeVisible();
       expect(await dialog.evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);

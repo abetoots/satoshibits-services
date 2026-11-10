@@ -37,6 +37,8 @@ createRoot(document.getElementById("root")!).render(
       <SchemaBuilder
         initialSchema={createTestSchema()}
         plugins={plugins}
+        onPropertyAddSuccess={() => { document.body.dataset.addOk = String(Number(document.body.dataset.addOk ?? 0) + 1); }}
+        onPropertyAddError={() => { document.body.dataset.addError = String(Number(document.body.dataset.addError ?? 0) + 1); }}
         addPropertyButtonComponent={new URLSearchParams(location.search).get("add") === "custom"
           ? ({ onClick }) => <button type="button" onClick={onClick}>Custom add</button>
           : undefined}

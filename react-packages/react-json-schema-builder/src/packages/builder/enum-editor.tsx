@@ -437,7 +437,7 @@ export function EnumEditor({
                     >
                       {getValueType(value)}
                     </Badge>
-                    <span className="rjsb:font-mono rjsb:text-sm rjsb:truncate rjsb:max-w-[300px]">
+                    <span title={getValueDisplay(value)} className="rjsb:font-mono rjsb:text-sm rjsb:truncate rjsb:max-w-[300px]">
                       {getValueDisplay(value)}
                     </span>
                   </div>
