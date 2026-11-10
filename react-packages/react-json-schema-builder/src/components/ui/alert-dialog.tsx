@@ -26,12 +26,14 @@ function AlertDialogPortal({
   )
 }
 
-function AlertDialogOverlay({
-  className,
-  ...props
-}: React.ComponentProps<typeof AlertDialogPrimitive.Overlay>) {
+// forwards its ref so the portal's Presence can wait for the exit animation (E3)
+const AlertDialogOverlay = React.forwardRef<
+  React.ElementRef<typeof AlertDialogPrimitive.Overlay>,
+  React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Overlay>
+>(function AlertDialogOverlay({ className, ...props }, ref) {
   return (
     <AlertDialogPrimitive.Overlay
+      ref={ref}
       data-slot="alert-dialog-overlay"
       className={cn(
         "rjsb:data-[state=open]:animate-in rjsb:data-[state=closed]:animate-out rjsb:data-[state=closed]:fade-out-0 rjsb:data-[state=open]:fade-in-0 rjsb:fixed rjsb:inset-0 rjsb:z-50 rjsb:bg-black/80",
@@ -40,7 +42,7 @@ function AlertDialogOverlay({
       {...props}
     />
   )
-}
+})
 
 function AlertDialogContent({
   className,

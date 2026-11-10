@@ -89,6 +89,51 @@ test("real dialog and select animate with the rjsb frames", async ({ page }) => 
   await expect(closed).toHaveCount(0);
 });
 
+test("dialog overlays stay mounted until their exit animation ends", async ({ page }) => {
+  await openHarness(page);
+  const pause = await page.addStyleTag({ content: "*, *::before, *::after { animation-play-state: paused !important; }" });
+  const checkClose = async (overlaySlot: string, dialogSlot: string) => {
+    await page.keyboard.press("Escape");
+    const overlay = page.locator(`[data-slot="${overlaySlot}"][data-state="closed"]`);
+    await expect.poll(() => overlay.evaluateAll((els) => els.some((el) =>
+      el.getAnimations().some((a) => (a as CSSAnimation).animationName === "rjsb-exit"),
+    ))).toBe(true);
+    await pause.evaluate((el: HTMLStyleElement) => { el.disabled = true; });
+    await expect(page.locator(`[data-slot="${overlaySlot}"]`)).toHaveCount(0);
+    await expect(page.locator(`[data-slot="${dialogSlot}"]`)).toHaveCount(0);
+  };
+
+  await addButton(page).click();
+  await checkClose("dialog-overlay", "dialog-content");
+  await pause.evaluate((el: HTMLStyleElement) => { el.disabled = false; });
+  await rowOf(page, "name").getByRole("button", { name: "Delete" }).click();
+  await checkClose("alert-dialog-overlay", "alert-dialog-content");
+});
+
+test("overlays, buttons and inputs take refs without warnings", async ({ page }) => {
+  const warnings: string[] = [];
+  page.on("console", (message) => {
+    if (/cannot be given refs[\s\S]*at (DialogOverlay|AlertDialogOverlay|Button|Input) /.test(message.text())) {
+      warnings.push(message.text());
+    }
+  });
+  await openHarness(page);
+  await addButton(page).click();
+  await page.keyboard.press("Escape");
+  await expect(page.locator('[data-slot="dialog-content"]')).toHaveCount(0);
+  await rowOf(page, "name").getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByRole("alertdialog")).toBeVisible();
+  expect(warnings).toEqual([]);
+});
+
+test("a failed Add submit focuses the first invalid field", async ({ page }) => {
+  await openHarness(page);
+  await addButton(page).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: /^add property$/i }).click();
+  await expect(dialog.getByLabel("Property Key")).toBeFocused();
+});
+
 const rowKeys = ["name", "age", "address", "tags"];
 const widths = [320, 640, 768, 900, 1024, 1150, 1280];
 const fitCases: [string, number, string | null][] = [
