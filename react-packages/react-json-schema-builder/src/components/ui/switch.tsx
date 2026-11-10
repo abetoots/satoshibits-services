@@ -11,7 +11,8 @@ function Switch({
     <SwitchPrimitive.Root
       data-slot="switch"
       className={cn(
-        "rjsb:peer rjsb:data-[state=checked]:bg-primary rjsb:data-[state=unchecked]:bg-input rjsb:focus-visible:border-ring rjsb:focus-visible:ring-ring/50 rjsb:inline-flex rjsb:h-5 rjsb:w-9 rjsb:shrink-0 rjsb:items-center rjsb:rounded-full rjsb:border-2 rjsb:border-transparent rjsb:shadow-xs rjsb:transition-all rjsb:outline-none rjsb:focus-visible:ring-[3px] rjsb:disabled:cursor-not-allowed rjsb:disabled:opacity-50",
+        // invisible 40×24 hit area; the 36×20 switch looks the same (wcag 2.5.8)
+        "rjsb:peer rjsb:data-[state=checked]:bg-primary rjsb:data-[state=unchecked]:bg-input rjsb:focus-visible:border-ring rjsb:focus-visible:ring-ring/50 rjsb:inline-flex rjsb:h-5 rjsb:w-9 rjsb:shrink-0 rjsb:items-center rjsb:rounded-full rjsb:border-2 rjsb:border-transparent rjsb:shadow-xs rjsb:transition-all rjsb:outline-none rjsb:focus-visible:ring-[3px] rjsb:disabled:cursor-not-allowed rjsb:disabled:opacity-50 rjsb:relative rjsb:after:absolute rjsb:after:-inset-1",
         className
       )}
       {...props}

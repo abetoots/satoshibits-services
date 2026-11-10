@@ -292,6 +292,21 @@ test("a confirmed delete leaves focus on body without errors", async ({ page }) 
   expect(errors).toEqual([]);
 });
 
+test("required switches look the same and take a 24px-tall target", async ({ page }) => {
+  await openHarness(page);
+  const switches = page.getByRole("switch", { name: "Required" });
+  await expect(switches).toHaveCount(4);
+  for (const i of [0, 1, 2, 3]) {
+    const result = await switches.nth(i).evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const x = r.left + r.width / 2;
+      const hit = (y: number) => document.elementFromPoint(x, y)?.closest("[role=switch]") === el;
+      return { size: [r.width, r.height], hits: [hit(r.top - 1.5), hit(r.bottom + 1.5)] };
+    });
+    expect(result).toEqual({ size: [36, 20], hits: [true, true] });
+  }
+});
+
 const rowKeys = ["name", "age", "address", "tags"];
 const widths = [320, 640, 768, 900, 1024, 1150, 1280];
 const fitCases: [string, number, string | null][] = [
