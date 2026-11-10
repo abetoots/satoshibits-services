@@ -1,10 +1,13 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 // the vite spa fallback serves the dev page for a missing html, so check the title
 const openHarness = async (page: Page, query = "") => {
   await page.goto(`/render-harness.html${query}`);
   await expect(page).toHaveTitle("rjsb render harness");
 };
+
+const addButton = (page: Page) => page.getByRole("button", { name: /^add property$/i });
+const rowOf = (page: Page, key: string): Locator => page.getByLabel(`Property key for ${key}`).locator("xpath=../..");
 
 const light = { strip: "oklch(0.97 0 0)", input: "oklch(1 0 0)" };
 const dark = { strip: "oklch(0.269 0 0)", input: "oklch(0.145 0 0)" };
@@ -62,7 +65,7 @@ test("real dialog and select animate with the rjsb frames", async ({ page }) => 
   const expectFirstFrame = (role: "dialog" | "listbox") =>
     expect.poll(() => firstFrame(role)).toEqual({ opacity: "0", scale: 0.95, duration: "0.15s" });
 
-  await page.getByText("Add Property").click();
+  await addButton(page).click();
   await expectFirstFrame("dialog");
   await page.getByRole("dialog").getByRole("combobox", { name: /select type/i }).click();
   await expectFirstFrame("listbox");
@@ -84,3 +87,33 @@ test("real dialog and select animate with the rjsb frames", async ({ page }) => 
   await pause.evaluate((el: Element) => { el.remove(); });
   await expect(closed).toHaveCount(0);
 });
+
+const rowKeys = ["name", "age", "address", "tags"];
+const widths = [320, 640, 768, 900, 1024, 1150, 1280];
+const fitCases: [string, number, string | null][] = [
+  ...widths.map((w): [string, number, string | null] => [String(w), w, null]),
+  ["1280 in a 400px container", 1280, "#root { width: 400px }"],
+  ["1280 with a 20px root", 1280, "html { font-size: 20px }"],
+];
+for (const [label, width, css] of fitCases) {
+  test(`row actions stay inside their row at ${label}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await openHarness(page);
+    if (css) await page.addStyleTag({ content: css });
+    // the row is the parent of the actions group
+    const labels = await page.getByRole("button", { name: "Delete", exact: true }).evaluateAll((els) =>
+      els.map((el) => el.parentElement!.parentElement!.querySelector("[aria-label^='Property key for']")?.getAttribute("aria-label")),
+    );
+    expect(labels).toEqual(rowKeys.map((k) => `Property key for ${k}`));
+    for (const key of rowKeys) {
+      const outside = await rowOf(page, key).evaluate((row) => {
+        const r = row.getBoundingClientRect();
+        return Array.from(row.querySelectorAll<HTMLButtonElement>("button"))
+          .filter((b) => { const b2 = b.getBoundingClientRect(); return b2.left < r.left || b2.right > r.right || b2.top < r.top || b2.bottom > r.bottom; })
+          .map((b) => b.getAttribute("aria-label"));
+      });
+      expect(outside, key).toEqual([]);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0);
+  });
+}
