@@ -9,6 +9,12 @@ const openHarness = async (page: Page, query = "") => {
 const addButton = (page: Page) => page.getByRole("button", { name: /^add property$/i });
 const rowOf = (page: Page, key: string): Locator => page.getByLabel(`Property key for ${key}`).locator("xpath=../..");
 
+// escape only once radix has moved focus inside the dialog, i.e. after its escape listener is attached
+const escapeDialog = async (page: Page) => {
+  await expect(page.locator("[role=dialog][data-state=open]:focus-within, [role=alertdialog][data-state=open]:focus-within")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+};
+
 const light = { strip: "oklch(0.97 0 0)", input: "oklch(1 0 0)" };
 const dark = { strip: "oklch(0.269 0 0)", input: "oklch(0.145 0 0)" };
 
@@ -73,7 +79,7 @@ test("real dialog and select animate with the rjsb frames", async ({ page }) => 
   // close path: select first, then the dialog, still paused
   await page.keyboard.press("Escape");
   await expect(page.getByRole("listbox")).toHaveCount(0);
-  await page.keyboard.press("Escape");
+  await escapeDialog(page);
   const closed = page.locator('[role=dialog][data-state="closed"]');
   const exit = () => closed.evaluate((el) => el.getAnimations().some((a) => (a as CSSAnimation).animationName === "rjsb-exit"));
   await expect.poll(exit).toBe(true);
@@ -93,7 +99,7 @@ test("dialog overlays stay mounted until their exit animation ends", async ({ pa
   await openHarness(page);
   const pause = await page.addStyleTag({ content: "*, *::before, *::after { animation-play-state: paused !important; }" });
   const checkClose = async (overlaySlot: string, dialogSlot: string) => {
-    await page.keyboard.press("Escape");
+    await escapeDialog(page);
     const overlay = page.locator(`[data-slot="${overlaySlot}"][data-state="closed"]`);
     await expect.poll(() => overlay.evaluateAll((els) => els.some((el) =>
       el.getAnimations().some((a) => (a as CSSAnimation).animationName === "rjsb-exit"),
@@ -127,7 +133,7 @@ test("the Edit form starts from the property being edited", async ({ page }) => 
   await openHarness(page);
   const edit = (key: string) => rowOf(page, key).getByRole("button", { name: "Edit constraints" });
   await edit("name").click();
-  await page.keyboard.press("Escape");
+  await escapeDialog(page);
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await edit("age").click();
   await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
@@ -135,7 +141,7 @@ test("the Edit form starts from the property being edited", async ({ page }) => 
   await expect(rowOf(page, "age").getByRole("combobox", { name: "Select type" })).toHaveText("integer");
 
   await edit("name").click();
-  await page.keyboard.press("Escape");
+  await escapeDialog(page);
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await rowOf(page, "name").getByRole("combobox", { name: "Select type" }).click();
   await page.getByRole("option", { name: "number", exact: true }).click();
@@ -196,7 +202,7 @@ test("overlays, buttons and inputs take refs without warnings", async ({ page })
   });
   await openHarness(page);
   await addButton(page).click();
-  await page.keyboard.press("Escape");
+  await escapeDialog(page);
   await expect(page.locator('[data-slot="dialog-content"]')).toHaveCount(0);
   const remove = rowOf(page, "name").getByRole("button", { name: "Delete" });
   await remove.hover();
@@ -242,7 +248,7 @@ test("focus return opens the tooltip only after a keyboard close", async ({ page
   await expect(page.getByRole("tooltip")).toHaveCount(0);
   await edit.focus();
   await page.keyboard.press("Enter");
-  await page.getByRole("dialog").press("Escape");
+  await escapeDialog(page);
   await expect(edit).toBeFocused();
   await expect(page.getByRole("tooltip", { name: "Edit constraints" })).toHaveCount(1);
 });
@@ -334,14 +340,14 @@ test("closing a dialog returns focus to the button that opened it", async ({ pag
   await add.focus();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("dialog")).toBeVisible();
-  await page.keyboard.press("Escape");
+  await escapeDialog(page);
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(add).toBeFocused();
 
   const edit = page.getByRole("button", { name: "Edit constraints" }).first();
   await edit.focus();
   await page.keyboard.press("Enter");
-  await page.getByRole("dialog").press("Escape");
+  await escapeDialog(page);
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(edit).toBeFocused();
   await expect(page.getByRole("tooltip", { name: "Edit constraints" })).toHaveCount(1);
@@ -359,7 +365,7 @@ test("closing a dialog returns focus to the button that opened it", async ({ pag
   await page.keyboard.press("Enter");
   await expect(page.getByRole("alertdialog").getByRole("button", { name: "Cancel" })).toBeFocused();
   await page.getByRole("alertdialog").evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished)));
-  await page.keyboard.press("Escape");
+  await escapeDialog(page);
   await expect(remove).toBeFocused();
 });
 
@@ -413,7 +419,7 @@ test("Escape discards unsaved edits when reopening the same row", async ({ page 
   const edit = rowOf(page, "name").getByRole("button", { name: "Edit constraints" });
   await edit.click();
   await page.getByRole("dialog").getByLabel("Default Value").fill("draft");
-  await page.keyboard.press("Escape");
+  await escapeDialog(page);
   await expect(page.locator('[data-slot="dialog-content"]')).toHaveCount(0);
   await edit.click();
   await expect(page.getByRole("dialog").getByLabel("Default Value")).toHaveValue("");
@@ -436,13 +442,13 @@ test("the Add dialog starts empty after every close", async ({ page }) => {
   for (const close of ["Escape", "X", "overlay"]) {
     await addButton(page).click();
     await page.getByRole("dialog").getByLabel("Description").fill("draft");
-    if (close === "Escape") await page.keyboard.press("Escape");
+    if (close === "Escape") await escapeDialog(page);
     else if (close === "X") await page.getByRole("dialog").getByRole("button", { name: "Close" }).click();
     else await page.mouse.click(4, 4);
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await addButton(page).click();
     await expect(page.getByRole("dialog").getByLabel("Description")).toHaveValue("");
-    await page.keyboard.press("Escape");
+    await escapeDialog(page);
     await expect(page.getByRole("dialog")).toHaveCount(0);
   }
 });
@@ -479,7 +485,7 @@ test("focus returns to a custom add button", async ({ page }) => {
   await add.focus();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("dialog")).toBeVisible();
-  await page.keyboard.press("Escape");
+  await escapeDialog(page);
   await expect(add).toBeFocused();
 });
 
@@ -491,7 +497,7 @@ test("Add opens a fresh session during its exit", async ({ page }) => {
   await page.getByRole("dialog").getByLabel("Property Key").fill("draft");
   await page.clock.runFor(500);
   const pause = await page.addStyleTag({ content: "*, *::before, *::after { animation-play-state: paused !important; }" });
-  await page.keyboard.press("Escape");
+  await escapeDialog(page);
   await expect(page.locator('[role=dialog][data-state="closed"]')).toHaveCount(1);
   await page.getByRole("button", { name: "Custom add", includeHidden: true }).evaluate((button: HTMLButtonElement) => button.click());
   await pause.evaluate((el: HTMLStyleElement) => { el.disabled = true; });
@@ -518,7 +524,7 @@ test("focus moved elsewhere during the exit stays there", async ({ page }) => {
   await openHarness(page);
   await addButton(page).click();
   const pause = await page.addStyleTag({ content: "*, *::before, *::after { animation-play-state: paused !important; }" });
-  await page.keyboard.press("Escape");
+  await escapeDialog(page);
   const age = page.getByLabel("Property key for age");
   await age.focus();
   await pause.evaluate((el: HTMLStyleElement) => { el.disabled = true; });
