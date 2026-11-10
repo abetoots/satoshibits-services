@@ -45,7 +45,7 @@ describe("SchemaBuilder", () => {
         </TestWrapper>,
       );
 
-      expect(screen.getByText("Add Property")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Add property" })).toBeInTheDocument();
       expect(screen.getByText("Root")).toBeInTheDocument();
     });
 
@@ -220,13 +220,13 @@ describe("SchemaBuilder", () => {
           </TestWrapper>,
         );
 
-        await user.click(screen.getByText("Add Property"));
+        await user.click(screen.getByRole("button", { name: "Add property" }));
 
         // Dialog should appear
         expect(screen.getByRole("dialog")).toBeInTheDocument();
         // Dialog should have an add property button
         expect(
-          screen.getByRole("button", { name: "Add Property" }),
+          screen.getByRole("button", { name: "Add property" }),
         ).toBeInTheDocument();
       });
 
@@ -249,7 +249,7 @@ describe("SchemaBuilder", () => {
         onSchemaChange.mockClear();
 
         // Open dialog and fill form
-        await user.click(screen.getByText("Add Property"));
+        await user.click(screen.getByRole("button", { name: "Add property" }));
         const dialog = screen.getByRole("dialog");
 
         const propertyKeyInput = within(dialog).getByLabelText("Property Key");
@@ -316,7 +316,7 @@ describe("SchemaBuilder", () => {
         onSchemaChange.mockClear();
 
         // Open dialog and fill form
-        await user.click(screen.getByText("Add Property"));
+        await user.click(screen.getByRole("button", { name: "Add property" }));
         const dialog = screen.getByRole("dialog");
 
         // Fill in basic property details
@@ -372,7 +372,7 @@ describe("SchemaBuilder", () => {
         );
 
         // Open dialog
-        await user.click(screen.getByText("Add Property"));
+        await user.click(screen.getByRole("button", { name: "Add property" }));
 
         // Try to submit without filling required fields
         const form = screen.getByTestId("add-property-form");
@@ -388,13 +388,14 @@ describe("SchemaBuilder", () => {
           expect(
             screen.getByText(/Title must be at least 1 character long/i),
           ).toBeInTheDocument();
-          //type should trigger required
+          // the type error names its field, so "Required" is only the switch label (E5)
           const typeSection = screen
             .getByRole("combobox", { name: /select type/i })
             .closest("div");
           expect(
-            within(typeSection!).getByText(/Required/i),
+            within(typeSection!).getByText("Type is required"),
           ).toBeInTheDocument();
+          expect(within(screen.getByRole("dialog")).getAllByText("Required", { exact: true })).toHaveLength(1);
         });
       });
 
@@ -412,7 +413,7 @@ describe("SchemaBuilder", () => {
         );
 
         // Open add property dialog
-        await user.click(screen.getByText("Add Property"));
+        await user.click(screen.getByRole("button", { name: "Add property" }));
 
         // Fill in minimum required fields
         const dialog = screen.getByRole("dialog");
@@ -487,7 +488,7 @@ describe("SchemaBuilder", () => {
 
         for (const testCase of testCases) {
           // Open dialog and fill form
-          await user.click(screen.getByText("Add Property"));
+          await user.click(screen.getByRole("button", { name: "Add property" }));
           const dialog = screen.getByRole("dialog");
 
           // Fill in basic property details
@@ -1148,7 +1149,7 @@ describe("SchemaBuilder", () => {
       expect(breadcrumb).toHaveTextContent("tags");
 
       // Add property to array items object
-      await user.click(screen.getByText("Add Property"));
+      await user.click(screen.getByRole("button", { name: "Add property" }));
       const dialog = screen.getByRole("dialog");
 
       const propertyKeyInput = within(dialog).getByLabelText("Property Key");
@@ -1211,7 +1212,7 @@ describe("SchemaBuilder", () => {
       onSchemaChange.mockClear();
 
       // Open add property dialog
-      await user.click(screen.getByText("Add Property"));
+      await user.click(screen.getByRole("button", { name: "Add property" }));
       const dialog = screen.getByRole("dialog");
 
       // Fill in required fields
@@ -1275,7 +1276,7 @@ describe("SchemaBuilder", () => {
       onSchemaChange.mockClear();
 
       // Open add property dialog
-      await user.click(screen.getByText("Add Property"));
+      await user.click(screen.getByRole("button", { name: "Add property" }));
       const dialog = screen.getByRole("dialog");
 
       // Add a number property to test constraints
@@ -1346,7 +1347,7 @@ describe("SchemaBuilder", () => {
       onSchemaChange.mockClear();
 
       // Add a string property with minLength constraint
-      await user.click(screen.getByText("Add Property"));
+      await user.click(screen.getByRole("button", { name: "Add property" }));
       const dialog = screen.getByRole("dialog");
 
       const propertyKeyInput = within(dialog).getByLabelText("Property Key");
@@ -1406,7 +1407,7 @@ describe("SchemaBuilder", () => {
       onSchemaChange.mockClear();
 
       // Add an array property with uniqueItems constraint
-      await user.click(screen.getByText("Add Property"));
+      await user.click(screen.getByRole("button", { name: "Add property" }));
       const dialog = screen.getByRole("dialog");
 
       const propertyKeyInput = within(dialog).getByLabelText("Property Key");
@@ -1471,7 +1472,7 @@ describe("SchemaBuilder", () => {
       );
 
       // Add an object property with maxProperties constraint
-      await user.click(screen.getByText("Add Property"));
+      await user.click(screen.getByRole("button", { name: "Add property" }));
       const dialog = screen.getByRole("dialog");
 
       const propertyKeyInput = within(dialog).getByLabelText("Property Key");
@@ -1535,7 +1536,7 @@ describe("SchemaBuilder", () => {
       );
 
       // Verify all constraint plugins are registered by checking for their constraints
-      await user.click(screen.getByText("Add Property"));
+      await user.click(screen.getByRole("button", { name: "Add property" }));
 
       // Select number type to check number constraints
       await user.click(
@@ -1586,7 +1587,7 @@ describe("SchemaBuilder", () => {
       onSchemaChange.mockClear();
 
       // Open add property dialog
-      await user.click(screen.getByText("Add Property"));
+      await user.click(screen.getByRole("button", { name: "Add property" }));
       const dialog = screen.getByRole("dialog");
 
       // Add a string property to test enum constraint
@@ -1688,7 +1689,7 @@ describe("SchemaBuilder", () => {
       onSchemaChange.mockClear();
 
       // Open add property dialog
-      await user.click(screen.getByText("Add Property"));
+      await user.click(screen.getByRole("button", { name: "Add property" }));
       const dialog = screen.getByRole("dialog");
 
       // Add a number property
@@ -2057,14 +2058,14 @@ describe("SchemaBuilder", () => {
     it("puts the root class on the portaled add-property dialog", async () => {
       const user = userEvent.setup();
       setup();
-      await user.click(screen.getByText("Add Property"));
+      await user.click(screen.getByRole("button", { name: "Add property" }));
       expect(screen.getByRole("dialog")).toHaveClass("rjsb-root");
     });
 
     it("puts the root class on the portaled type select", async () => {
       const user = userEvent.setup();
       setup();
-      await user.click(screen.getByText("Add Property"));
+      await user.click(screen.getByRole("button", { name: "Add property" }));
       await user.click(
         within(screen.getByRole("dialog")).getByRole("combobox", {
           name: /select type/i,

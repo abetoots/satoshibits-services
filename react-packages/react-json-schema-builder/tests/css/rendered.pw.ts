@@ -257,6 +257,60 @@ test("Add submit returns focus to the opener", async ({ page }) => {
   await expect(addButton(page)).toBeFocused();
 });
 
+test("the Add dialog's Required switch sits beside its label", async ({ page }) => {
+  await openHarness(page);
+  await addButton(page).click();
+  const dialog = page.getByRole("dialog");
+  const switchBox = await dialog.getByRole("switch", { name: "Required" }).boundingBox();
+  const labelBox = await dialog.getByText("Required", { exact: true }).boundingBox();
+  expect(switchBox).not.toBeNull();
+  expect(labelBox).not.toBeNull();
+  expect(Math.abs(switchBox!.y + switchBox!.height / 2 - labelBox!.y - labelBox!.height / 2)).toBeLessThan(2);
+  expect(labelBox!.x).toBeGreaterThan(switchBox!.x + switchBox!.width);
+});
+
+test("the Add dialog starts empty after every close", async ({ page }) => {
+  await openHarness(page);
+  for (const close of ["Escape", "X", "overlay"]) {
+    await addButton(page).click();
+    await page.getByRole("dialog").getByLabel("Description").fill("draft");
+    if (close === "Escape") await page.keyboard.press("Escape");
+    else if (close === "X") await page.getByRole("dialog").getByRole("button", { name: "Close" }).click();
+    else await page.mouse.click(4, 4);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await addButton(page).click();
+    await expect(page.getByRole("dialog").getByLabel("Description")).toHaveValue("");
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  }
+});
+
+test("Add submit does not blank the fading form", async ({ page }) => {
+  await page.clock.install();
+  await openHarness(page);
+  await addButton(page).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Property Key").fill("email");
+  await dialog.getByLabel("Property Title").fill("Email");
+  await dialog.getByLabel("Description").fill("draft");
+  await dialog.getByRole("switch", { name: "Required" }).click();
+  await dialog.getByRole("combobox", { name: "Select type" }).click();
+  await page.getByRole("option", { name: "string", exact: true }).click();
+  await page.clock.runFor(300);
+  const pause = await page.addStyleTag({ content: "*, *::before, *::after { animation-play-state: paused !important; }" });
+  await dialog.getByRole("button", { name: /^add property$/i }).click();
+  const closed = page.locator('[role=dialog][data-state="closed"]');
+  await expect(closed.getByLabel("Property Key")).toHaveValue("email");
+  await expect(closed.getByLabel("Description")).toHaveValue("draft");
+  await expect(closed.getByRole("combobox", { name: "Select type", includeHidden: true })).toHaveText("string");
+  await expect(closed.getByRole("switch", { name: "Required", includeHidden: true })).toBeChecked();
+  await expect(closed.getByRole("combobox", { name: "Select constraint", includeHidden: true })).toHaveCount(1);
+  await pause.evaluate((el: HTMLStyleElement) => { el.disabled = true; });
+  await expect(closed).toHaveCount(0);
+  await expect(rowOf(page, "email")).toHaveCount(1);
+  await expect(addButton(page)).toBeFocused();
+});
+
 test("focus returns to a custom add button", async ({ page }) => {
   await openHarness(page, "?add=custom");
   const add = page.getByRole("button", { name: "Custom add" });

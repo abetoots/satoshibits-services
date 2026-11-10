@@ -610,7 +610,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
         disabled={props.disabled}
       >
         <Plus className="rjsb:h-4 rjsb:w-4 rjsb:mr-2" />
-        Add Property
+        Add property
       </Button>
     );
   };

@@ -180,9 +180,11 @@ export function EditPropertyDialog({
         className="rjsb:overflow-y-auto rjsb:max-h-screen"
       >
         <DialogHeader>
-          <DialogTitle>Edit</DialogTitle>
+          {/* an empty title also falls back to the key */}
+          {/* eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing */}
+          <DialogTitle>Edit {propertyToEdit.title || propertyKey}</DialogTitle>
           <DialogDescription>
-            Constraints and other properties
+            Set a default value and constraints.
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>

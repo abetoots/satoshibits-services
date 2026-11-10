@@ -52,7 +52,7 @@ const zodJsonTypes = z.enum([
   "object",
   "array",
   "null",
-]);
+], { required_error: "Type is required" });
 
 export const AddFormSchema = z.object({
   key: z
@@ -146,7 +146,6 @@ export function AddPropertyDialog({
       }, {}),
     };
     onSubmit(key, propertyToSubmit, required);
-    form.reset();
   };
 
   const handleConstraintChange = (
@@ -204,11 +203,13 @@ export function AddPropertyDialog({
       <DialogContent
         data-testid="add-property-dialog"
         className="rjsb:overflow-y-auto rjsb:max-h-screen"
+        // reset after the exit animation, never during it (E4)
+        onCloseAutoFocus={() => form.reset()}
       >
         <DialogHeader>
-          <DialogTitle>Add</DialogTitle>
+          <DialogTitle>Add property</DialogTitle>
           <DialogDescription>
-            Required property values and constraints
+            Set the key, type and title. You can add constraints now or after it&apos;s created.
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
@@ -299,7 +300,7 @@ export function AddPropertyDialog({
                             className="rjsb:w-full"
                             aria-label="Select type"
                           >
-                            <SelectValue />
+                            <SelectValue placeholder="Select a type" />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem
@@ -431,7 +432,7 @@ export function AddPropertyDialog({
                 name="required"
                 render={({ field }) => {
                   return (
-                    <FormItem>
+                    <FormItem className="rjsb:flex rjsb:items-center rjsb:gap-2">
                       <FormControl>
                         <Switch
                           checked={field.value}
@@ -562,7 +563,7 @@ export function AddPropertyDialog({
 
             <DialogFooter>
               <Button type="submit" form="add-property-form">
-                Add Property
+                Add property
               </Button>
             </DialogFooter>
           </form>
