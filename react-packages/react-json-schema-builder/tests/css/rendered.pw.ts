@@ -134,6 +134,102 @@ test("a failed Add submit focuses the first invalid field", async ({ page }) => 
   await expect(dialog.getByLabel("Property Key")).toBeFocused();
 });
 
+test("closing a dialog returns focus to the button that opened it", async ({ page }) => {
+  await openHarness(page);
+  const add = addButton(page);
+  await add.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(add).toBeFocused();
+
+  const edit = page.getByRole("button", { name: "Edit constraints" }).first();
+  await edit.focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("dialog").press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(edit).toBeFocused();
+  await page.keyboard.press("Enter");
+  await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
+  await expect(edit).toBeFocused();
+
+  const remove = rowOf(page, "name").getByRole("button", { name: "Delete" });
+  await remove.focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(remove).toBeFocused();
+  await remove.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("alertdialog").getByRole("button", { name: "Cancel" })).toBeFocused();
+  await page.getByRole("alertdialog").evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished)));
+  await page.keyboard.press("Escape");
+  await expect(remove).toBeFocused();
+});
+
+test("the Add dialog returns focus after an X or overlay close", async ({ page }) => {
+  await openHarness(page);
+  for (const close of ["X", "overlay"]) {
+    await addButton(page).click();
+    if (close === "X") await page.getByRole("dialog").getByRole("button", { name: "Close" }).click();
+    else await page.mouse.click(4, 4);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(addButton(page)).toBeFocused();
+  }
+});
+
+test("Add submit returns focus to the opener", async ({ page }) => {
+  await page.clock.install();
+  await openHarness(page);
+  await addButton(page).focus();
+  await page.keyboard.press("Enter");
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Property Key").fill("email");
+  await dialog.getByLabel("Property Title").fill("Email");
+  await dialog.getByRole("combobox", { name: /select type/i }).click();
+  await page.getByRole("option", { name: "string", exact: true }).click();
+  await page.clock.runFor(300);
+  await dialog.getByRole("button", { name: /^add property$/i }).click();
+  await expect(rowOf(page, "email")).toHaveCount(1);
+  await expect(addButton(page)).toBeFocused();
+});
+
+test("focus returns to a custom add button", async ({ page }) => {
+  await openHarness(page, "?add=custom");
+  const add = page.getByRole("button", { name: "Custom add" });
+  await add.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(add).toBeFocused();
+});
+
+test("focus moved elsewhere during the exit stays there", async ({ page }) => {
+  await openHarness(page);
+  await addButton(page).click();
+  const pause = await page.addStyleTag({ content: "*, *::before, *::after { animation-play-state: paused !important; }" });
+  await page.keyboard.press("Escape");
+  const age = page.getByLabel("Property key for age");
+  await age.focus();
+  await pause.evaluate((el: HTMLStyleElement) => { el.disabled = true; });
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(age).toBeFocused();
+});
+
+test("a confirmed delete leaves focus on body without errors", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await openHarness(page);
+  await page.getByRole("button", { name: "Delete" }).first().focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(page.getByLabel("Property key for name")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => document.activeElement === document.body)).toBe(true);
+  expect(errors).toEqual([]);
+});
+
 const rowKeys = ["name", "age", "address", "tags"];
 const widths = [320, 640, 768, 900, 1024, 1150, 1280];
 const fitCases: [string, number, string | null][] = [

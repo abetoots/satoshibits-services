@@ -34,7 +34,13 @@ const plugins = [
 createRoot(document.getElementById("root")!).render(
   <SchemaProvider>
     <PluginsProvider>
-      <SchemaBuilder initialSchema={createTestSchema()} plugins={plugins} />
+      <SchemaBuilder
+        initialSchema={createTestSchema()}
+        plugins={plugins}
+        addPropertyButtonComponent={new URLSearchParams(location.search).get("add") === "custom"
+          ? ({ onClick }) => <button type="button" onClick={onClick}>Custom add</button>
+          : undefined}
+      />
       <EnumEditor propertyType={["string", "number", "boolean", "null"]} />
     </PluginsProvider>
   </SchemaProvider>,
