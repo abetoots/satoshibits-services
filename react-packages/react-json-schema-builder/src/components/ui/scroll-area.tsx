@@ -18,7 +18,8 @@ function ScrollArea({
     >
       <ScrollAreaPrimitive.Viewport
         data-slot="scroll-area-viewport"
-        className="rjsb:focus-visible:ring-ring/50 rjsb:size-full rjsb:rounded-[inherit] rjsb:transition-[color,box-shadow] rjsb:outline-none rjsb:focus-visible:ring-[3px] rjsb:focus-visible:outline-1"
+        // radix's display:table wrapper grows to its content; block lets values truncate
+        className="rjsb:[&>div]:block! rjsb:focus-visible:ring-ring/50 rjsb:size-full rjsb:rounded-[inherit] rjsb:transition-[color,box-shadow] rjsb:outline-none rjsb:focus-visible:ring-[3px] rjsb:focus-visible:outline-1"
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
