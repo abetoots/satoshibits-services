@@ -3,6 +3,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { XIcon } from "lucide-react"
 
 import { cn, ROOT_CLASS } from "@/lib/utils"
+import { useReturnFocus } from "@/lib/return-focus"
 
 function Dialog({
   ...props
@@ -49,8 +50,11 @@ const DialogOverlay = React.forwardRef<
 function DialogContent({
   className,
   children,
+  onOpenAutoFocus,
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content>) {
+  const returnFocus = useReturnFocus(onOpenAutoFocus, onCloseAutoFocus)
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay />
@@ -62,6 +66,7 @@ function DialogContent({
           className
         )}
         {...props}
+        {...returnFocus}
       >
         {children}
         <DialogPrimitive.Close className="rjsb:ring-offset-background rjsb:focus:ring-ring rjsb:data-[state=open]:bg-accent rjsb:data-[state=open]:text-muted-foreground rjsb:absolute rjsb:top-4 rjsb:right-4 rjsb:rounded-xs rjsb:opacity-70 rjsb:transition-opacity rjsb:hover:opacity-100 rjsb:focus:ring-2 rjsb:focus:ring-offset-2 rjsb:focus:outline-hidden rjsb:disabled:pointer-events-none rjsb:[&_svg]:pointer-events-none rjsb:[&_svg]:shrink-0 rjsb:[&_svg:not([class*='size-'])]:size-4">
