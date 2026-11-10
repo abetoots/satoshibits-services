@@ -441,6 +441,37 @@ test("focus returns to a custom add button", async ({ page }) => {
   await expect(add).toBeFocused();
 });
 
+test("Add opens a fresh session during its exit", async ({ page }) => {
+  await page.clock.install();
+  await openHarness(page, "?add=custom");
+  const add = page.getByRole("button", { name: "Custom add" });
+  await add.click();
+  await page.getByRole("dialog").getByLabel("Property Key").fill("draft");
+  await page.clock.runFor(500);
+  const pause = await page.addStyleTag({ content: "*, *::before, *::after { animation-play-state: paused !important; }" });
+  await page.keyboard.press("Escape");
+  await expect(page.locator('[role=dialog][data-state="closed"]')).toHaveCount(1);
+  await page.getByRole("button", { name: "Custom add", includeHidden: true }).evaluate((button: HTMLButtonElement) => button.click());
+  await pause.evaluate((el: HTMLStyleElement) => { el.disabled = true; });
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByLabel("Property Key")).toHaveValue("");
+  await expect.poll(() => dialog.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+});
+
+test("Delete captures the new opener during its exit", async ({ page }) => {
+  await openHarness(page);
+  const first = rowOf(page, "name").getByRole("button", { name: "Delete" });
+  const second = rowOf(page, "age").getByRole("button", { name: "Delete" });
+  await first.click();
+  const pause = await page.addStyleTag({ content: "*, *::before, *::after { animation-play-state: paused !important; }" });
+  await page.getByRole("alertdialog").getByRole("button", { name: "Cancel" }).click();
+  await expect(page.locator('[role=alertdialog][data-state="closed"]')).toHaveCount(1);
+  await rowOf(page, "age").getByRole("button", { name: "Delete", includeHidden: true }).evaluate((button: HTMLButtonElement) => { button.focus(); button.click(); });
+  await pause.evaluate((el: HTMLStyleElement) => { el.disabled = true; });
+  await page.getByRole("alertdialog").getByRole("button", { name: "Cancel" }).click();
+  await expect(second).toBeFocused();
+});
+
 test("focus moved elsewhere during the exit stays there", async ({ page }) => {
   await openHarness(page);
   await addButton(page).click();

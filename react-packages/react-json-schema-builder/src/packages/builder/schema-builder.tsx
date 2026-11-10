@@ -123,8 +123,12 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deleteKey, setDeleteKey] = useState<string | undefined>();
   const [editingKey, setEditingKey] = useState<string | undefined>();
+  // a fresh add form and focus scope per open
+  const [addSession, setAddSession] = useState(0);
   // a fresh edit form per open, so no row's values carry into another (N4)
   const [editSession, setEditSession] = useState(0);
+  // a fresh delete focus scope per open
+  const [deleteSession, setDeleteSession] = useState(0);
   const [editingProperty, setEditingProperty] = useState<
     JSONSchema7 | undefined
   >();
@@ -201,6 +205,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
     if (isPropertyDisabled(key)) return;
 
     setDeleteKey(key);
+    setDeleteSession((n) => n + 1);
     setShowDeleteDialog(true);
   };
 
@@ -598,7 +603,10 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
     if (AddPropertyButtonComponent) {
       return (
         <AddPropertyButtonComponent
-          onClick={() => setShowPropertyDialog(true)}
+          onClick={() => {
+            setAddSession((n) => n + 1);
+            setShowPropertyDialog(true);
+          }}
         />
       );
     }
@@ -608,6 +616,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
         type="button"
         className={cn("rjsb:self-center", props.addPropertyButtonClassName)}
         onClick={() => {
+          setAddSession((n) => n + 1);
           setShowPropertyDialog(true);
         }}
         disabled={props.disabled}
@@ -656,6 +665,7 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
 
         {/* Add property dialog */}
         <AddPropertyDialog
+          key={`add-${addSession}`}
           open={showPropertyDialog}
           onOpenChange={setShowPropertyDialog}
           onSubmit={onAddProperty}
@@ -678,7 +688,11 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
         )}
 
         {/* Delete confirmation dialog */}
-        <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialog
+          key={`delete-${deleteSession}`}
+          open={showDeleteDialog}
+          onOpenChange={setShowDeleteDialog}
+        >
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Are you sure?</AlertDialogTitle>
