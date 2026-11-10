@@ -36,9 +36,10 @@ function TooltipContent({
       <TooltipPrimitive.Content
         data-slot="tooltip-content"
         sideOffset={sideOffset}
+        // cap the width and break long unbroken text so it stays in the viewport
         className={cn(
           ROOT_CLASS,
-          "rjsb:bg-primary rjsb:text-primary-foreground rjsb:animate-in rjsb:fade-in-0 rjsb:zoom-in-95 rjsb:data-[state=closed]:animate-out rjsb:data-[state=closed]:fade-out-0 rjsb:data-[state=closed]:zoom-out-95 rjsb:z-50 rjsb:rounded-md rjsb:px-3 rjsb:py-1.5 rjsb:text-xs",
+          "rjsb:max-w-[min(20rem,calc(100vw-2rem))] rjsb:[overflow-wrap:anywhere] rjsb:bg-primary rjsb:text-primary-foreground rjsb:animate-in rjsb:fade-in-0 rjsb:zoom-in-95 rjsb:data-[state=closed]:animate-out rjsb:data-[state=closed]:fade-out-0 rjsb:data-[state=closed]:zoom-out-95 rjsb:z-50 rjsb:rounded-md rjsb:px-3 rjsb:py-1.5 rjsb:text-xs",
           className,
         )}
         {...props}
