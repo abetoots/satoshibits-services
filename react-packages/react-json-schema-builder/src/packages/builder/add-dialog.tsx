@@ -217,6 +217,8 @@ export function AddPropertyDialog({
             onSubmit={(e) => {
               e.stopPropagation();
               e.preventDefault();
+              // the form remains mounted during the exit animation
+              if (!open) return;
               void form.handleSubmit(handleSubmit)(e);
             }}
             className="rjsb:space-y-4"
@@ -276,7 +278,85 @@ export function AddPropertyDialog({
                   return (
                     <FormItem>
                       <FormLabel>Type</FormLabel>
-                      <FormControl>
+                      <Select
+                        value={
+                          !Array.isArray(field.value)
+                            ? field.value
+                            : undefined
+                        }
+                        onValueChange={(newVal) => {
+                          // If changing to any type, clear any enum values
+                          form.setValue("property.enum", undefined);
+
+                          // If changing away from array, clear any array item errors
+                          if (field.value === "array" && newVal !== "array") {
+                            form.clearErrors("property.items");
+                            form.setValue("property.items", undefined);
+                          }
+
+                          field.onChange(newVal);
+                        }}
+                      >
+                        <FormControl>
+                          <SelectTrigger ref={field.ref} className="rjsb:w-full" aria-label="Select type">
+                            <SelectValue placeholder="Select a type" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem
+                            value={"string" satisfies JSONSchema7TypeName}
+                          >
+                            string
+                          </SelectItem>
+                          <SelectItem
+                            value={"number" satisfies JSONSchema7TypeName}
+                          >
+                            number
+                          </SelectItem>
+                          <SelectItem
+                            value={"integer" satisfies JSONSchema7TypeName}
+                          >
+                            integer
+                          </SelectItem>
+                          <SelectItem
+                            value={"boolean" satisfies JSONSchema7TypeName}
+                          >
+                            boolean
+                          </SelectItem>
+                          <SelectItem
+                            value={"object" satisfies JSONSchema7TypeName}
+                          >
+                            object
+                          </SelectItem>
+                          <SelectItem
+                            value={"array" satisfies JSONSchema7TypeName}
+                          >
+                            array
+                          </SelectItem>
+                          <SelectItem
+                            value={"null" satisfies JSONSchema7TypeName}
+                          >
+                            null
+                          </SelectItem>
+                        </SelectContent>
+                    </Select>
+                      <FormMessage />
+                    </FormItem>
+                  );
+                }}
+              />
+            </div>
+
+            {/* Array Items Type selector */}
+            {currentType === "array" && (
+              <div className="rjsb:space-y-2">
+                <FormField
+                  control={form.control}
+                  name="property.items.type"
+                  render={({ field }) => {
+                    return (
+                      <FormItem>
+                        <FormLabel>Items of type</FormLabel>
                         <Select
                           value={
                             !Array.isArray(field.value)
@@ -284,24 +364,18 @@ export function AddPropertyDialog({
                               : undefined
                           }
                           onValueChange={(newVal) => {
-                            // If changing to any type, clear any enum values
-                            form.setValue("property.enum", undefined);
-
-                            // If changing away from array, clear any array item errors
-                            if (field.value === "array" && newVal !== "array") {
-                              form.clearErrors("property.items");
-                              form.setValue("property.items", undefined);
-                            }
-
-                            field.onChange(newVal);
+                            form.clearErrors("property.items.type");
+                            form.setValue(
+                              "property.items.type",
+                              newVal as JSONSchema7TypeName,
+                            );
                           }}
                         >
-                          <SelectTrigger
-                            className="rjsb:w-full"
-                            aria-label="Select type"
-                          >
-                            <SelectValue placeholder="Select a type" />
-                          </SelectTrigger>
+                          <FormControl>
+                            <SelectTrigger ref={field.ref} className="rjsb:w-full" aria-label="Select items of type">
+                              <SelectValue placeholder="Select item type" />
+                            </SelectTrigger>
+                          </FormControl>
                           <SelectContent>
                             <SelectItem
                               value={"string" satisfies JSONSchema7TypeName}
@@ -339,85 +413,7 @@ export function AddPropertyDialog({
                               null
                             </SelectItem>
                           </SelectContent>
-                        </Select>
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  );
-                }}
-              />
-            </div>
-
-            {/* Array Items Type selector */}
-            {currentType === "array" && (
-              <div className="rjsb:space-y-2">
-                <FormField
-                  control={form.control}
-                  name="property.items.type"
-                  render={({ field }) => {
-                    return (
-                      <FormItem>
-                        <FormLabel>Items of type</FormLabel>
-                        <FormControl>
-                          <Select
-                            value={
-                              !Array.isArray(field.value)
-                                ? field.value
-                                : undefined
-                            }
-                            onValueChange={(newVal) => {
-                              form.clearErrors("property.items.type");
-                              form.setValue(
-                                "property.items.type",
-                                newVal as JSONSchema7TypeName,
-                              );
-                            }}
-                          >
-                            <SelectTrigger
-                              className="rjsb:w-full"
-                              aria-label="Select items of type"
-                            >
-                              <SelectValue placeholder="Select item type" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem
-                                value={"string" satisfies JSONSchema7TypeName}
-                              >
-                                string
-                              </SelectItem>
-                              <SelectItem
-                                value={"number" satisfies JSONSchema7TypeName}
-                              >
-                                number
-                              </SelectItem>
-                              <SelectItem
-                                value={"integer" satisfies JSONSchema7TypeName}
-                              >
-                                integer
-                              </SelectItem>
-                              <SelectItem
-                                value={"boolean" satisfies JSONSchema7TypeName}
-                              >
-                                boolean
-                              </SelectItem>
-                              <SelectItem
-                                value={"object" satisfies JSONSchema7TypeName}
-                              >
-                                object
-                              </SelectItem>
-                              <SelectItem
-                                value={"array" satisfies JSONSchema7TypeName}
-                              >
-                                array
-                              </SelectItem>
-                              <SelectItem
-                                value={"null" satisfies JSONSchema7TypeName}
-                              >
-                                null
-                              </SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </FormControl>
+                      </Select>
                         <FormMessage />
                       </FormItem>
                     );

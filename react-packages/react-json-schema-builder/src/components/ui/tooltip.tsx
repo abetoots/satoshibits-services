@@ -15,7 +15,11 @@ function TooltipTrigger({
       onFocus={(e: React.FocusEvent<HTMLButtonElement>) => {
         onFocus?.(e);
         // programmatic focus after a mouse close (focus return) must not reopen the tooltip
-        if (!e.currentTarget.matches(":focus-visible")) e.preventDefault();
+        try {
+          if (!e.currentTarget.matches(":focus-visible")) e.preventDefault();
+        } catch {
+          // older dom engines may not support focus-visible
+        }
       }}
       {...props}
     />

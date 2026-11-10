@@ -191,6 +191,8 @@ export function EditPropertyDialog({
             onSubmit={(e) => {
               e.stopPropagation();
               e.preventDefault();
+              // the form remains mounted during the exit animation
+              if (!open) return;
               void form.handleSubmit(handleSubmit)(e);
             }}
             className="rjsb:space-y-4"
