@@ -28,5 +28,6 @@ describe("Edit dialog lifecycle", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     const updated = onSchemaChange.mock.calls.at(-1)?.[0] as JSONSchema7;
     expect(updated.properties?.code).toMatchObject({ ...property, default: "x" });
+    if (_title === "missing") expect(updated.properties?.code).not.toHaveProperty("title");
   });
 });

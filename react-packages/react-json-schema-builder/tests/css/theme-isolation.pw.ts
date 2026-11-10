@@ -317,6 +317,7 @@ test("standalone builder uses light and dark default colors", async ({ page }) =
 });
 
 test("rjsb:dark: utilities apply under html.dark, body.dark and wrapper dark", async ({ page }) => {
+  expect(libraryCss, "rjsb:dark:bg-green-900 no longer ships (enum badge recoloured?); pick another rjsb:dark: class").toContain(String.raw`.rjsb\:dark\:bg-green-900`);
   for (const target of ["light", "html", "body", "wrapper"] as const) {
     await page.setContent(`<html${target === "html" ? ' class="dark"' : ""}><head><style>${libraryCss}</style></head><body>${body}</body></html>`);
     if (target === "body" || target === "wrapper") await page.locator(target === "body" ? "body" : "#wrapper").evaluate((el) => el.classList.add("dark"));
@@ -427,6 +428,7 @@ test("shipped sheet scopes selectors and custom properties", () => {
   sheet.walkDecls((decl) => {
     if (decl.prop.startsWith("--") && !/^--(?:rjsb|tw)-/.test(decl.prop)) invalidProperties.add(decl.prop);
   });
+  sheet.walkAtRules("property", (rule) => { expect(rule.params).toMatch(/^--(rjsb|tw)-/); });
   const keyframes = new Set<string>();
   sheet.walkAtRules("keyframes", (rule) => { keyframes.add(rule.params); });
   expect([...keyframes].sort()).toEqual(["rjsb-enter", "rjsb-exit"]);

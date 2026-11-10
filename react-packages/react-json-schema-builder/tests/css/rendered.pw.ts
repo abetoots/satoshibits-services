@@ -206,7 +206,7 @@ test("focus return opens the tooltip only after a keyboard close", async ({ page
 });
 
 for (const [query, background] of [["", "oklch(0.205 0 0)"], ["?dark=body", "oklch(0.985 0 0)"], ["?dark=html", "oklch(0.985 0 0)"]] as const) {
-  test(`portaled tooltip carries the root class, theme and rjsb-enter ${query}`, async ({ page }) => {
+  test(`portaled tooltip carries the root class, theme and rjsb-enter${query ? ` ${query}` : ""}`, async ({ page }) => {
     await openHarness(page, query);
     await page.addStyleTag({ content: "*, *::before, *::after { animation-play-state: paused !important; }" });
     await page.getByRole("button", { name: "Duplicate" }).first().focus();
