@@ -4,8 +4,10 @@ import { expect, it } from "vitest";
 const built = existsSync("dist/index.es.js");
 const inCI = !!process.env.CI && !["false", "0"].includes(process.env.CI.toLowerCase());
 
+if (!built && !inCI) console.warn("radix bundle check: dist/index.es.js is missing, so the check is skipped; run pnpm build first");
+
 // radix is bundled: dialog and tooltip must share one dismissable layer, or escape breaks
-it.skipIf(!built && !inCI)("the bundle has one dismissable layer, shared by dialog and tooltip", () => {
+it.skipIf(!built && !inCI)(`the bundle has one dismissable layer, shared by dialog and tooltip${built ? "" : " (dist missing; run pnpm build first)"}`, () => {
   const files = readdirSync("dist").filter((file) => /^index\.es.*\.js$/.test(file));
   const containing = (needle: string) => files.filter((file) => readFileSync(`dist/${file}`, "utf8").includes(needle));
   const layers = containing("dismissableLayer.update");

@@ -74,7 +74,7 @@ beforeAll(async () => {
   rerender(tree(<div data-testid="renderers">{rendered}</div>));
   const container = within(screen.getByTestId("renderers"));
   expect(container.getAllByText("Enum Values").length).toBeGreaterThan(0);
-  for (const name of rendererNames.filter((name) => name !== "enum")) expect(container.getByText(`bad-${name}`)).toBeInTheDocument();
+  for (const name of rendererNames) expect(container.getByText(`bad-${name}`)).toBeInTheDocument();
   collect();
 });
 
