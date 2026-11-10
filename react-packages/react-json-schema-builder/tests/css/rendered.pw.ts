@@ -145,6 +145,21 @@ test("the Edit form starts from the property being edited", async ({ page }) => 
   await expect(rowOf(page, "name").getByRole("combobox", { name: "Select type" })).toHaveText("number");
 });
 
+test("the Edit heading wraps a long untitled key at 320px", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  await openHarness(page);
+  const key = "W".repeat(63);
+  await page.getByLabel("Property key for age").fill(key);
+  await page.waitForTimeout(900);
+  const row = rowOf(page, key);
+  await row.getByPlaceholder("Title").clear();
+  await page.waitForTimeout(900);
+  await row.getByRole("button", { name: "Edit constraints" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("heading")).toContainText(key);
+  expect(await dialog.evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
+});
+
 test("overlays, buttons and inputs take refs without warnings", async ({ page }) => {
   const warnings: string[] = [];
   page.on("console", (message) => {
