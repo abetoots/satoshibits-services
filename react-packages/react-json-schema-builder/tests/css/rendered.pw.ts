@@ -117,3 +117,42 @@ for (const [label, width, css] of fitCases) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0);
   });
 }
+
+const addEnumConstraint = async (page: Page) => {
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("combobox", { name: /select constraint/i }).click();
+  await page.getByRole("option", { name: "Enum Values" }).click();
+  await dialog.getByRole("button", { name: "Add constraint" }).click();
+  return dialog;
+};
+const openEnumInEdit = async (page: Page, row = 0): Promise<Locator> => {
+  await page.getByRole("button", { name: "Edit constraints" }).nth(row).click();
+  return addEnumConstraint(page);
+};
+const openEnumInAdd = async (page: Page): Promise<Locator> => {
+  await addButton(page).click();
+  await page.getByRole("dialog").getByRole("combobox", { name: /select type/i }).click();
+  await page.getByRole("option", { name: "string", exact: true }).click();
+  return addEnumConstraint(page);
+};
+
+for (const which of ["Add", "Edit"]) {
+  for (const width of [320, 768, 1024, 1280]) {
+    test(`a long enum value stays inside the ${which} dialog at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await openHarness(page);
+      const dialog = await (which === "Add" ? openEnumInAdd(page) : openEnumInEdit(page, 0));
+      await dialog.getByPlaceholder("Enter a string value").fill("a".repeat(63));
+      await dialog.getByRole("button", { name: "Add enum" }).click();
+      const remove = dialog.getByRole("button", { name: "Remove value" });
+      await expect(remove).toBeVisible();
+      expect(await dialog.evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
+      const removeRight = await remove.evaluate((el) => el.getBoundingClientRect().right);
+      const viewportRight = await dialog
+        .locator("[data-radix-scroll-area-viewport]")
+        .first()
+        .evaluate((el) => el.getBoundingClientRect().right);
+      expect(removeRight).toBeLessThanOrEqual(viewportRight);
+    });
+  }
+}

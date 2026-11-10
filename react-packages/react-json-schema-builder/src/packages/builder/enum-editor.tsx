@@ -225,7 +225,7 @@ export function EnumEditor({
   };
 
   const content = (
-    <div className="rjsb:grid rjsb:gap-6">
+    <div className="rjsb:grid rjsb:grid-cols-[minmax(0,1fr)] rjsb:gap-6">
       {error && (
         <Alert variant="destructive">
           <AlertCircle className="rjsb:h-4 rjsb:w-4" />
