@@ -41,9 +41,9 @@ export interface EditPropertyDialogProps {
   ) => void;
 }
 
-const EditFormSchema = AddFormSchema.pick({
-  constraints: true,
-  property: true,
+// the edit dialog has no title field, so an untitled property must still save (N1)
+const EditFormSchema = AddFormSchema.pick({ constraints: true }).extend({
+  property: AddFormSchema.shape.property.extend({ title: z.string().optional() }),
 });
 
 /**
@@ -105,7 +105,6 @@ export function EditPropertyDialog({
       propertyKey,
       { ...propertyToEdit, ...property, ...constraintUpdatesOnly },
     ]);
-    form.reset();
   };
 
   const handleConstraintChange = (
