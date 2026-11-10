@@ -55,7 +55,7 @@ Apps using native `@layer` should declare the layer order before other styles:
 @layer properties, theme, base, components, utilities;
 ```
 
-Dialogs and selects are portaled into `body`. If `.dark` is only on a wrapper, they use light defaults; put `.dark` on `html` or `body` for dark dialogs and selects.
+Dialogs, selects and tooltips are portaled into `body`. If `.dark` is only on a wrapper, they use light defaults; put `.dark` on `html` or `body` for dark dialogs, selects and tooltips.
 
 Dark defaults follow the `.dark` class, not `prefers-color-scheme`. Apps that switch themes only by media query get light defaults.
 

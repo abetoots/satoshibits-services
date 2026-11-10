@@ -121,10 +121,72 @@ test("overlays, buttons and inputs take refs without warnings", async ({ page })
   await addButton(page).click();
   await page.keyboard.press("Escape");
   await expect(page.locator('[data-slot="dialog-content"]')).toHaveCount(0);
-  await rowOf(page, "name").getByRole("button", { name: "Delete" }).click();
+  const remove = rowOf(page, "name").getByRole("button", { name: "Delete" });
+  await remove.hover();
+  await expect(page.getByRole("tooltip", { name: "Delete" })).toHaveCount(1);
+  await remove.click();
   await expect(page.getByRole("alertdialog")).toBeVisible();
   expect(warnings).toEqual([]);
 });
+
+test("icon-only row actions show a tooltip on hover and keyboard focus", async ({ page }) => {
+  await openHarness(page);
+  await page.getByRole("button", { name: "Delete" }).first().hover();
+  await expect(page.getByRole("tooltip", { name: "Delete" })).toHaveCount(1);
+  await page.mouse.move(0, 0, { steps: 10 });
+  await expect(page.getByRole("tooltip", { name: "Delete" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Open Address" }).hover();
+  await expect(page.getByRole("tooltip", { name: "Open Address" })).toHaveCount(1);
+  await page.mouse.move(0, 0, { steps: 10 });
+  await expect(page.getByRole("tooltip", { name: "Open Address" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Duplicate" }).first().focus();
+  await expect(page.getByRole("tooltip", { name: "Duplicate" })).toHaveCount(1);
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Edit constraints" }).first()).toBeFocused();
+  await expect(page.getByRole("tooltip", { name: "Edit constraints" })).toHaveCount(1);
+});
+
+test("focus return opens the tooltip only after a keyboard close", async ({ page }) => {
+  await openHarness(page);
+  const edit = page.getByRole("button", { name: "Edit constraints" }).first();
+  for (const close of ["Save", "Close", "overlay"]) {
+    await edit.click();
+    if (close === "overlay") await page.mouse.click(4, 4);
+    else await page.getByRole("dialog").getByRole("button", { name: close }).click();
+    await expect(edit).toBeFocused();
+    await page.mouse.move(0, 0, { steps: 10 });
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
+  }
+  const remove = page.getByRole("button", { name: "Delete" }).first();
+  await remove.click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Cancel" }).click();
+  await expect(remove).toBeFocused();
+  await page.mouse.move(0, 0, { steps: 10 });
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  await edit.focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("dialog").press("Escape");
+  await expect(edit).toBeFocused();
+  await expect(page.getByRole("tooltip", { name: "Edit constraints" })).toHaveCount(1);
+});
+
+for (const [query, background] of [["", "oklch(0.205 0 0)"], ["?dark=body", "oklch(0.985 0 0)"], ["?dark=html", "oklch(0.985 0 0)"]] as const) {
+  test(`portaled tooltip carries the root class, theme and rjsb-enter ${query}`, async ({ page }) => {
+    await openHarness(page, query);
+    await page.addStyleTag({ content: "*, *::before, *::after { animation-play-state: paused !important; }" });
+    await page.getByRole("button", { name: "Duplicate" }).first().focus();
+    const tooltip = page.locator('[data-slot="tooltip-content"]');
+    await expect(tooltip).toHaveClass(/\brjsb-root\b/);
+    await expect(tooltip).toHaveCSS("background-color", background);
+    await expect.poll(() => tooltip.evaluate((el) => {
+      const anim = el.getAnimations().find((a) => (a as CSSAnimation).animationName === "rjsb-enter");
+      if (!anim) return null;
+      anim.currentTime = 0;
+      const cs = getComputedStyle(el);
+      return { opacity: cs.opacity, scale: new DOMMatrix(cs.transform).a };
+    })).toEqual({ opacity: "0", scale: 0.95 });
+  });
+}
 
 test("a failed Add submit focuses the first invalid field", async ({ page }) => {
   await openHarness(page);

@@ -41,6 +41,19 @@ import Ajv from "ajv";
 import { DebouncedInput } from "@/components/depounced-input";
 import { AddPropertyDialog, type AddPropertyDialogProps } from "./add-dialog";
 import { cn, ROOT_CLASS } from "@/lib/utils";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+
+const withTooltip = (label: string, button: React.ReactElement) => (
+  <Tooltip>
+    <TooltipTrigger asChild>{button}</TooltipTrigger>
+    <TooltipContent>{label}</TooltipContent>
+  </Tooltip>
+);
 
 // PropertyComponent type definition for custom property components
 export interface PropertyComponentProps {
@@ -360,34 +373,41 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
 
         <div className="rjsb:order-last rjsb:md:order-none rjsb:flex rjsb:gap-2">
           {/* Delete button */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => handleInitiateDelete(key)}
-            aria-label="Delete"
-            className="rjsb:block!"
-            disabled={isDisabled}
-          >
-            <Trash2 size={16} className="rjsb:text-destructive" />
-          </Button>
+          {withTooltip(
+            "Delete",
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleInitiateDelete(key)}
+              aria-label="Delete"
+              className="rjsb:block!"
+              disabled={isDisabled}
+            >
+              <Trash2 size={16} className="rjsb:text-destructive" />
+            </Button>,
+          )}
 
           {/* Duplicate button */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => handleDuplicate(key)}
-            aria-label="Duplicate"
-            className="rjsb:block!"
-            disabled={isDisabled}
-          >
-            <Copy size={16} />
-          </Button>
+          {withTooltip(
+            "Duplicate",
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleDuplicate(key)}
+              aria-label="Duplicate"
+              className="rjsb:block!"
+              disabled={isDisabled}
+            >
+              <Copy size={16} />
+            </Button>,
+          )}
 
           {/* Edit button if applicable */}
           {renderEditButton(key, property)}
 
           {/* Navigate button for objects/array items */}
-          {renderNavigateButton(key, property)}
+          {/* eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty titles use the key */}
+          {renderNavigateButton(key, property, property.title || key)}
         </div>
 
         {/* Render array items configuration if needed */}
@@ -463,7 +483,8 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
         </Select>
 
         {/* Configure object button for array items of type object */}
-        {renderNavigateButton(key, items)}
+        {/* eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty titles use the key */}
+        {renderNavigateButton(key, items, property.title || key)}
       </div>
     );
   };
@@ -475,7 +496,8 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
     const isDisabled = isPropertyDisabled(key);
 
     // Should render by default to allow editing default values
-    return (
+    return withTooltip(
+      "Edit constraints",
       <Button
         variant="outline"
         size="sm"
@@ -484,26 +506,30 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
         disabled={isDisabled}
       >
         <Bolt size={16} />
-      </Button>
+      </Button>,
     );
   };
 
-  const renderNavigateButton = (key: string, items: JSONSchema7["items"]) => {
+  const renderNavigateButton = (
+    key: string,
+    items: JSONSchema7["items"],
+    name: string,
+  ) => {
     if (
       !Array.isArray(items) &&
       typeof items === "object" &&
       items?.type === "object"
     ) {
-      return (
+      return withTooltip(
+        `Open ${name}`,
         <Button
           variant="outline"
           size="sm"
           onClick={() => handleNavigateToProperty(key)}
-          aria-label="Navigate"
+          aria-label={`Open ${name}`}
         >
-          <span className="rjsb:sr-only">Navigate</span>
           <ChevronRight size={16} />
-        </Button>
+        </Button>,
       );
     }
 
@@ -590,81 +616,86 @@ export const SchemaBuilder = (props: SchemaBuilderProps) => {
   };
 
   return (
-    <div className={cn(ROOT_CLASS)}>
-      {/* Schema validation error */}
-      {schemaValidationError && (
-        <Alert variant="destructive">
-          <AlertTitle>Schema Error</AlertTitle>
-          <AlertDescription>{schemaValidationError}</AlertDescription>
-        </Alert>
-      )}
-
-      {/* Navigation bar */}
-      {renderNavigation()}
-
-      {/* Properties list */}
-      <div
-        className={cn("rjsb:mt-6 rjsb:overflow-x-hidden", props.propertiesListClassName)}
-      >
-        {Object.entries(currentSchema.properties ?? {}).map(
-          ([key, property]) => {
-            if (typeof property === "boolean") {
-              // We don't support editing boolean properties
-              return null;
-            }
-
-            return renderProperty(key, property);
-          },
+    <TooltipProvider>
+      <div className={cn(ROOT_CLASS)}>
+        {/* Schema validation error */}
+        {schemaValidationError && (
+          <Alert variant="destructive">
+            <AlertTitle>Schema Error</AlertTitle>
+            <AlertDescription>{schemaValidationError}</AlertDescription>
+          </Alert>
         )}
-      </div>
 
-      {/* Add property button */}
-      {renderAddPropertyButton()}
+        {/* Navigation bar */}
+        {renderNavigation()}
 
-      {/* Add property dialog */}
-      <AddPropertyDialog
-        open={showPropertyDialog}
-        onOpenChange={setShowPropertyDialog}
-        onSubmit={onAddProperty}
-      />
+        {/* Properties list */}
+        <div
+          className={cn(
+            "rjsb:mt-6 rjsb:overflow-x-hidden",
+            props.propertiesListClassName,
+          )}
+        >
+          {Object.entries(currentSchema.properties ?? {}).map(
+            ([key, property]) => {
+              if (typeof property === "boolean") {
+                // We don't support editing boolean properties
+                return null;
+              }
 
-      {/* Edit property dialog */}
-      {editingKey && editingProperty && (
-        <EditPropertyDialog
-          propertyKey={editingKey}
-          property={editingProperty}
-          open={showEditDialog}
-          onOpenChange={setShowEditDialog}
-          onSubmit={(params) => {
-            handlePropertyChange(...params);
-            setEditingKey(undefined);
-            setEditingProperty(undefined);
-            setShowEditDialog(false);
-          }}
+              return renderProperty(key, property);
+            },
+          )}
+        </div>
+
+        {/* Add property button */}
+        {renderAddPropertyButton()}
+
+        {/* Add property dialog */}
+        <AddPropertyDialog
+          open={showPropertyDialog}
+          onOpenChange={setShowPropertyDialog}
+          onSubmit={onAddProperty}
         />
-      )}
 
-      {/* Delete confirmation dialog */}
-      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This action cannot be undone. This will permanently delete the
-              property
-              {deleteKey ? ` "${deleteKey}"` : ""} from the schema.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={handleCancelDelete}>
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmDelete}>
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
+        {/* Edit property dialog */}
+        {editingKey && editingProperty && (
+          <EditPropertyDialog
+            propertyKey={editingKey}
+            property={editingProperty}
+            open={showEditDialog}
+            onOpenChange={setShowEditDialog}
+            onSubmit={(params) => {
+              handlePropertyChange(...params);
+              setEditingKey(undefined);
+              setEditingProperty(undefined);
+              setShowEditDialog(false);
+            }}
+          />
+        )}
+
+        {/* Delete confirmation dialog */}
+        <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This action cannot be undone. This will permanently delete the
+                property
+                {deleteKey ? ` "${deleteKey}"` : ""} from the schema.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={handleCancelDelete}>
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction onClick={handleConfirmDelete}>
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+    </TooltipProvider>
   );
 };

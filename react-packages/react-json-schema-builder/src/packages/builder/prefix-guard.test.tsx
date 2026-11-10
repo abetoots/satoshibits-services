@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { beforeAll, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { JSONSchema7 } from "json-schema";
 import { SchemaProvider } from "./context";
@@ -62,6 +62,9 @@ beforeAll(async () => {
   expect(screen.getByRole("alertdialog")).toBeInTheDocument();
   collect();
   await user.keyboard("{Escape}");
+  act(() => within(row).getByRole("button", { name: /duplicate/i }).focus());
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("Duplicate");
+  collect();
   // every registered renderer in its error state, inside the same provider tree
   const entries = plugins.map((plugin) => Object.entries(plugin.hooks.registerRenderers?.() ?? {}));
   const rendererNames = entries.flat().map(([name]) => name);
